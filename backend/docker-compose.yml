@@ -1,0 +1,57 @@
+# ─── RetailSG Local Development ──────────────────────────────
+# GCP Project: project-b41c0c0d-6eea-4e9d-a78
+#
+# Usage:
+#   docker compose up          # local Postgres
+#   docker compose --profile cloud up  # with Cloud SQL proxy
+
+services:
+  db:
+    image: postgres:15
+    environment:
+      POSTGRES_USER: retailsg
+      POSTGRES_PASSWORD: retailsg
+      POSTGRES_DB: retailsg
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U retailsg"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  # Cloud SQL Auth Proxy (optional, for connecting to GCP Cloud SQL locally)
+  cloud-sql-proxy:
+    image: gcr.io/cloud-sql-connectors/cloud-sql-proxy:2
+    command:
+      - "project-b41c0c0d-6eea-4e9d-a78:asia-southeast1:retailsg"
+      - "--port=5433"
+    ports:
+      - "5433:5433"
+    volumes:
+      - ${GOOGLE_APPLICATION_CREDENTIALS:-./firebase-service-account.json}:/creds.json:ro
+    environment:
+      GOOGLE_APPLICATION_CREDENTIALS: /creds.json
+    profiles:
+      - cloud
+
+  api:
+    build: .
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+    ports:
+      - "8000:8000"
+    volumes:
+      - .:/app
+    env_file:
+      - .env
+    environment:
+      DATABASE_URL: postgresql+asyncpg://retailsg:retailsg@db:5432/retailsg
+      FIREBASE_PROJECT_ID: project-b41c0c0d-6eea-4e9d-a78
+    depends_on:
+      db:
+        condition: service_healthy
+
+volumes:
+  pgdata:

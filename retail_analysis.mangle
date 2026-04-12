@@ -1,0 +1,59 @@
+pos_order("104_331", "craig turrell", "2026.3.30", 10840, 0, "Unpaid").
+pos_item("104_331", "1", "A031", "Copper、agate", "19*6*12", 800, 5, 4000).
+pos_item("104_331", "2", "A355绿", "Copper Shangri-la stone", "15*15*8", 248, 5, 1240).
+pos_item("104_331", "3", "A446", "Copper natural Malachie Marble", "12.5*12.5*7", 195, 5, 975).
+pos_item("104_331", "4", "A449", "Copper natural Malachie Marble", "12.5*12.5*6", 195, 1, 195).
+pos_item("104_331", "5", "A448", "copper natural Amethyst Marble", "12.5*12.5*6", 195, 5, 975).
+pos_item("104_331", "6", "A392", "Natural white crystal copper", "43*5.5", 290, 5, 1450).
+pos_item("104_331", "7", "A340粉", "Natural pink crystal, glass", "9.5*3.5*15", 95, 5, 475).
+pos_item("104_331", "8", "A340绿", "Natural green crystal, glass", "9.5*3.5*15", 90, 5, 450).
+
+pos_order("143 2_369", "craig turrell", "2026.3.30", 32825, 0, "unknown").
+pos_item("143 2_369", "1", "A008", "Copper、green fluorite", "38*11*49", 240, 2, 480).
+pos_item("143 2_369", "2", "H489A", "copper, Natural mineral stone K9", "12*12*48", 188, 5, 940).
+pos_item("143 2_369", "3", "H489B", "copper, Natural mineral stone k10", "12*12*40", 188, 5, 940).
+pos_item("143 2_369", "4", "H489C", "copper, Natural mineral stone k11", "12*12*34", 188, 5, 940).
+pos_item("143 2_369", "5", "H552", "Natural green fluorite", "20*8*14", 195, 5, 975).
+pos_item("143 2_369", "7", "H677", "purplecrystal marble copper", "13*10*16", 238, 5, 1190).
+pos_item("143 2_369", "9", "H762", "Natural green fluorite marble", "26*10*16", 250, 5, 1250).
+pos_item("143 2_369", "10", "H870A", "Natural blue crystal marble", "25*13*15", 238, 5, 1190).
+pos_item("143 2_369", "10", "H870B", "Natural blue crystal marble", "21*11*12", 225, 5, 1125).
+pos_item("143 2_369", "11", "H883", "Natural crystal copper, K9 crystal", "26*10*16", 245, 5, 1225).
+pos_item("143 2_369", "12", "H904A", "Natural brown crystal Copper, k9", "13*13*20", 188, 10, 1880).
+pos_item("143 2_369", "13", "H904B", "Natural brown crystal Copper, k9", "13*13*16", 175, 10, 1750).
+pos_item("143 2_369", "14", "H904C", "Natural brown crystal Copper, k9", "13*13*10", 163, 10, 1630).
+pos_item("143 2_369", "15", "H905", "Natural brown crystal Copper, K9 crystal", "27*10*16", 238, 10, 2380).
+pos_item("143 2_369", "16", "H1063", "copper Natural white crystal marble", "26*10*16", 300, 2, 600).
+pos_item("143 2_369", "17", "H1327B", "copper Natural mineral stone", "26*12*28", 500, 5, 2500).
+pos_item("143 2_369", "18", "H1445A", "Copper Natural brown crystal marble", "9*9*20", 215, 5, 1075).
+pos_item("143 2_369", "19", "H1445B", "Copper Natural brown crystal marble", "9*9*17", 200, 5, 1000).
+pos_item("143 2_369", "20", "H1445C", "Copper Natural brown crystal marble", "9*9*10", 188, 5, 940).
+pos_item("143 2_369", "21", "H1637A", "copper Natural mineral stone K9", "16*8.5*50", 330, 5, 1650).
+pos_item("143 2_369", "23", "H1161", "Natural blue crystal marble copper", "16*16*10", 285, 10, 2850).
+pos_item("143 2_369", "26", "A392", "Natural white crystal copper", "43*5.5", 290, 5, 1450).
+pos_item("143 2_369", "27", "H1347", "Natural brown crystal copper marble", "26*10*16", 325, 5, 1625).
+pos_item("143 2_369", "28", "A355", "Copper Shangri-la stone", "15*15*8", 248, 5, 1240).
+
+# --- Query: items priced >= 300 yuan ---
+premium_item(OrderId, Code, Material, Price, Qty, Amount) :-
+  pos_item(OrderId, _, Code, Material, _, Price, Qty, Amount),
+  Price >= 300.
+
+# --- Query: codes ordered in both orders (cross-order repeat) ---
+repeat_code(Code) :-
+  pos_item("104_331", _, Code, _, _, _, _, _),
+  pos_item("143 2_369", _, Code, _, _, _, _, _).
+
+# --- Query: all items with "marble" in material ---
+marble_item(OrderId, Code, Material, Price, Qty) :-
+  pos_item(OrderId, _, Code, Material, _, Price, Qty, _),
+  :string:contains(Material, "marble").
+
+# --- Query: all items with "crystal" in material ---
+crystal_item(OrderId, Code, Material, Price, Qty) :-
+  pos_item(OrderId, _, Code, Material, _, Price, Qty, _),
+  :string:contains(Material, "crystal").
+
+# --- Query: order summary ---
+order_summary(OrderId, Customer, Date, TotalYuan, Status) :-
+  pos_order(OrderId, Customer, Date, TotalYuan, _, Status).

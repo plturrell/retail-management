@@ -1,0 +1,22 @@
+{
+  "projects": {
+    "default": "project-b41c0c0d-6eea-4e9d-a78"
+  },
+  "auth": {
+    "providers": [
+      "email"
+    ]
+  },
+  "emulators": {
+    "auth": {
+      "port": 9099,
+      "host": "127.0.0.1"
+    },
+    "ui": {
+      "enabled": true,
+      "port": 4000,
+      "host": "127.0.0.1"
+    },
+    "singleProjectMode": true
+  }
+}
