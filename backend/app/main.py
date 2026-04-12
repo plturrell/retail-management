@@ -18,6 +18,7 @@ from app.routers import (
     skus,
     stores,
     users,
+    pricing_engine,
 )
 
 app = FastAPI(
@@ -51,3 +52,4 @@ app.include_router(barcode.router)
 app.include_router(cag_xml.router)
 app.include_router(nec_import.router)
 app.include_router(sales.router)
+app.include_router(pricing_engine.router)

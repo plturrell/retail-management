@@ -127,11 +127,7 @@ def pull_from_shopify(store_url, token, dry_run=False):
     with open(SHOPIFY_SYNC_FILE, "w", encoding="utf-8") as f:
         f.write("# Shopify synchronized products (Full Admin Extraction)\n# Schema: shopify_product(id, sku, title, price, tags, image_filename).\n\n")
         for p in all_products:
-            sku, price = f"SHP-{p.get('id')}", "0.0"
-            if p.get('variants') and len(p['variants']) > 0:
-                sku = p['variants'][0].get('sku') or sku
-                price = p['variants'][0].get('price') or price
-                
+            # Handle images (use first product image as fallback for all variants)
             image_filename = "none"
             if p.get('images') and len(p['images']) > 0 and p['images'][0].get('src'):
                 clean_filename = p['images'][0]['src'].split('/')[-1].split('?')[0]
@@ -147,7 +143,22 @@ def pull_from_shopify(store_url, token, dry_run=False):
             
             title_clean = p.get("title", "").replace('"', '\\"') if p.get("title") else ""
             tags = ",".join(p.get("tags", [])) if isinstance(p.get("tags"), list) else p.get("tags", "")
-            f.write(f'shopify_product("{p.get("id")}", "{sku}", "{title_clean}", {price}, "{tags}", "{image_filename}").\n')
+            
+            # Loop over every variant!
+            variants = p.get('variants', [])
+            if not variants:
+                # Fallback if somehow literally 0 variants exist
+                f.write(f'shopify_product("{p.get("id")}", "SHP-{p.get("id")}", "{title_clean}", 0.0, "{tags}", "{image_filename}").\n')
+                
+            for v in variants:
+                v_sku = v.get('sku') or f"SHP-{v.get('id')}"
+                v_price = v.get('price') or "0.0"
+                # If variant has a specific title (like "Small" or "Blue"), append it to the main title
+                v_title = title_clean
+                if v.get('title') and v.get('title') != "Default Title":
+                    v_title = f"{title_clean} - {v.get('title')}".replace('"', '\\"')
+                    
+                f.write(f'shopify_product("{p.get("id")}", "{v_sku}", "{v_title}", {v_price}, "{tags}", "{image_filename}").\n')
 
 # ── Main ──────────────────────────────────────────────────────────────────────
 

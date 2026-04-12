@@ -12,6 +12,8 @@ from app.models import (  # noqa: F401 — ensure all models are imported
     Order, OrderItem,
 )
 
+from app.config import settings
+
 config = context.config
 if config.config_file_name is not None:
     fileConfig(config.config_file_name)
@@ -40,11 +42,8 @@ def do_run_migrations(connection):
 
 async def run_async_migrations() -> None:
     """Run migrations in 'online' mode with async engine."""
-    connectable = async_engine_from_config(
-        config.get_section(config.config_ini_section, {}),
-        prefix="sqlalchemy.",
-        poolclass=pool.NullPool,
-    )
+    from sqlalchemy.ext.asyncio import create_async_engine
+    connectable = create_async_engine(settings.DATABASE_URL, poolclass=pool.NullPool)
     async with connectable.connect() as connection:
         await connection.run_sync(do_run_migrations)
     await connectable.dispose()

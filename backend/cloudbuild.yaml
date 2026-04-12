@@ -2,7 +2,7 @@
 # Trigger: push to main branch or manual
 #
 # Usage:
-#   gcloud builds submit --config=cloudbuild.yaml .
+#   cd backend && gcloud builds submit --config=cloudbuild.yaml .
 #
 # Prerequisites:
 #   - Cloud SQL instance "retailsg" exists
