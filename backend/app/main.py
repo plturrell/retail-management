@@ -35,7 +35,9 @@ from app.routers import (
     brands,
     cag_xml,
     categories,
+    copilot,
     customers,
+    finance,
     health,
     hr,
     intelligence,
@@ -47,12 +49,14 @@ from app.routers import (
     prices,
     promotions,
     purchases,
+    reports,
     sales,
     schedules,
     skus,
     staff_hr,
     stores,
     suppliers,
+    supply_chain,
     timesheets,
     users,
     pricing_engine,
@@ -104,3 +108,7 @@ app.include_router(purchases.router)
 app.include_router(marketing.router)
 app.include_router(staff_hr.router)
 app.include_router(intelligence.router)
+app.include_router(finance.router)
+app.include_router(reports.router)
+app.include_router(copilot.router)
+app.include_router(supply_chain.router)

@@ -37,6 +37,19 @@ from app.models.staff import (
     LeaveRequest,
     LeaveBalance,
 )
+from app.models.copilot import (
+    InventoryType,
+    SourcingStrategy,
+    InventoryAdjustmentLog,
+    RecommendationType,
+    RecommendationStatus,
+    ManagerRecommendation,
+    WorkOrderStatus,
+    WorkOrder,
+    WorkOrderComponent,
+    StockTransferStatus,
+    StockTransfer,
+)
 
 __all__ = [
     # Core
@@ -96,4 +109,16 @@ __all__ = [
     "LeaveType",
     "LeaveRequest",
     "LeaveBalance",
+    # Copilot & Supply Chain
+    "InventoryType",
+    "SourcingStrategy",
+    "InventoryAdjustmentLog",
+    "RecommendationType",
+    "RecommendationStatus",
+    "ManagerRecommendation",
+    "WorkOrderStatus",
+    "WorkOrder",
+    "WorkOrderComponent",
+    "StockTransferStatus",
+    "StockTransfer",
 ]

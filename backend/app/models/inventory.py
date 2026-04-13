@@ -18,6 +18,10 @@ import enum
 from app.database import Base
 from app.models._mixins import uuid_pk, created_at_col, updated_at_col
 
+# Forward-declare enums used on Inventory (defined in copilot.py to avoid circular imports)
+_INVENTORY_TYPE_ENUM = "inventory_type_enum"
+_SOURCING_STRATEGY_ENUM = "sourcing_strategy_enum"
+
 
 class Category(Base):
     __tablename__ = "categories"
@@ -207,6 +211,19 @@ class Inventory(Base):
     reorder_qty: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     serial_number: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
     last_updated: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+    # Copilot fields
+    inventory_type: Mapped[str] = mapped_column(
+        SQLEnum("purchased", "material", "finished", name=_INVENTORY_TYPE_ENUM, create_type=False),
+        nullable=False, default="purchased",
+    )
+    sourcing_strategy: Mapped[str] = mapped_column(
+        SQLEnum("supplier_premade", "manufactured_standard", "manufactured_custom",
+                name=_SOURCING_STRATEGY_ENUM, create_type=False),
+        nullable=False, default="supplier_premade",
+    )
+    primary_supplier_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("suppliers.id", ondelete="SET NULL"), nullable=True
+    )
     created_at: Mapped[created_at_col]
     updated_at: Mapped[updated_at_col]
 
