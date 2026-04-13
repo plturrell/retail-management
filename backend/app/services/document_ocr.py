@@ -16,8 +16,10 @@ from app.services.gcs import download_bytes
 
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
-MATERIALS_JSON_PATH = REPO_ROOT / "ocr_outputs" / "material_reference_adobe_scan_12_apr_2026.json"
-POS_ITEMS_MANGLE_PATH = REPO_ROOT / "mangle_facts" / "pos_orders.mangle"
+MATERIALS_JSON_PATH = (
+    REPO_ROOT / "data" / "ocr_outputs" / "material_reference_adobe_scan_12_apr_2026.json"
+)
+POS_ITEMS_MANGLE_PATH = REPO_ROOT / "data" / "mangle_facts" / "pos_orders.mangle"
 
 GENERIC_MATERIAL_WORDS = {
     "stone",

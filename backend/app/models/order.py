@@ -36,6 +36,9 @@ class Order(Base):
     staff_id: Mapped[Optional[uuid.UUID]] = mapped_column(
         UUID(as_uuid=True), ForeignKey("users.id"), nullable=True
     )
+    salesperson_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id"), nullable=True
+    )
     order_date: Mapped[datetime] = mapped_column(DateTime, nullable=False)
     subtotal: Mapped[float] = mapped_column(Numeric(20, 2), nullable=False)
     discount_total: Mapped[float] = mapped_column(
@@ -58,7 +61,8 @@ class Order(Base):
 
     # Relationships
     store = relationship("Store", back_populates="orders", lazy="raise")
-    staff = relationship("User", back_populates="orders", lazy="raise")
+    staff = relationship("User", back_populates="orders", foreign_keys=[staff_id], lazy="raise")
+    salesperson = relationship("User", foreign_keys=[salesperson_id], lazy="raise")
     items = relationship("OrderItem", back_populates="order", lazy="selectin")
 
     def __repr__(self) -> str:
@@ -91,3 +95,24 @@ class OrderItem(Base):
 
     def __repr__(self) -> str:
         return f"<OrderItem order={self.order_id} sku={self.sku_id} qty={self.qty}>"
+
+
+class SalespersonAlias(Base):
+    __tablename__ = "salesperson_aliases"
+
+    id: Mapped[uuid_pk]
+    alias_name: Mapped[str] = mapped_column(String(255), nullable=False)
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False
+    )
+    store_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("stores.id", ondelete="CASCADE"), nullable=False
+    )
+    created_at: Mapped[created_at_col]
+
+    # Relationships
+    user = relationship("User", lazy="raise")
+    store = relationship("Store", lazy="raise")
+
+    def __repr__(self) -> str:
+        return f"<SalespersonAlias {self.alias_name} -> user={self.user_id}>"

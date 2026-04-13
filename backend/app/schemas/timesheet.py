@@ -71,3 +71,41 @@ class TimesheetSummaryResponse(BaseModel):
     period_start: datetime
     period_end: datetime
     summaries: list[TimesheetSummaryEntry]
+
+
+# ---------- Import ----------
+
+class TimesheetImportError(BaseModel):
+    row: int
+    message: str
+
+
+class TimesheetImportReport(BaseModel):
+    imported_count: int
+    skipped_count: int
+    errors: list[TimesheetImportError]
+
+
+
+# ---------- VE Payroll Import ----------
+
+class VEStaffImportDetail(BaseModel):
+    name: str
+    time_entries_created: int
+    time_entries_skipped: int
+    orders_created: int
+    total_hours: float
+    total_sales: float
+
+
+class VEMonthImportDetail(BaseModel):
+    sheet_name: str
+    staff: list[VEStaffImportDetail]
+    errors: list[dict]
+
+
+class VEPayrollImportReport(BaseModel):
+    months: list[VEMonthImportDetail]
+    users_created: list[str]
+    profiles_updated: list[str]
+    errors: list[dict]

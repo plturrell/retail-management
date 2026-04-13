@@ -8,7 +8,7 @@ class Settings(BaseSettings):
     GCP_LOCATION: str = "global"
     DATABASE_URL: str = ""
     FIREBASE_PROJECT_ID: str = ""
-    CORS_ORIGINS: List[str] = ["http://localhost:3000"]
+    CORS_ORIGINS: List[str] = ["http://localhost:3000", "http://localhost:5173", "https://project-b41c0c0d-6eea-4e9d-a78.web.app"]
     ENVIRONMENT: str = "development"
     GOOGLE_APPLICATION_CREDENTIALS: str = ""
     GEMINI_API_KEY: str = ""
@@ -22,6 +22,18 @@ class Settings(BaseSettings):
     AI_GCS_BUCKET: str = "retailsg-ai-artifacts"
     AI_SYNC_TIMEOUT_SECONDS: int = 15
     AI_ASYNC_TIMEOUT_SECONDS: int = 120
+
+    # Multica Configuration
+    MULTICA_ENDPOINT_URL: str = ""
+
+    # Snowflake configuration
+    SNOWFLAKE_ACCOUNT: str = ""
+    SNOWFLAKE_USER: str = ""
+    SNOWFLAKE_PASSWORD: str = ""
+    SNOWFLAKE_DATABASE: str = ""
+    SNOWFLAKE_SCHEMA: str = "PUBLIC"
+    SNOWFLAKE_WAREHOUSE: str = "COMPUTE_WH"
+    SNOWFLAKE_ROLE: str = "ACCOUNTADMIN"
 
     model_config = {"env_file": ".env", "env_file_encoding": "utf-8"}
 

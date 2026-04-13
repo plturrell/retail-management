@@ -1,6 +1,14 @@
 import asyncio
+import os
 from pathlib import Path
 from unittest.mock import AsyncMock, patch
+
+# app.database creates a global async engine at import time; pytest uses an in-memory
+# SQLite DB via dependency overrides, so this URL is only required to be parseable.
+os.environ.setdefault(
+    "DATABASE_URL",
+    "postgresql+asyncpg://retailsg:retailsg@127.0.0.1:5432/retailsg",
+)
 
 from alembic import command
 from alembic.config import Config

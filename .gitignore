@@ -37,7 +37,9 @@ Pods/
 # ─── Docker ───────────────────────────────────────────────────
 docker-compose.override.yml
 
-# ─── Mangle outputs ──────────────────────────────────────────
+# ─── Mangle / pipeline outputs (generated) ───────────────────
+data/ocr_outputs/
+data/mangle_facts/
 mangle_facts/
 mangle_facts_test/
 ocr_outputs/

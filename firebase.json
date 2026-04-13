@@ -7,9 +7,34 @@
       "email"
     ]
   },
+  "hosting": {
+    "public": "apps/staff-portal/dist",
+    "ignore": ["firebase.json", "**/.*", "**/node_modules/**"],
+    "rewrites": [
+      {
+        "source": "**",
+        "destination": "/index.html"
+      }
+    ],
+    "headers": [
+      {
+        "source": "/service-worker.js",
+        "headers": [
+          {
+            "key": "Cache-Control",
+            "value": "no-cache"
+          }
+        ]
+      }
+    ]
+  },
   "emulators": {
     "auth": {
       "port": 9099,
+      "host": "127.0.0.1"
+    },
+    "hosting": {
+      "port": 5002,
       "host": "127.0.0.1"
     },
     "ui": {

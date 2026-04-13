@@ -21,6 +21,14 @@ from app.services.ai_analytics import (
     generate_insights,
 )
 from app.services.inventory_logic import reorder_recommendations
+from app.services.staff_analytics import (
+    StaffPerformanceOverview,
+    StaffInsightsResponse,
+    SchedulingRecommendationsResponse,
+    get_staff_sales_summary,
+    generate_staff_insights,
+    get_scheduling_recommendations,
+)
 
 router = APIRouter(prefix="/api/stores/{store_id}/analytics", tags=["analytics"])
 
@@ -111,3 +119,40 @@ async def reorder_suggestions(
     """Intelligent reorder recommendations based on sales velocity and stock levels."""
     recs = await reorder_recommendations(db, store_id, lookback_days)
     return [ReorderRecommendation(**r) for r in recs]
+
+
+
+# ──────────────────── Staff Performance ──────────────────
+
+
+@router.get("/staff-performance", response_model=StaffPerformanceOverview)
+async def staff_performance(
+    store_id: UUID,
+    from_date: date = Query(..., alias="from"),
+    to_date: date = Query(..., alias="to"),
+    _: UserStoreRole = Depends(require_store_access),
+    db: AsyncSession = Depends(get_db),
+):
+    """All staff performance overview with ranking for a date range."""
+    return await get_staff_sales_summary(db, store_id, from_date, to_date)
+
+
+@router.get("/staff/{user_id}/insights", response_model=StaffInsightsResponse)
+async def staff_insights(
+    store_id: UUID,
+    user_id: UUID,
+    _: UserStoreRole = Depends(require_store_access),
+    db: AsyncSession = Depends(get_db),
+):
+    """AI-generated insights for an individual staff member."""
+    return await generate_staff_insights(db, store_id, user_id)
+
+
+@router.get("/scheduling-recommendations", response_model=SchedulingRecommendationsResponse)
+async def scheduling_recommendations(
+    store_id: UUID,
+    _: UserStoreRole = Depends(require_store_access),
+    db: AsyncSession = Depends(get_db),
+):
+    """AI-powered scheduling recommendations based on sales patterns."""
+    return await get_scheduling_recommendations(db, store_id)

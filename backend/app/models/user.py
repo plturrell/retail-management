@@ -29,7 +29,7 @@ class User(Base):
 
     # Relationships
     store_roles = relationship("UserStoreRole", back_populates="user", lazy="selectin")
-    orders = relationship("Order", back_populates="staff", lazy="raise")
+    orders = relationship("Order", back_populates="staff", foreign_keys="[Order.staff_id]", lazy="raise")
     employee_profile = relationship("EmployeeProfile", back_populates="user", uselist=False, lazy="raise")
     created_schedules = relationship("Schedule", back_populates="creator", lazy="raise")
     time_entries = relationship("TimeEntry", back_populates="user", foreign_keys="[TimeEntry.user_id]", lazy="raise")

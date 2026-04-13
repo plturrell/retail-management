@@ -479,3 +479,131 @@ async def test_nec_xml_import_oversized_file(client: AsyncClient, seed_user):
     )
     assert resp.status_code == 413
     assert "10MB" in resp.json()["detail"]
+
+
+# ─── Test Salesperson Aliases CRUD ─────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_salesperson_alias_crud(client: AsyncClient, seed_user):
+    """Create, list, and delete salesperson aliases."""
+    store = await _seed_store_and_user(seed_user)
+
+    # Create alias
+    resp = await client.post(
+        f"/api/stores/{store.id}/sales/salesperson-aliases",
+        json={"alias_name": "Johnny", "user_id": str(seed_user.id)},
+    )
+    assert resp.status_code == 201, resp.text
+    data = resp.json()
+    assert data["success"] is True
+    alias = data["data"]
+    assert alias["alias_name"] == "Johnny"
+    assert alias["user_id"] == str(seed_user.id)
+    assert alias["store_id"] == str(store.id)
+    alias_id = alias["id"]
+
+    # List aliases
+    resp = await client.get(
+        f"/api/stores/{store.id}/sales/salesperson-aliases"
+    )
+    assert resp.status_code == 200
+    aliases = resp.json()["data"]
+    assert len(aliases) == 1
+    assert aliases[0]["alias_name"] == "Johnny"
+
+    # Delete alias
+    resp = await client.delete(
+        f"/api/stores/{store.id}/sales/salesperson-aliases/{alias_id}"
+    )
+    assert resp.status_code == 204
+
+    # Verify deleted
+    resp = await client.get(
+        f"/api/stores/{store.id}/sales/salesperson-aliases"
+    )
+    assert resp.status_code == 200
+    assert len(resp.json()["data"]) == 0
+
+
+@pytest.mark.asyncio
+async def test_delete_nonexistent_alias_returns_404(client: AsyncClient, seed_user):
+    store = await _seed_store_and_user(seed_user)
+    fake_id = str(uuid.uuid4())
+    resp = await client.delete(
+        f"/api/stores/{store.id}/sales/salesperson-aliases/{fake_id}"
+    )
+    assert resp.status_code == 404
+
+
+# ─── Test Sales by Staff ──────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_sales_by_staff(client: AsyncClient, seed_user):
+    """Sales grouped by salesperson_id with totals."""
+    store = await _seed_store_and_user(seed_user)
+    sku = await _seed_sku(store.id)
+
+    today = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S")
+    today_date = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+
+    # Create orders with salesperson_id set
+    for amount in [100.00, 200.00]:
+        payload = {
+            "store_id": str(store.id),
+            "payment_method": "nets",
+            "source": "manual",
+            "order_date": today,
+            "items": [
+                {
+                    "sku_id": str(sku.id),
+                    "qty": 1,
+                    "unit_price": amount,
+                    "discount": 0,
+                    "line_total": amount,
+                }
+            ],
+        }
+        resp = await client.post(f"/api/stores/{store.id}/orders", json=payload)
+        assert resp.status_code == 201
+
+    # Assign salesperson_id directly via DB for the test
+    async with TestSessionLocal() as session:
+        from sqlalchemy import update
+        await session.execute(
+            update(Order)
+            .where(Order.store_id == store.id)
+            .values(salesperson_id=seed_user.id)
+        )
+        await session.commit()
+
+    resp = await client.get(
+        f"/api/stores/{store.id}/sales/by-staff?from={today_date}&to={today_date}"
+    )
+    assert resp.status_code == 200, resp.text
+    data = resp.json()
+    assert data["success"] is True
+    summaries = data["data"]
+    assert len(summaries) >= 1
+
+    # Find the entry for our salesperson
+    sp_entry = [s for s in summaries if s["salesperson_id"] == str(seed_user.id)]
+    assert len(sp_entry) == 1
+    assert sp_entry[0]["order_count"] == 2
+    assert sp_entry[0]["total_sales"] == 300.00
+    assert sp_entry[0]["avg_order_value"] == 150.00
+    assert sp_entry[0]["salesperson_name"] == "Test User"
+
+
+@pytest.mark.asyncio
+async def test_sales_by_staff_empty(client: AsyncClient, seed_user):
+    """By-staff endpoint returns empty list when no orders exist."""
+    store = await _seed_store_and_user(seed_user)
+    today_date = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+
+    resp = await client.get(
+        f"/api/stores/{store.id}/sales/by-staff?from={today_date}&to={today_date}"
+    )
+    assert resp.status_code == 200
+    assert resp.json()["data"] == []

@@ -35,6 +35,7 @@ from app.routers import (
     brands,
     cag_xml,
     categories,
+    finance,
     health,
     hr,
     inventory,
@@ -43,6 +44,7 @@ from app.routers import (
     plus,
     prices,
     promotions,
+    reports,
     sales,
     schedules,
     skus,
@@ -92,3 +94,5 @@ app.include_router(payroll.router)
 app.include_router(analytics.router)
 app.include_router(ai_jobs.router)
 app.include_router(banking.router)
+app.include_router(finance.router)
+app.include_router(reports.router)

@@ -1,5 +1,6 @@
 import enum
 import uuid
+from datetime import date
 from typing import Optional
 from sqlalchemy import (
     Boolean,
@@ -57,7 +58,7 @@ class JournalEntry(Base):
 
     id: Mapped[uuid_pk]
     entry_number: Mapped[str] = mapped_column(String(30), unique=True, nullable=False)
-    entry_date: Mapped["date"] = mapped_column(Date, nullable=False)
+    entry_date: Mapped[date] = mapped_column(Date, nullable=False)
     description: Mapped[str] = mapped_column(String(500), nullable=False)
     store_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), ForeignKey("stores.id", ondelete="CASCADE"), nullable=False

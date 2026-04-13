@@ -1,10 +1,8 @@
 .git
-retailmanagement/
-retailmanagement.xcodeproj/
-retailmanagementTests/
-retailmanagementUITests/
+apps/
+data/
 docs/
-scripts/
+tools/
 *.xcworkspace
 *.playground
 *.mangle

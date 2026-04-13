@@ -180,3 +180,14 @@ async def delete_inventory(
     if inv is None:
         raise HTTPException(status_code=404, detail="Inventory record not found")
     await db.delete(inv)
+
+@router.get("/multica/analyze", response_model=dict)
+async def analyze_anomalies_multica(
+    store_id: UUID,
+    low_stock_threshold: int = 5,
+    _: UserStoreRole = Depends(require_store_access),
+):
+    """Hits the SPCS Multica agent natively inside Snowflake."""
+    from app.services.multica_client import analyze_inventory_health
+    resp = await analyze_inventory_health(str(store_id), low_stock_threshold)
+    return resp.model_dump()

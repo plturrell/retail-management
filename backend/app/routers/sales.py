@@ -11,9 +11,15 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
 from app.models.inventory import SKU, Category, Brand
-from app.models.order import Order, OrderItem, OrderStatus
-from app.models.user import User
-from app.auth.dependencies import get_current_user
+from app.models.order import Order, OrderItem, OrderStatus, SalespersonAlias
+from app.models.user import User, RoleEnum
+from app.auth.dependencies import get_current_user, require_store_role
+from app.schemas.common import DataResponse
+from app.schemas.order import (
+    SalespersonAliasCreate,
+    SalespersonAliasRead,
+    StaffSalesSummary,
+)
 
 router = APIRouter(prefix="/api/stores/{store_id}/sales", tags=["sales"])
 
@@ -267,3 +273,128 @@ async def sales_by_brand(
         )
         for row in rows
     ]
+
+
+
+# ─── Sales by Staff ────────────────────────────────────────────────
+
+
+@router.get("/by-staff", response_model=DataResponse[list[StaffSalesSummary]])
+async def sales_by_staff(
+    store_id: UUID,
+    from_date: date = Query(..., alias="from"),
+    to_date: date = Query(..., alias="to"),
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Sales grouped by salesperson_id with totals for a date range."""
+    range_start = datetime.combine(from_date, datetime.min.time())
+    range_end = datetime.combine(to_date, datetime.max.time())
+
+    query = (
+        select(
+            Order.salesperson_id,
+            func.sum(Order.grand_total).label("total_sales"),
+            func.count(Order.id).label("order_count"),
+        )
+        .where(
+            Order.store_id == store_id,
+            Order.order_date >= range_start,
+            Order.order_date <= range_end,
+            Order.status != OrderStatus.voided,
+        )
+        .group_by(Order.salesperson_id)
+    )
+
+    result = await db.execute(query)
+    rows = result.all()
+
+    # Build a lookup of user IDs to names
+    sp_ids = [row[0] for row in rows if row[0] is not None]
+    name_map: dict[UUID, str] = {}
+    if sp_ids:
+        user_result = await db.execute(
+            select(User.id, User.full_name).where(User.id.in_(sp_ids))
+        )
+        name_map = {uid: name for uid, name in user_result.all()}
+
+    summaries = []
+    for row in rows:
+        sp_id = row[0]
+        total = float(row[1] or 0)
+        count = int(row[2] or 0)
+        avg = total / count if count > 0 else 0.0
+        summaries.append(
+            StaffSalesSummary(
+                salesperson_id=sp_id,
+                salesperson_name=name_map.get(sp_id) if sp_id else None,
+                total_sales=round(total, 2),
+                order_count=count,
+                avg_order_value=round(avg, 2),
+            )
+        )
+
+    return DataResponse(data=summaries)
+
+
+# ─── Salesperson Aliases CRUD ──────────────────────────────────────
+
+
+@router.post(
+    "/salesperson-aliases",
+    response_model=DataResponse[SalespersonAliasRead],
+    status_code=201,
+)
+async def create_salesperson_alias(
+    store_id: UUID,
+    payload: SalespersonAliasCreate,
+    _=Depends(require_store_role(RoleEnum.manager)),
+    db: AsyncSession = Depends(get_db),
+):
+    """Create a salesperson alias for OCR name matching."""
+    alias = SalespersonAlias(
+        alias_name=payload.alias_name,
+        user_id=payload.user_id,
+        store_id=store_id,
+    )
+    db.add(alias)
+    await db.flush()
+    await db.refresh(alias)
+    return DataResponse(data=SalespersonAliasRead.model_validate(alias))
+
+
+@router.get(
+    "/salesperson-aliases",
+    response_model=DataResponse[list[SalespersonAliasRead]],
+)
+async def list_salesperson_aliases(
+    store_id: UUID,
+    _=Depends(require_store_role(RoleEnum.staff)),
+    db: AsyncSession = Depends(get_db),
+):
+    """List all salesperson aliases for a store."""
+    result = await db.execute(
+        select(SalespersonAlias).where(SalespersonAlias.store_id == store_id)
+    )
+    aliases = result.scalars().all()
+    return DataResponse(data=[SalespersonAliasRead.model_validate(a) for a in aliases])
+
+
+@router.delete("/salesperson-aliases/{alias_id}", status_code=204)
+async def delete_salesperson_alias(
+    store_id: UUID,
+    alias_id: UUID,
+    _=Depends(require_store_role(RoleEnum.manager)),
+    db: AsyncSession = Depends(get_db),
+):
+    """Delete a salesperson alias."""
+    result = await db.execute(
+        select(SalespersonAlias).where(
+            SalespersonAlias.id == alias_id,
+            SalespersonAlias.store_id == store_id,
+        )
+    )
+    alias = result.scalar_one_or_none()
+    if alias is None:
+        raise HTTPException(status_code=404, detail="Salesperson alias not found")
+    await db.delete(alias)

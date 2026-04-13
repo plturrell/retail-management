@@ -2,7 +2,7 @@ from datetime import datetime, timezone
 from typing import Dict, List, Optional, Set
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile, File
 from sqlalchemy import and_, select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -17,9 +17,13 @@ from app.schemas.timesheet import (
     ClockOutRequest,
     TimeEntryRead,
     TimeEntryUpdate,
+    TimesheetImportReport,
     TimesheetSummaryEntry,
     TimesheetSummaryResponse,
+    VEPayrollImportReport,
 )
+from app.services.timesheet_import import import_timesheet_file
+from app.services.ve_payroll_import import import_ve_payroll
 
 router = APIRouter(tags=["timesheets"])
 
@@ -245,3 +249,47 @@ async def delete_timesheet(
     if entry is None:
         raise HTTPException(status_code=404, detail="Time entry not found")
     await db.delete(entry)
+
+
+# ===================== Timesheet Import =====================
+
+
+@router.post(
+    "/api/stores/{store_id}/timesheets/import",
+    response_model=DataResponse[TimesheetImportReport],
+)
+async def import_timesheets(
+    store_id: UUID,
+    file: UploadFile = File(...),
+    _: UserStoreRole = Depends(require_store_role(RoleEnum.manager)),
+    db: AsyncSession = Depends(get_db),
+):
+    """Import legacy timesheet data from a CSV or Excel file."""
+    content = await file.read()
+    filename = file.filename or "upload.csv"
+    import_result = await import_timesheet_file(db, store_id, filename, content)
+    report = TimesheetImportReport(**import_result.to_dict())
+    return DataResponse(data=report)
+
+
+
+@router.post(
+    "/api/stores/{store_id}/timesheets/import-ve-payroll",
+    response_model=DataResponse[VEPayrollImportReport],
+)
+async def import_ve_payroll_endpoint(
+    store_id: UUID,
+    file: UploadFile = File(...),
+    _: UserStoreRole = Depends(require_store_role(RoleEnum.manager)),
+    db: AsyncSession = Depends(get_db),
+):
+    """Import Victoria Enso legacy payroll Excel file.
+
+    Expects a multi-sheet .xlsx workbook where each sheet is one month.
+    Auto-detects staff columns from 'Person: XXX' cells, extracts daily
+    hours and sales, creates TimeEntry and Order records.
+    """
+    content = await file.read()
+    import_result = await import_ve_payroll(db, store_id, content)
+    report = VEPayrollImportReport(**import_result.to_dict())
+    return DataResponse(data=report)

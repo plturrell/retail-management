@@ -5,7 +5,7 @@ from decimal import Decimal
 from typing import Optional
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from app.schemas.common import TimestampMixin, UUIDMixin
 
@@ -26,6 +26,7 @@ class EmployeeProfileCreate(BaseModel):
     nationality: str = Field(..., pattern="^(citizen|pr|foreigner)$")
     basic_salary: Decimal = Field(..., ge=0)
     hourly_rate: Optional[Decimal] = None
+    commission_rate: Optional[Decimal] = Field(None, ge=0, le=100)
     bank_account: Optional[str] = None
     bank_name: str = "OCBC"
     cpf_account_number: Optional[str] = None
@@ -40,6 +41,7 @@ class EmployeeProfileRead(UUIDMixin, TimestampMixin):
     nationality: str
     basic_salary: Decimal
     hourly_rate: Optional[Decimal] = None
+    commission_rate: Optional[Decimal] = None
     bank_account: Optional[str] = None
     bank_name: str
     cpf_account_number: Optional[str] = None
@@ -63,6 +65,7 @@ class EmployeeProfileReadFull(UUIDMixin, TimestampMixin):
     nationality: str
     basic_salary: Decimal
     hourly_rate: Optional[Decimal] = None
+    commission_rate: Optional[Decimal] = None
     bank_account: Optional[str] = None
     bank_name: str
     cpf_account_number: Optional[str] = None
@@ -78,6 +81,7 @@ class EmployeeProfileUpdate(BaseModel):
     nationality: Optional[str] = Field(None, pattern="^(citizen|pr|foreigner)$")
     basic_salary: Optional[Decimal] = Field(None, ge=0)
     hourly_rate: Optional[Decimal] = None
+    commission_rate: Optional[Decimal] = Field(None, ge=0, le=100)
     bank_account: Optional[str] = None
     bank_name: Optional[str] = None
     cpf_account_number: Optional[str] = None
@@ -136,6 +140,8 @@ class PaySlipRead(UUIDMixin, TimestampMixin):
     overtime_pay: Decimal
     allowances: Decimal
     deductions: Decimal
+    commission_sales: Decimal = Decimal("0")
+    commission_amount: Decimal = Decimal("0")
     gross_pay: Decimal
     cpf_employee: Decimal
     cpf_employer: Decimal
@@ -155,3 +161,53 @@ class PaySlipAdjust(BaseModel):
 
 # Needed for forward reference resolution
 PayrollRunRead.model_rebuild()
+
+
+# ---------- Commission ----------
+
+
+class CommissionTier(BaseModel):
+    min: Decimal = Field(..., ge=0, description="Minimum sales amount for this tier")
+    max: Optional[Decimal] = Field(None, ge=0, description="Maximum sales amount (null = unlimited)")
+    rate: Decimal = Field(..., ge=0, le=1, description="Commission rate as decimal (e.g. 0.05 = 5%)")
+
+
+class CommissionRuleCreate(BaseModel):
+    name: str = Field(..., min_length=1, max_length=200)
+    tiers: list[CommissionTier] = Field(..., min_length=1)
+    is_active: bool = True
+
+
+class CommissionRuleRead(UUIDMixin):
+    store_id: UUID
+    name: str
+    tiers: list[CommissionTier]
+    is_active: bool
+    created_at: datetime
+
+    model_config = ConfigDict(from_attributes=True)
+
+    @field_validator("tiers", mode="before")
+    @classmethod
+    def parse_tiers_json(cls, v):
+        if isinstance(v, str):
+            import json
+            return json.loads(v)
+        return v
+
+
+class CommissionRuleUpdate(BaseModel):
+    name: Optional[str] = Field(None, min_length=1, max_length=200)
+    tiers: Optional[list[CommissionTier]] = None
+    is_active: Optional[bool] = None
+
+
+class CommissionEntryRead(UUIDMixin):
+    payslip_id: UUID
+    commission_rule_id: Optional[UUID] = None
+    sales_amount: Decimal
+    commission_amount: Decimal
+    rule_name: str
+    created_at: datetime
+
+    model_config = ConfigDict(from_attributes=True)

@@ -72,4 +72,6 @@ def downgrade() -> None:
     op.drop_table("journal_lines")
     op.drop_table("journal_entries")
     op.drop_table("accounts")
-    op.execute("DROP TYPE IF EXISTS account_type_enum")
+    bind = op.get_bind()
+    if bind.dialect.name != "sqlite":
+        op.execute("DROP TYPE IF EXISTS account_type_enum")

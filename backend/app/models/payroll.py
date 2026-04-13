@@ -10,6 +10,7 @@ from sqlalchemy import (
     ForeignKey,
     Numeric,
     String,
+    Text,
 )
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
@@ -51,6 +52,9 @@ class EmployeeProfile(Base):
     )
     bank_account: Mapped[Optional[str]] = mapped_column(
         String(50), nullable=True
+    )
+    commission_rate: Mapped[Optional[float]] = mapped_column(
+        Numeric(5, 2), nullable=True
     )
     bank_name: Mapped[str] = mapped_column(
         String(100), default="OCBC", nullable=False
@@ -157,8 +161,58 @@ class PaySlip(Base):
     created_at: Mapped[created_at_col]
     updated_at: Mapped[updated_at_col]
 
+    commission_sales: Mapped[float] = mapped_column(
+        Numeric(12, 2), default=0, nullable=False
+    )
+    commission_amount: Mapped[float] = mapped_column(
+        Numeric(10, 2), default=0, nullable=False
+    )
+
     # Relationships
     payroll_run = relationship("PayrollRun", back_populates="payslips", lazy="raise")
 
     def __repr__(self) -> str:
         return f"<PaySlip user_id={self.user_id} gross={self.gross_pay}>"
+
+
+class CommissionRule(Base):
+    __tablename__ = "commission_rules"
+
+    id: Mapped[uuid_pk]
+    store_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("stores.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    name: Mapped[str] = mapped_column(String(200), nullable=False)
+    tiers: Mapped[str] = mapped_column(
+        Text, nullable=False
+    )  # JSON string: [{"min": 0, "max": 5000, "rate": 0.05}, ...]
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    created_at: Mapped[created_at_col]
+
+    def __repr__(self) -> str:
+        return f"<CommissionRule name={self.name} store_id={self.store_id}>"
+
+
+class CommissionEntry(Base):
+    __tablename__ = "commission_entries"
+
+    id: Mapped[uuid_pk]
+    payslip_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("payslips.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    commission_rule_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("commission_rules.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    sales_amount: Mapped[float] = mapped_column(Numeric(12, 2), nullable=False)
+    commission_amount: Mapped[float] = mapped_column(Numeric(10, 2), nullable=False)
+    rule_name: Mapped[str] = mapped_column(String(200), nullable=False)
+    created_at: Mapped[created_at_col]
+
+    def __repr__(self) -> str:
+        return f"<CommissionEntry payslip_id={self.payslip_id} amount={self.commission_amount}>"

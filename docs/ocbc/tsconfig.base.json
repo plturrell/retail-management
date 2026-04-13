@@ -1,0 +1,21 @@
+{
+  "$schema": "https://json.schemastore.org/tsconfig",
+  "compilerOptions": {
+    "target": "ES2022",
+    "lib": ["ES2022"],
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "allowJs": false,
+    "strict": true,
+    "noEmit": true,
+    "esModuleInterop": true,
+    "resolveJsonModule": true,
+    "skipLibCheck": true,
+    "baseUrl": ".",
+    "paths": {
+      "@tax-build/db": ["packages/db/src/index.ts"],
+      "@tax-build/parser": ["packages/parser/src/index.ts"],
+      "@tax-build/tax-engine": ["packages/tax-engine/src/index.ts"]
+    }
+  }
+}
