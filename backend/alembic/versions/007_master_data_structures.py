@@ -20,15 +20,13 @@ def upgrade() -> None:
     # ------------------------------------------------------------------ #
     # 1. Alter stores table — add new master location fields              #
     # ------------------------------------------------------------------ #
-    op.execute(
-        "CREATE TYPE store_type_enum AS ENUM ('flagship', 'outlet', 'pop_up', 'warehouse', 'online')"
-    )
+    op.execute(sa.text("DO $$ BEGIN CREATE TYPE store_type_enum AS ENUM ('flagship', 'outlet', 'pop_up', 'warehouse', 'online'); EXCEPTION WHEN duplicate_object THEN NULL; END $$"))
     op.add_column("stores", sa.Column("store_code", sa.String(20), nullable=True))
     op.add_column(
         "stores",
         sa.Column(
             "store_type",
-            sa.Enum("flagship", "outlet", "pop_up", "warehouse", "online", name="store_type_enum"),
+            postgresql.ENUM("flagship", "outlet", "pop_up", "warehouse", "online", name="store_type_enum", create_type=False),
             nullable=True,
         ),
     )
@@ -65,9 +63,7 @@ def upgrade() -> None:
         sa.Column("updated_at", sa.DateTime(), nullable=False, server_default=sa.func.now()),
     )
 
-    op.execute(
-        "CREATE TYPE position_level_enum AS ENUM ('entry', 'junior', 'senior', 'lead', 'manager', 'director')"
-    )
+    op.execute(sa.text("DO $$ BEGIN CREATE TYPE position_level_enum AS ENUM ('entry', 'junior', 'senior', 'lead', 'manager', 'director'); EXCEPTION WHEN duplicate_object THEN NULL; END $$"))
     op.create_table(
         "job_positions",
         sa.Column("id", sa.Uuid(), primary_key=True),
@@ -76,7 +72,7 @@ def upgrade() -> None:
         sa.Column("department_id", sa.Uuid(), sa.ForeignKey("departments.id"), nullable=False),
         sa.Column(
             "level",
-            sa.Enum("entry", "junior", "senior", "lead", "manager", "director", name="position_level_enum"),
+            postgresql.ENUM("entry", "junior", "senior", "lead", "manager", "director", name="position_level_enum", create_type=False),
             nullable=False,
             server_default=sa.text("'entry'"),
         ),
@@ -99,9 +95,7 @@ def upgrade() -> None:
         sa.Column("updated_at", sa.DateTime(), nullable=False, server_default=sa.func.now()),
     )
 
-    op.execute(
-        "CREATE TYPE leave_status_enum AS ENUM ('pending', 'approved', 'rejected', 'cancelled')"
-    )
+    op.execute(sa.text("DO $$ BEGIN CREATE TYPE leave_status_enum AS ENUM ('pending', 'approved', 'rejected', 'cancelled'); EXCEPTION WHEN duplicate_object THEN NULL; END $$"))
     op.create_table(
         "leave_requests",
         sa.Column("id", sa.Uuid(), primary_key=True),
@@ -113,7 +107,7 @@ def upgrade() -> None:
         sa.Column("reason", sa.String(1000), nullable=True),
         sa.Column(
             "status",
-            sa.Enum("pending", "approved", "rejected", "cancelled", name="leave_status_enum"),
+            postgresql.ENUM("pending", "approved", "rejected", "cancelled", name="leave_status_enum", create_type=False),
             nullable=False,
             server_default=sa.text("'pending'"),
         ),
@@ -140,14 +134,12 @@ def upgrade() -> None:
     )
 
     # Alter employee_profiles to add employment type, department, position
-    op.execute(
-        "CREATE TYPE employment_type_enum AS ENUM ('full_time', 'part_time', 'contract', 'intern')"
-    )
+    op.execute(sa.text("DO $$ BEGIN CREATE TYPE employment_type_enum AS ENUM ('full_time', 'part_time', 'contract', 'intern'); EXCEPTION WHEN duplicate_object THEN NULL; END $$"))
     op.add_column(
         "employee_profiles",
         sa.Column(
             "employment_type",
-            sa.Enum("full_time", "part_time", "contract", "intern", name="employment_type_enum"),
+            postgresql.ENUM("full_time", "part_time", "contract", "intern", name="employment_type_enum", create_type=False),
             nullable=True,
         ),
     )
@@ -165,18 +157,10 @@ def upgrade() -> None:
     # ------------------------------------------------------------------ #
     # 3. Customer master                                                  #
     # ------------------------------------------------------------------ #
-    op.execute(
-        "CREATE TYPE customer_gender_enum AS ENUM ('male', 'female', 'other', 'prefer_not_to_say')"
-    )
-    op.execute(
-        "CREATE TYPE loyalty_tier_enum AS ENUM ('bronze', 'silver', 'gold', 'platinum')"
-    )
-    op.execute(
-        "CREATE TYPE loyalty_txn_type_enum AS ENUM ('earn', 'redeem', 'adjust', 'expire')"
-    )
-    op.execute(
-        "CREATE TYPE address_type_enum AS ENUM ('home', 'work', 'other')"
-    )
+    op.execute(sa.text("DO $$ BEGIN CREATE TYPE customer_gender_enum AS ENUM ('male', 'female', 'other', 'prefer_not_to_say'); EXCEPTION WHEN duplicate_object THEN NULL; END $$"))
+    op.execute(sa.text("DO $$ BEGIN CREATE TYPE loyalty_tier_enum AS ENUM ('bronze', 'silver', 'gold', 'platinum'); EXCEPTION WHEN duplicate_object THEN NULL; END $$"))
+    op.execute(sa.text("DO $$ BEGIN CREATE TYPE loyalty_txn_type_enum AS ENUM ('earn', 'redeem', 'adjust', 'expire'); EXCEPTION WHEN duplicate_object THEN NULL; END $$"))
+    op.execute(sa.text("DO $$ BEGIN CREATE TYPE address_type_enum AS ENUM ('home', 'work', 'other'); EXCEPTION WHEN duplicate_object THEN NULL; END $$"))
 
     op.create_table(
         "customers",
@@ -189,7 +173,7 @@ def upgrade() -> None:
         sa.Column("date_of_birth", sa.Date(), nullable=True),
         sa.Column(
             "gender",
-            sa.Enum("male", "female", "other", "prefer_not_to_say", name="customer_gender_enum"),
+            postgresql.ENUM("male", "female", "other", "prefer_not_to_say", name="customer_gender_enum", create_type=False),
             nullable=True,
         ),
         sa.Column(
@@ -217,7 +201,7 @@ def upgrade() -> None:
         ),
         sa.Column(
             "address_type",
-            sa.Enum("home", "work", "other", name="address_type_enum"),
+            postgresql.ENUM("home", "work", "other", name="address_type_enum", create_type=False),
             nullable=False,
             server_default=sa.text("'home'"),
         ),
@@ -242,7 +226,7 @@ def upgrade() -> None:
         ),
         sa.Column(
             "tier",
-            sa.Enum("bronze", "silver", "gold", "platinum", name="loyalty_tier_enum"),
+            postgresql.ENUM("bronze", "silver", "gold", "platinum", name="loyalty_tier_enum", create_type=False),
             nullable=False,
             server_default=sa.text("'bronze'"),
         ),
@@ -265,7 +249,7 @@ def upgrade() -> None:
         ),
         sa.Column(
             "transaction_type",
-            sa.Enum("earn", "redeem", "adjust", "expire", name="loyalty_txn_type_enum"),
+            postgresql.ENUM("earn", "redeem", "adjust", "expire", name="loyalty_txn_type_enum", create_type=False),
             nullable=False,
         ),
         sa.Column("points", sa.Integer(), nullable=False),
@@ -330,9 +314,7 @@ def upgrade() -> None:
     # ------------------------------------------------------------------ #
     # 5. Purchasing & Expenses                                            #
     # ------------------------------------------------------------------ #
-    op.execute(
-        "CREATE TYPE po_status_enum AS ENUM ('draft', 'submitted', 'confirmed', 'partially_received', 'fully_received', 'cancelled')"
-    )
+    op.execute(sa.text("DO $$ BEGIN CREATE TYPE po_status_enum AS ENUM ('draft', 'submitted', 'confirmed', 'partially_received', 'fully_received', 'cancelled'); EXCEPTION WHEN duplicate_object THEN NULL; END $$"))
     op.create_table(
         "purchase_orders",
         sa.Column("id", sa.Uuid(), primary_key=True),
@@ -343,7 +325,7 @@ def upgrade() -> None:
         sa.Column("expected_delivery_date", sa.Date(), nullable=True),
         sa.Column(
             "status",
-            sa.Enum("draft", "submitted", "confirmed", "partially_received", "fully_received", "cancelled", name="po_status_enum"),
+            postgresql.ENUM("draft", "submitted", "confirmed", "partially_received", "fully_received", "cancelled", name="po_status_enum", create_type=False),
             nullable=False,
             server_default=sa.text("'draft'"),
         ),
@@ -372,12 +354,8 @@ def upgrade() -> None:
         sa.Column("updated_at", sa.DateTime(), nullable=False, server_default=sa.func.now()),
     )
 
-    op.execute(
-        "CREATE TYPE grn_status_enum AS ENUM ('pending', 'partial', 'complete')"
-    )
-    op.execute(
-        "CREATE TYPE goods_condition_enum AS ENUM ('good', 'damaged', 'rejected')"
-    )
+    op.execute(sa.text("DO $$ BEGIN CREATE TYPE grn_status_enum AS ENUM ('pending', 'partial', 'complete'); EXCEPTION WHEN duplicate_object THEN NULL; END $$"))
+    op.execute(sa.text("DO $$ BEGIN CREATE TYPE goods_condition_enum AS ENUM ('good', 'damaged', 'rejected'); EXCEPTION WHEN duplicate_object THEN NULL; END $$"))
     op.create_table(
         "goods_receipts",
         sa.Column("id", sa.Uuid(), primary_key=True),
@@ -388,7 +366,7 @@ def upgrade() -> None:
         sa.Column("received_by", sa.Uuid(), sa.ForeignKey("users.id"), nullable=False),
         sa.Column(
             "status",
-            sa.Enum("pending", "partial", "complete", name="grn_status_enum"),
+            postgresql.ENUM("pending", "partial", "complete", name="grn_status_enum", create_type=False),
             nullable=False,
             server_default=sa.text("'pending'"),
         ),
@@ -407,7 +385,7 @@ def upgrade() -> None:
         sa.Column("qty_received", sa.Integer(), nullable=False),
         sa.Column(
             "condition",
-            sa.Enum("good", "damaged", "rejected", name="goods_condition_enum"),
+            postgresql.ENUM("good", "damaged", "rejected", name="goods_condition_enum", create_type=False),
             nullable=False,
             server_default=sa.text("'good'"),
         ),
@@ -426,9 +404,7 @@ def upgrade() -> None:
         sa.Column("updated_at", sa.DateTime(), nullable=False, server_default=sa.func.now()),
     )
 
-    op.execute(
-        "CREATE TYPE expense_status_enum AS ENUM ('pending', 'approved', 'paid', 'rejected')"
-    )
+    op.execute(sa.text("DO $$ BEGIN CREATE TYPE expense_status_enum AS ENUM ('pending', 'approved', 'paid', 'rejected'); EXCEPTION WHEN duplicate_object THEN NULL; END $$"))
     op.create_table(
         "expenses",
         sa.Column("id", sa.Uuid(), primary_key=True),
@@ -446,7 +422,7 @@ def upgrade() -> None:
         sa.Column("receipt_url", sa.String(1000), nullable=True),
         sa.Column(
             "status",
-            sa.Enum("pending", "approved", "paid", "rejected", name="expense_status_enum"),
+            postgresql.ENUM("pending", "approved", "paid", "rejected", name="expense_status_enum", create_type=False),
             nullable=False,
             server_default=sa.text("'pending'"),
         ),
@@ -461,15 +437,9 @@ def upgrade() -> None:
     # ------------------------------------------------------------------ #
     # 6. Marketing                                                        #
     # ------------------------------------------------------------------ #
-    op.execute(
-        "CREATE TYPE campaign_type_enum AS ENUM ('discount', 'points_multiplier', 'free_gift', 'bundle')"
-    )
-    op.execute(
-        "CREATE TYPE campaign_status_enum AS ENUM ('draft', 'active', 'paused', 'ended')"
-    )
-    op.execute(
-        "CREATE TYPE campaign_disc_method_enum AS ENUM ('fixed', 'percentage')"
-    )
+    op.execute(sa.text("DO $$ BEGIN CREATE TYPE campaign_type_enum AS ENUM ('discount', 'points_multiplier', 'free_gift', 'bundle'); EXCEPTION WHEN duplicate_object THEN NULL; END $$"))
+    op.execute(sa.text("DO $$ BEGIN CREATE TYPE campaign_status_enum AS ENUM ('draft', 'active', 'paused', 'ended'); EXCEPTION WHEN duplicate_object THEN NULL; END $$"))
+    op.execute(sa.text("DO $$ BEGIN CREATE TYPE campaign_disc_method_enum AS ENUM ('fixed', 'percentage'); EXCEPTION WHEN duplicate_object THEN NULL; END $$"))
     op.create_table(
         "campaigns",
         sa.Column("id", sa.Uuid(), primary_key=True),
@@ -478,12 +448,12 @@ def upgrade() -> None:
         sa.Column("description", sa.String(1000), nullable=True),
         sa.Column(
             "campaign_type",
-            sa.Enum("discount", "points_multiplier", "free_gift", "bundle", name="campaign_type_enum"),
+            postgresql.ENUM("discount", "points_multiplier", "free_gift", "bundle", name="campaign_type_enum", create_type=False),
             nullable=False,
         ),
         sa.Column(
             "status",
-            sa.Enum("draft", "active", "paused", "ended", name="campaign_status_enum"),
+            postgresql.ENUM("draft", "active", "paused", "ended", name="campaign_status_enum", create_type=False),
             nullable=False,
             server_default=sa.text("'draft'"),
         ),
@@ -493,7 +463,7 @@ def upgrade() -> None:
         sa.Column("budget", sa.Numeric(20, 2), nullable=True),
         sa.Column(
             "disc_method",
-            sa.Enum("fixed", "percentage", name="campaign_disc_method_enum"),
+            postgresql.ENUM("fixed", "percentage", name="campaign_disc_method_enum", create_type=False),
             nullable=True,
         ),
         sa.Column("disc_value", sa.Numeric(11, 2), nullable=True),
@@ -524,19 +494,15 @@ def upgrade() -> None:
         sa.UniqueConstraint("campaign_id", "category_id", name="uq_campaign_category"),
     )
 
-    op.execute(
-        "CREATE TYPE voucher_type_enum AS ENUM ('gift_card', 'discount_voucher', 'loyalty_voucher')"
-    )
-    op.execute(
-        "CREATE TYPE voucher_status_enum AS ENUM ('active', 'redeemed', 'expired', 'voided')"
-    )
+    op.execute(sa.text("DO $$ BEGIN CREATE TYPE voucher_type_enum AS ENUM ('gift_card', 'discount_voucher', 'loyalty_voucher'); EXCEPTION WHEN duplicate_object THEN NULL; END $$"))
+    op.execute(sa.text("DO $$ BEGIN CREATE TYPE voucher_status_enum AS ENUM ('active', 'redeemed', 'expired', 'voided'); EXCEPTION WHEN duplicate_object THEN NULL; END $$"))
     op.create_table(
         "vouchers",
         sa.Column("id", sa.Uuid(), primary_key=True),
         sa.Column("voucher_code", sa.String(50), unique=True, nullable=False),
         sa.Column(
             "voucher_type",
-            sa.Enum("gift_card", "discount_voucher", "loyalty_voucher", name="voucher_type_enum"),
+            postgresql.ENUM("gift_card", "discount_voucher", "loyalty_voucher", name="voucher_type_enum", create_type=False),
             nullable=False,
         ),
         sa.Column("face_value", sa.Numeric(20, 2), nullable=False),
@@ -544,7 +510,7 @@ def upgrade() -> None:
         sa.Column("expiry_date", sa.Date(), nullable=True),
         sa.Column(
             "status",
-            sa.Enum("active", "redeemed", "expired", "voided", name="voucher_status_enum"),
+            postgresql.ENUM("active", "redeemed", "expired", "voided", name="voucher_status_enum", create_type=False),
             nullable=False,
             server_default=sa.text("'active'"),
         ),
