@@ -132,6 +132,109 @@ echo "  ✔ Firebase Auth: Email/Password sign-in enabled"
 # Note: No SA key needed — Cloud Run uses Workload Identity
 echo "  ℹ  Using Workload Identity (no SA key file needed)"
 
+# ─── Snowflake Secrets ────────────────────────────────────────
+echo ""
+echo "▶ Storing Snowflake secrets in Secret Manager..."
+
+# Snowflake account identifier (not sensitive — store for convenience)
+echo -n "NDKTJHV-MH65474" | gcloud secrets create retailsg-snowflake-account \
+    --data-file=- --quiet 2>/dev/null || \
+    echo -n "NDKTJHV-MH65474" | gcloud secrets versions add retailsg-snowflake-account --data-file=- --quiet
+echo "  ✔ Secret: retailsg-snowflake-account"
+
+# Snowflake user
+echo -n "RETAILSG_SVC" | gcloud secrets create retailsg-snowflake-user \
+    --data-file=- --quiet 2>/dev/null || \
+    echo -n "RETAILSG_SVC" | gcloud secrets versions add retailsg-snowflake-user --data-file=- --quiet
+echo "  ✔ Secret: retailsg-snowflake-user"
+
+# Snowflake password — prompt securely (must match what you set in setup_snowflake.sql)
+echo ""
+echo "  ┌───────────────────────────────────────────────────────┐"
+echo "  │  Enter the RETAILSG_SVC password you set in           │"
+echo "  │  scripts/setup_snowflake.sql (default: Rsg#Live2026!) │"
+echo "  └───────────────────────────────────────────────────────┘"
+read -rsp "  Snowflake password: " SF_PASSWORD
+echo ""
+echo -n "$SF_PASSWORD" | gcloud secrets create retailsg-snowflake-password \
+    --data-file=- --quiet 2>/dev/null || \
+    echo -n "$SF_PASSWORD" | gcloud secrets versions add retailsg-snowflake-password --data-file=- --quiet
+echo "  ✔ Secret: retailsg-snowflake-password"
+unset SF_PASSWORD
+
+# Static config values
+echo -n "RETAILSG"       | gcloud secrets create retailsg-snowflake-database  --data-file=- --quiet 2>/dev/null || \
+    echo -n "RETAILSG"   | gcloud secrets versions add retailsg-snowflake-database  --data-file=- --quiet
+echo -n "ANALYTICS"      | gcloud secrets create retailsg-snowflake-schema    --data-file=- --quiet 2>/dev/null || \
+    echo -n "ANALYTICS"  | gcloud secrets versions add retailsg-snowflake-schema    --data-file=- --quiet
+echo -n "RETAILSG_WH"    | gcloud secrets create retailsg-snowflake-warehouse  --data-file=- --quiet 2>/dev/null || \
+    echo -n "RETAILSG_WH"| gcloud secrets versions add retailsg-snowflake-warehouse  --data-file=- --quiet
+echo -n "RETAILSG_ROLE"  | gcloud secrets create retailsg-snowflake-role      --data-file=- --quiet 2>/dev/null || \
+    echo -n "RETAILSG_ROLE"| gcloud secrets versions add retailsg-snowflake-role      --data-file=- --quiet
+echo -n "ETL"            | gcloud secrets create retailsg-snowflake-etl-schema --data-file=- --quiet 2>/dev/null || \
+    echo -n "ETL"        | gcloud secrets versions add retailsg-snowflake-etl-schema --data-file=- --quiet
+
+echo "  ✔ Snowflake config secrets stored"
+
+# Grant the service account access to all Snowflake secrets
+for SECRET in retailsg-snowflake-account retailsg-snowflake-user retailsg-snowflake-password \
+              retailsg-snowflake-database retailsg-snowflake-schema retailsg-snowflake-warehouse \
+              retailsg-snowflake-role retailsg-snowflake-etl-schema; do
+    gcloud secrets add-iam-policy-binding "$SECRET" \
+        --member="serviceAccount:$SA_EMAIL" \
+        --role="roles/secretmanager.secretAccessor" \
+        --quiet > /dev/null
+done
+echo "  ✔ Service account granted access to all Snowflake secrets"
+
+# ─── Cloud Scheduler — Nightly ETL ───────────────────────────
+echo ""
+echo "▶ Setting up Cloud Scheduler for nightly ETL..."
+
+# Enable Cloud Scheduler API
+gcloud services enable cloudscheduler.googleapis.com --quiet
+
+# Cloud Run service URL (available after first deploy)
+CLOUD_RUN_URL="https://${_SERVICE_NAME:-retailsg-api}-$(gcloud run services describe "${_SERVICE_NAME:-retailsg-api}" \
+    --region="$REGION" --format='value(status.url)' 2>/dev/null | sed 's|https://||' | cut -d. -f2-)"
+# Fallback: construct URL pattern (will be correct after first deploy)
+CLOUD_RUN_URL=$(gcloud run services describe "retailsg-api" \
+    --region="$REGION" --format='value(status.url)' 2>/dev/null || echo "https://retailsg-api-HASH-as.a.run.app")
+
+# Create or update the nightly ETL job
+# Runs at 2:00 AM SGT = 18:00 UTC
+if gcloud scheduler jobs describe retailsg-nightly-etl --location="$REGION" --quiet 2>/dev/null; then
+    gcloud scheduler jobs update http retailsg-nightly-etl \
+        --location="$REGION" \
+        --schedule="0 18 * * *" \
+        --uri="${CLOUD_RUN_URL}/api/etl/run" \
+        --http-method=POST \
+        --headers="Content-Type=application/json" \
+        --oidc-service-account-email="$SA_EMAIL" \
+        --time-zone="UTC" \
+        --quiet
+else
+    gcloud scheduler jobs create http retailsg-nightly-etl \
+        --location="$REGION" \
+        --schedule="0 18 * * *" \
+        --uri="${CLOUD_RUN_URL}/api/etl/run" \
+        --http-method=POST \
+        --headers="Content-Type=application/json" \
+        --oidc-service-account-email="$SA_EMAIL" \
+        --time-zone="UTC" \
+        --description="Nightly PostgreSQL → Snowflake ETL (2am SGT)" \
+        --quiet
+fi
+echo "  ✔ Cloud Scheduler: retailsg-nightly-etl (0 18 * * * UTC = 2am SGT)"
+
+# Grant Cloud Scheduler permission to invoke the Cloud Run service
+gcloud run services add-iam-policy-binding "retailsg-api" \
+    --region="$REGION" \
+    --member="serviceAccount:$SA_EMAIL" \
+    --role="roles/run.invoker" \
+    --quiet 2>/dev/null || true
+echo "  ✔ Scheduler can invoke Cloud Run"
+
 # ─── Summary ──────────────────────────────────────────────────
 echo ""
 echo "═══════════════════════════════════════════════════════"
@@ -144,7 +247,23 @@ echo "  Cloud SQL:        $DB_INSTANCE ($REGION)"
 echo "  Service Account:  $SA_EMAIL"
 echo "  Database URL:     (stored in Secret Manager)"
 echo ""
+echo "  Snowflake:        NDKTJHV-MH65474.snowflakecomputing.com"
+echo "  SF User:          RETAILSG_SVC"
+echo "  SF Warehouse:     RETAILSG_WH"
+echo "  SF Database:      RETAILSG  (ANALYTICS + ETL schemas)"
+echo "  SF Password:      (stored in Secret Manager: retailsg-snowflake-password)"
+echo ""
+echo "  ETL Schedule:     Nightly 2am SGT via Cloud Scheduler"
+echo ""
 echo "  Next steps:"
-echo "    1. Run: cd backend && cp .env.example .env"
-echo "    2. Deploy: cd backend && gcloud builds submit --config=cloudbuild.yaml ."
+echo "    1. Run Snowflake bootstrap:"
+echo "       Open Snowsight → run scripts/setup_snowflake.sql as VICTORIAENSO"
+echo "    2. Run Snowflake DDL (as RETAILSG_SVC):"
+echo "       snowflake/schema/001_dimensions.sql"
+echo "       snowflake/schema/002_facts.sql"
+echo "       snowflake/schema/003_cortex_views.sql"
+echo "    3. Deploy API:"
+echo "       cd backend && gcloud builds submit --config=cloudbuild.yaml ."
+echo "    4. Trigger first ETL:"
+echo "       curl -X POST https://<YOUR_CLOUD_RUN_URL>/api/etl/run"
 echo ""
