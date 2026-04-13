@@ -10,6 +10,8 @@ struct DashboardView: View {
     @Environment(StoreViewModel.self) var storeViewModel
     @State private var inventoryVM = InventoryViewModel()
     @State private var ordersVM = OrdersViewModel()
+    
+    @State private var animateSymbols = false
 
     private var storeName: String {
         storeViewModel.selectedStore?.name ?? "Your Store"
@@ -17,120 +19,149 @@ struct DashboardView: View {
 
     var body: some View {
         NavigationStack {
-            ScrollView {
-                VStack(spacing: 20) {
-                    // Greeting
-                    HStack {
-                        VStack(alignment: .leading, spacing: 4) {
-                            Text("Welcome back,")
-                                .font(.subheadline)
-                                .foregroundStyle(.secondary)
-                            Text(authViewModel.currentUser?.fullName ?? "User")
-                                .font(.title2.bold())
-                        }
-                        Spacer()
-                        Image(systemName: "storefront.fill")
-                            .font(.title)
-                            .foregroundStyle(.blue)
-                    }
-                    .padding(.horizontal)
-
-                    // KPI Cards
-                    LazyVGrid(columns: [
-                        GridItem(.flexible()),
-                        GridItem(.flexible()),
-                    ], spacing: 16) {
-                        KPICard(
-                            title: "Today's Revenue",
-                            value: String(format: "$%.2f", ordersVM.todayRevenue),
-                            icon: "dollarsign.circle.fill",
-                            color: .green
-                        )
-                        KPICard(
-                            title: "Open Orders",
-                            value: "\(ordersVM.openOrdersCount)",
-                            icon: "cart.fill",
-                            color: .orange
-                        )
-                        KPICard(
-                            title: "Total SKUs",
-                            value: "\(inventoryVM.totalSKUs)",
-                            icon: "shippingbox.fill",
-                            color: .blue
-                        )
-                        KPICard(
-                            title: "Low Stock",
-                            value: "\(inventoryVM.lowStockItems.count)",
-                            icon: "exclamationmark.triangle.fill",
-                            color: inventoryVM.lowStockItems.isEmpty ? .gray : .red
-                        )
-                    }
-                    .padding(.horizontal)
-
-                    // Recent Orders
-                    VStack(alignment: .leading, spacing: 12) {
+            ZStack {
+                // Background Depth - Defines the spatial environment
+                LinearGradient(
+                    colors: [Color.blue.opacity(0.15), Color.purple.opacity(0.05), Color(uiColor: .systemBackground)],
+                    startPoint: .topLeading,
+                    endPoint: .bottomTrailing
+                )
+                .ignoresSafeArea()
+                
+                ScrollView {
+                    VStack(spacing: 24) {
+                        // Greeting - High Typographic Precision
                         HStack {
-                            Text("Recent Orders")
-                                .font(.headline)
-                            Spacer()
-                        }
-
-                        if ordersVM.orders.isEmpty {
-                            Text("No orders yet")
-                                .font(.subheadline)
-                                .foregroundStyle(.secondary)
-                                .frame(maxWidth: .infinity, alignment: .center)
-                                .padding(.vertical, 24)
-                        } else {
-                            ForEach(ordersVM.orders.prefix(3)) { order in
-                                OrderRowCard(order: order)
+                            VStack(alignment: .leading, spacing: 4) {
+                                Text("Welcome back,")
+                                    .font(.system(.subheadline, design: .rounded))
+                                    .foregroundStyle(.secondary)
+                                Text(authViewModel.currentUser?.fullName ?? "User")
+                                    .font(.system(.title, design: .rounded).bold())
                             }
+                            Spacer()
+                            Image(systemName: "storefront.fill")
+                                .font(.title)
+                                .foregroundStyle(LinearGradient(colors: [.cyan, .blue], startPoint: .top, endPoint: .bottom))
+                                .symbolEffect(.bounce, value: animateSymbols)
                         }
-                    }
-                    .padding(.horizontal)
+                        .padding(.horizontal)
 
-                    // Low Stock Alerts
-                    if !inventoryVM.lowStockItems.isEmpty {
-                        VStack(alignment: .leading, spacing: 12) {
+                        // KPI Cards - Glassmorphism & Numeric Transitions
+                        LazyVGrid(columns: [
+                            GridItem(.flexible()),
+                            GridItem(.flexible()),
+                        ], spacing: 16) {
+                            KPICard(
+                                title: "Today's Revenue",
+                                value: String(format: "$%.2f", ordersVM.todayRevenue),
+                                icon: "dollarsign.circle.fill",
+                                color: .green,
+                                animate: animateSymbols
+                            )
+                            KPICard(
+                                title: "Open Orders",
+                                value: "\(ordersVM.openOrdersCount)",
+                                icon: "cart.fill",
+                                color: .orange,
+                                animate: animateSymbols
+                            )
+                            KPICard(
+                                title: "Total SKUs",
+                                value: "\(inventoryVM.totalSKUs)",
+                                icon: "shippingbox.fill",
+                                color: .blue,
+                                animate: animateSymbols
+                            )
+                            KPICard(
+                                title: "Low Stock",
+                                value: "\(inventoryVM.lowStockItems.count)",
+                                icon: "exclamationmark.triangle.fill",
+                                color: inventoryVM.lowStockItems.isEmpty ? .gray : .red,
+                                animate: animateSymbols
+                            )
+                        }
+                        .padding(.horizontal)
+
+                        // Recent Orders - Fluid Spatial Rendering
+                        VStack(alignment: .leading, spacing: 16) {
                             HStack {
-                                Image(systemName: "exclamationmark.triangle.fill")
-                                    .foregroundStyle(.red)
-                                Text("Low Stock Alerts")
-                                    .font(.headline)
+                                Text("Recent Orders")
+                                    .font(.system(.title3, design: .rounded).weight(.semibold))
                                 Spacer()
                             }
 
-                            ForEach(inventoryVM.lowStockItems) { item in
-                                if let sku = inventoryVM.skus.first(where: { $0.id == item.skuId }) {
-                                    HStack {
-                                        VStack(alignment: .leading, spacing: 2) {
-                                            Text(sku.description)
-                                                .font(.subheadline.weight(.medium))
-                                            Text(sku.skuCode)
-                                                .font(.caption)
-                                                .foregroundStyle(.secondary)
-                                        }
-                                        Spacer()
-                                        Text("\(item.qtyOnHand) left")
-                                            .font(.subheadline.weight(.semibold))
-                                            .foregroundStyle(.red)
-                                    }
-                                    .padding(12)
-                                    .background(.red.opacity(0.08))
-                                    .clipShape(RoundedRectangle(cornerRadius: 10))
+                            if ordersVM.orders.isEmpty {
+                                Text("No orders yet")
+                                    .font(.system(.subheadline, design: .rounded))
+                                    .foregroundStyle(.secondary)
+                                    .frame(maxWidth: .infinity, alignment: .center)
+                                    .padding(.vertical, 32)
+                                    .background(.ultraThinMaterial)
+                                    .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+                            } else {
+                                ForEach(ordersVM.orders.prefix(3)) { order in
+                                    OrderRowCard(order: order)
+                                        .transition(.asymmetric(insertion: .scale.combined(with: .opacity), removal: .opacity))
                                 }
                             }
                         }
                         .padding(.horizontal)
+
+                        // Low Stock Alerts - High urgency tactile feedback
+                        if !inventoryVM.lowStockItems.isEmpty {
+                            VStack(alignment: .leading, spacing: 16) {
+                                HStack {
+                                    Image(systemName: "exclamationmark.triangle.fill")
+                                        .symbolEffect(.pulse.byLayer, options: .repeating)
+                                        .foregroundStyle(.red)
+                                    Text("Low Stock Alerts")
+                                        .font(.system(.title3, design: .rounded).weight(.semibold))
+                                    Spacer()
+                                }
+
+                                ForEach(inventoryVM.lowStockItems) { item in
+                                    if let sku = inventoryVM.skus.first(where: { $0.id == item.skuId }) {
+                                        HStack {
+                                            VStack(alignment: .leading, spacing: 4) {
+                                                Text(sku.description)
+                                                    .font(.system(.subheadline, design: .rounded).weight(.medium))
+                                                Text(sku.skuCode)
+                                                    .font(.system(.caption, design: .rounded))
+                                                    .foregroundStyle(.secondary)
+                                            }
+                                            Spacer()
+                                            Text("\(item.qtyOnHand) left")
+                                                .font(.system(.subheadline, design: .rounded).weight(.semibold))
+                                                .foregroundStyle(.red)
+                                                .contentTransition(.numericText())
+                                        }
+                                        .padding()
+                                        .background(.ultraThinMaterial)
+                                        .overlay(
+                                            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                                                .strokeBorder(Color.red.opacity(0.3), lineWidth: 0.5)
+                                        )
+                                        .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+                                    }
+                                }
+                            }
+                            .padding(.horizontal)
+                        }
                     }
+                    .padding(.vertical)
                 }
-                .padding(.vertical)
             }
             .navigationTitle("Dashboard")
+            .onAppear {
+                animateSymbols.toggle()
+            }
             .task {
-                if let storeId = storeViewModel.selectedStore?.id {
-                    await inventoryVM.loadData(storeId: storeId)
-                    await ordersVM.loadOrders(storeId: storeId)
+                withAnimation(.spring(response: 0.5, dampingFraction: 0.8)) {
+                    if let storeId = storeViewModel.selectedStore?.id {
+                        Task { await inventoryVM.loadData(storeId: storeId) }
+                        Task { await ordersVM.loadOrders(storeId: storeId) }
+                    }
                 }
             }
         }
@@ -144,24 +175,37 @@ struct KPICard: View {
     let value: String
     let icon: String
     let color: Color
+    let animate: Bool
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: 12) {
             HStack {
                 Image(systemName: icon)
-                    .font(.title3)
-                    .foregroundStyle(color)
+                    .font(.title2)
+                    .foregroundStyle(LinearGradient(colors: [color.opacity(0.7), color], startPoint: .topLeading, endPoint: .bottomTrailing))
+                    .symbolEffect(.bounce, value: animate)
                 Spacer()
             }
-            Text(value)
-                .font(.title2.bold())
-            Text(title)
-                .font(.caption)
-                .foregroundStyle(.secondary)
+            
+            VStack(alignment: .leading, spacing: 2) {
+                Text(value)
+                    .font(.system(.title2, design: .rounded).weight(.bold))
+                    .contentTransition(.numericText())
+                Text(title)
+                    .font(.system(.caption, design: .rounded).weight(.medium))
+                    .foregroundStyle(.secondary)
+            }
         }
-        .padding()
-        .background(color.opacity(0.08))
-        .clipShape(RoundedRectangle(cornerRadius: 14))
+        .padding(16)
+        // WWDC Spatial Standard - Ultra Thin Material hovering over ambient background
+        .background(.ultraThinMaterial)
+        .overlay(
+            RoundedRectangle(cornerRadius: 20, style: .continuous)
+                .strokeBorder(Color.white.opacity(0.15), lineWidth: 0.5)
+                .blendMode(.overlay)
+        )
+        .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
+        .shadow(color: color.opacity(0.1), radius: 8, x: 0, y: 4)
     }
 }
 
@@ -178,32 +222,39 @@ struct OrderRowCard: View {
 
     var body: some View {
         HStack {
-            VStack(alignment: .leading, spacing: 4) {
+            VStack(alignment: .leading, spacing: 6) {
                 Text(order.orderNumber)
-                    .font(.subheadline.weight(.medium))
+                    .font(.system(.subheadline, design: .rounded).weight(.semibold))
                 HStack(spacing: 8) {
                     Text(order.source.displayName)
-                        .font(.caption)
+                        .font(.system(.caption, design: .rounded))
                         .foregroundStyle(.secondary)
                     Text("·")
                         .foregroundStyle(.secondary)
                     Text("\(order.itemCount) items")
-                        .font(.caption)
+                        .font(.system(.caption, design: .rounded))
                         .foregroundStyle(.secondary)
+                        .contentTransition(.numericText())
                 }
             }
             Spacer()
-            VStack(alignment: .trailing, spacing: 4) {
+            VStack(alignment: .trailing, spacing: 6) {
                 Text(order.formattedTotal)
-                    .font(.subheadline.weight(.semibold))
+                    .font(.system(.subheadline, design: .rounded).weight(.bold))
+                    .contentTransition(.numericText())
                 Text(order.status.displayName)
-                    .font(.caption.weight(.medium))
+                    .font(.system(.caption, design: .rounded).weight(.bold))
                     .foregroundStyle(statusColor)
             }
         }
-        .padding(12)
-        .background(.quaternary.opacity(0.5))
-        .clipShape(RoundedRectangle(cornerRadius: 10))
+        .padding(16)
+        .background(.ultraThinMaterial)
+        .overlay(
+            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                .strokeBorder(Color.white.opacity(0.1), lineWidth: 0.5)
+        )
+        .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+        .shadow(color: .black.opacity(0.04), radius: 4, x: 0, y: 2)
     }
 }
 

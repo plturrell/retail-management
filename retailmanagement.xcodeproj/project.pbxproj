@@ -6,6 +6,11 @@
 	objectVersion = 77;
 	objects = {
 
+/* Begin PBXBuildFile section */
+		CE1A7CB32F8B1F3B00194E79 /* FirebaseAuth in Frameworks */ = {isa = PBXBuildFile; productRef = CE2B8D022F8B000000000002 /* FirebaseAuth */; };
+		CE1A7CB42F8B1F3B00194E79 /* FirebaseCore in Frameworks */ = {isa = PBXBuildFile; productRef = CE2B8D032F8B000000000003 /* FirebaseCore */; };
+/* End PBXBuildFile section */
+
 /* Begin PBXContainerItemProxy section */
 		CE1A7C5F2F8A724D00194E79 /* PBXContainerItemProxy */ = {
 			isa = PBXContainerItemProxy;
@@ -65,6 +70,8 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				CE1A7CB42F8B1F3B00194E79 /* FirebaseCore in Frameworks */,
+				CE1A7CB32F8B1F3B00194E79 /* FirebaseAuth in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -210,12 +217,12 @@
 			);
 			mainGroup = CE1A7C442F8A724B00194E79;
 			minimizedProjectReferenceProxies = 1;
-			preferredProjectObjectVersion = 77;
-			productRefGroup = CE1A7C4E2F8A724B00194E79 /* Products */;
-			projectDirPath = "";
 			packageReferences = (
 				CE2B8D012F8B000000000001 /* XCRemoteSwiftPackageReference "firebase-ios-sdk" */,
 			);
+			preferredProjectObjectVersion = 77;
+			productRefGroup = CE1A7C4E2F8A724B00194E79 /* Products */;
+			projectDirPath = "";
 			projectRoot = "";
 			targets = (
 				CE1A7C4C2F8A724B00194E79 /* retailmanagement */,

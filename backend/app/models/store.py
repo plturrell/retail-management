@@ -20,12 +20,14 @@ class Store(Base):
     updated_at: Mapped[updated_at_col]
 
     # Relationships
-    user_roles = relationship("UserStoreRole", back_populates="store", lazy="selectin")
-    categories = relationship("Category", back_populates="store", lazy="selectin")
-    skus = relationship("SKU", back_populates="store", lazy="selectin")
-    prices = relationship("Price", back_populates="store", lazy="selectin")
-    inventories = relationship("Inventory", back_populates="store", lazy="selectin")
-    orders = relationship("Order", back_populates="store", lazy="selectin")
+    user_roles = relationship("UserStoreRole", back_populates="store", lazy="raise")
+    categories = relationship("Category", back_populates="store", lazy="raise")
+    skus = relationship("SKU", back_populates="store", lazy="raise")
+    prices = relationship("Price", back_populates="store", lazy="raise")
+    inventories = relationship("Inventory", back_populates="store", lazy="raise")
+    orders = relationship("Order", back_populates="store", lazy="raise")
+    schedules = relationship("Schedule", back_populates="store", lazy="raise")
+    time_entries = relationship("TimeEntry", back_populates="store", lazy="raise")
 
     def __repr__(self) -> str:
         return f"<Store {self.name}>"

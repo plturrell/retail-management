@@ -13,7 +13,7 @@
 substitutions:
   _REGION: asia-southeast1
   _SERVICE_NAME: retailsg-api
-  _CLOUD_SQL_INSTANCE: "project-b41c0c0d-6eea-4e9d-a78:${_REGION}:retailsg"
+  _CLOUD_SQL_INSTANCE: "project-b41c0c0d-6eea-4e9d-a78:asia-southeast1:retailsg"
 
 steps:
   # Build container image
@@ -42,6 +42,9 @@ steps:
       - "--image=${_REGION}-docker.pkg.dev/${PROJECT_ID}/retailsg/${_SERVICE_NAME}:${SHORT_SHA}"
       - "--region=${_REGION}"
       - "--platform=managed"
+      # TODO: Replace with --no-allow-unauthenticated + API Gateway/Load Balancer
+      # for Firebase token validation at the edge. Kept public for now because the
+      # iOS app hits Cloud Run directly and all endpoints enforce Firebase auth.
       - "--allow-unauthenticated"
       - "--port=8000"
       - "--memory=512Mi"

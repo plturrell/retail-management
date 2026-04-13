@@ -57,8 +57,8 @@ class Order(Base):
     updated_at: Mapped[updated_at_col]
 
     # Relationships
-    store = relationship("Store", back_populates="orders", lazy="selectin")
-    staff = relationship("User", back_populates="orders", lazy="selectin")
+    store = relationship("Store", back_populates="orders", lazy="raise")
+    staff = relationship("User", back_populates="orders", lazy="raise")
     items = relationship("OrderItem", back_populates="order", lazy="selectin")
 
     def __repr__(self) -> str:
@@ -86,8 +86,8 @@ class OrderItem(Base):
     created_at: Mapped[created_at_col]
 
     # Relationships
-    order = relationship("Order", back_populates="items", lazy="selectin")
-    sku = relationship("SKU", back_populates="order_items", lazy="selectin")
+    order = relationship("Order", back_populates="items", lazy="raise")
+    sku = relationship("SKU", back_populates="order_items", lazy="raise")
 
     def __repr__(self) -> str:
         return f"<OrderItem order={self.order_id} sku={self.sku_id} qty={self.qty}>"

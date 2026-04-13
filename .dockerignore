@@ -1,0 +1,15 @@
+.git
+retailmanagement/
+retailmanagement.xcodeproj/
+retailmanagementTests/
+retailmanagementUITests/
+docs/
+scripts/
+*.xcworkspace
+*.playground
+*.mangle
+__pycache__
+*.pyc
+.pytest_cache
+.env
+.venv

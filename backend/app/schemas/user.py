@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import datetime
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -37,8 +38,12 @@ class UserStoreRoleCreate(UserStoreRoleBase):
     pass
 
 
+class UserStoreRoleUpdate(BaseModel):
+    role: str
+
+
 class UserStoreRoleRead(UserStoreRoleBase, UUIDMixin):
-    created_at: str | None = None
+    created_at: datetime | None = None
     model_config = ConfigDict(from_attributes=True)
 
 
@@ -50,6 +55,7 @@ class UserMeRead(UserBase, UUIDMixin, TimestampMixin):
 
 class StoreEmployeeRead(BaseModel):
     id: UUID
+    role_id: UUID
     full_name: str
     email: str
     phone: str | None = None

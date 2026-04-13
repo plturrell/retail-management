@@ -3,14 +3,10 @@ from logging.config import fileConfig
 
 from alembic import context
 from sqlalchemy import pool
-from sqlalchemy.ext.asyncio import async_engine_from_config
+from sqlalchemy.ext.asyncio import create_async_engine
 
 from app.database import Base
-from app.models import (  # noqa: F401 — ensure all models are imported
-    Store, User, UserStoreRole,
-    Category, Brand, SKU, PLU, Price, Promotion, Inventory,
-    Order, OrderItem,
-)
+import app.models  # noqa: F401
 
 from app.config import settings
 
@@ -23,7 +19,7 @@ target_metadata = Base.metadata
 
 def run_migrations_offline() -> None:
     """Run migrations in 'offline' mode."""
-    url = config.get_main_option("sqlalchemy.url")
+    url = config.get_main_option("sqlalchemy.url") or settings.DATABASE_URL
     context.configure(
         url=url,
         target_metadata=target_metadata,
@@ -42,8 +38,8 @@ def do_run_migrations(connection):
 
 async def run_async_migrations() -> None:
     """Run migrations in 'online' mode with async engine."""
-    from sqlalchemy.ext.asyncio import create_async_engine
-    connectable = create_async_engine(settings.DATABASE_URL, poolclass=pool.NullPool)
+    url = config.get_main_option("sqlalchemy.url") or settings.DATABASE_URL
+    connectable = create_async_engine(url, poolclass=pool.NullPool)
     async with connectable.connect() as connection:
         await connection.run_sync(do_run_migrations)
     await connectable.dispose()
@@ -51,6 +47,10 @@ async def run_async_migrations() -> None:
 
 def run_migrations_online() -> None:
     """Run migrations in 'online' mode."""
+    connection = config.attributes.get("connection")
+    if connection is not None:
+        do_run_migrations(connection)
+        return
     asyncio.run(run_async_migrations())
 
 

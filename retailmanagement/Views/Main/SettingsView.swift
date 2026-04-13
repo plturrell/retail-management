@@ -9,6 +9,7 @@ struct SettingsView: View {
     @Environment(AuthViewModel.self) var authViewModel
     @Environment(StoreViewModel.self) var storeViewModel
     @State private var showStorePicker = false
+    @State private var showProfileEdit = false
 
     var body: some View {
         NavigationStack {
@@ -26,9 +27,20 @@ struct SettingsView: View {
                                 Text(user.email)
                                     .font(.subheadline)
                                     .foregroundStyle(.secondary)
+                                if let phone = user.phone, !phone.isEmpty {
+                                    Text(phone)
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
+                                }
                             }
                         }
                         .padding(.vertical, 4)
+
+                        Button {
+                            showProfileEdit = true
+                        } label: {
+                            Label("Edit Profile", systemImage: "pencil")
+                        }
                     }
                 }
 
@@ -70,6 +82,9 @@ struct SettingsView: View {
             .navigationTitle("Settings")
             .sheet(isPresented: $showStorePicker) {
                 StorePickerView()
+            }
+            .sheet(isPresented: $showProfileEdit) {
+                ProfileEditView()
             }
         }
     }

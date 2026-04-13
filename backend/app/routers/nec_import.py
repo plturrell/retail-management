@@ -3,7 +3,7 @@ from __future__ import annotations
 import xml.etree.ElementTree as ET
 
 import defusedxml.ElementTree as SafeET
-from datetime import UTC, datetime
+from datetime import datetime, timezone
 from typing import Optional
 from uuid import UUID
 
@@ -38,7 +38,10 @@ async def import_nec_sales(
     Expects XML with <SalesExport><Transaction>... structure.
     Skips duplicate transaction IDs for idempotency.
     """
-    content = await file.read()
+    MAX_UPLOAD_BYTES = 10 * 1024 * 1024
+    content = await file.read(MAX_UPLOAD_BYTES + 1)
+    if len(content) > MAX_UPLOAD_BYTES:
+        raise HTTPException(status_code=413, detail="File exceeds 10MB limit")
     try:
         root = SafeET.fromstring(content)
     except ET.ParseError as e:
@@ -79,7 +82,7 @@ async def import_nec_sales(
             tax_total = float(_text(txn, "TaxTotal") or "0")
             grand_total = float(_text(txn, "GrandTotal") or "0")
 
-            order_date = datetime.fromisoformat(timestamp_str) if timestamp_str else datetime.now(UTC)
+            order_date = datetime.fromisoformat(timestamp_str) if timestamp_str else datetime.now(timezone.utc)
 
             # Look up the store by matching store name/location or use direct UUID
             # For NEC imports, StoreId in XML is a store identifier string.

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import datetime, timezone
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -10,8 +10,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
 from app.models.inventory import Inventory, SKU
-from app.models.user import User
-from app.auth.dependencies import get_current_user
+from app.models.user import RoleEnum, UserStoreRole
+from app.auth.dependencies import require_store_access, require_store_role
 from app.schemas.common import DataResponse, PaginatedResponse
 from app.schemas.inventory import InventoryCreate, InventoryRead, InventoryUpdate
 
@@ -29,7 +29,7 @@ async def list_inventory(
     page: int = 1,
     page_size: int = 50,
     low_stock: bool = False,
-    user: User = Depends(get_current_user),
+    _: UserStoreRole = Depends(require_store_access),
     db: AsyncSession = Depends(get_db),
 ):
     base = select(Inventory).where(Inventory.store_id == store_id)
@@ -56,7 +56,7 @@ async def list_inventory(
 @router.get("/alerts", response_model=DataResponse[list[InventoryRead]])
 async def inventory_alerts(
     store_id: UUID,
-    user: User = Depends(get_current_user),
+    _: UserStoreRole = Depends(require_store_access),
     db: AsyncSession = Depends(get_db),
 ):
     query = select(Inventory).where(
@@ -72,7 +72,7 @@ async def inventory_alerts(
 async def get_inventory_by_sku(
     store_id: UUID,
     sku_id: UUID,
-    user: User = Depends(get_current_user),
+    _: UserStoreRole = Depends(require_store_access),
     db: AsyncSession = Depends(get_db),
 ):
     result = await db.execute(
@@ -90,12 +90,21 @@ async def get_inventory_by_sku(
 async def create_inventory(
     store_id: UUID,
     payload: InventoryCreate,
-    user: User = Depends(get_current_user),
+    _: UserStoreRole = Depends(require_store_role(RoleEnum.manager)),
     db: AsyncSession = Depends(get_db),
 ):
+    if payload.store_id != store_id:
+        raise HTTPException(status_code=400, detail="Payload store_id must match route store_id")
+
+    sku_result = await db.execute(
+        select(SKU).where(SKU.id == payload.sku_id, SKU.store_id == store_id)
+    )
+    if sku_result.scalar_one_or_none() is None:
+        raise HTTPException(status_code=400, detail="SKU is not available in this store")
+
     data = payload.model_dump()
     data["store_id"] = store_id
-    data["last_updated"] = datetime.now(UTC)
+    data["last_updated"] = datetime.now(timezone.utc)
     inv = Inventory(**data)
     db.add(inv)
     await db.flush()
@@ -108,7 +117,7 @@ async def update_inventory(
     store_id: UUID,
     inventory_id: UUID,
     payload: InventoryUpdate,
-    user: User = Depends(get_current_user),
+    _: UserStoreRole = Depends(require_store_role(RoleEnum.manager)),
     db: AsyncSession = Depends(get_db),
 ):
     result = await db.execute(
@@ -120,7 +129,7 @@ async def update_inventory(
 
     for key, value in payload.model_dump(exclude_unset=True).items():
         setattr(inv, key, value)
-    inv.last_updated = datetime.now(UTC)
+    inv.last_updated = datetime.now(timezone.utc)
 
     await db.flush()
     await db.refresh(inv)
@@ -132,7 +141,7 @@ async def adjust_inventory(
     store_id: UUID,
     inventory_id: UUID,
     payload: InventoryAdjustment,
-    user: User = Depends(get_current_user),
+    _: UserStoreRole = Depends(require_store_role(RoleEnum.manager)),
     db: AsyncSession = Depends(get_db),
 ):
     result = await db.execute(
@@ -150,7 +159,7 @@ async def adjust_inventory(
         )
 
     inv.qty_on_hand = new_qty
-    inv.last_updated = datetime.now(UTC)
+    inv.last_updated = datetime.now(timezone.utc)
 
     await db.flush()
     await db.refresh(inv)
@@ -161,7 +170,7 @@ async def adjust_inventory(
 async def delete_inventory(
     store_id: UUID,
     inventory_id: UUID,
-    user: User = Depends(get_current_user),
+    _: UserStoreRole = Depends(require_store_role(RoleEnum.manager)),
     db: AsyncSession = Depends(get_db),
 ):
     result = await db.execute(

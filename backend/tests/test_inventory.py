@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import uuid
-from datetime import UTC, date, datetime, time
+from datetime import date, datetime, time, timezone
 
 import pytest
 import pytest_asyncio
@@ -10,7 +10,7 @@ from httpx import AsyncClient
 from tests.conftest import TestSessionLocal
 from app.models.inventory import Brand, Category, Inventory, PLU, Price, SKU
 from app.models.store import Store
-from app.models.user import User
+from app.models.user import RoleEnum, User, UserStoreRole
 
 
 @pytest_asyncio.fixture
@@ -34,6 +34,14 @@ async def seed_store_and_user():
             full_name="Test User",
         )
         session.add(user)
+        await session.flush()
+
+        role = UserStoreRole(
+            user_id=user.id,
+            store_id=store.id,
+            role=RoleEnum.owner,
+        )
+        session.add(role)
         await session.commit()
         await session.refresh(store)
         await session.refresh(user)
@@ -280,7 +288,7 @@ class TestReorderAlerts:
                 qty_on_hand=3,
                 reorder_level=5,
                 reorder_qty=20,
-                last_updated=datetime.now(UTC),
+                last_updated=datetime.now(timezone.utc),
             )
             session.add(inv)
             await session.commit()
@@ -305,7 +313,7 @@ class TestReorderAlerts:
                 qty_on_hand=100,
                 reorder_level=5,
                 reorder_qty=20,
-                last_updated=datetime.now(UTC),
+                last_updated=datetime.now(timezone.utc),
             )
             session.add(inv)
             await session.commit()

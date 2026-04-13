@@ -1,10 +1,14 @@
 import asyncio
+from pathlib import Path
 from unittest.mock import AsyncMock, patch
 
+from alembic import command
+from alembic.config import Config
 import pytest
 import pytest_asyncio
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
+from sqlalchemy.pool import StaticPool
 
 from app.database import Base, get_db
 from app.main import app
@@ -19,19 +23,42 @@ def event_loop():
 
 
 # Use an in-memory SQLite for tests
-TEST_DB_URL = "sqlite+aiosqlite:///:memory:"
+TEST_DB_URL = "sqlite+aiosqlite://"
+ALEMBIC_INI_PATH = Path(__file__).resolve().parents[1] / "alembic.ini"
+ALEMBIC_SCRIPT_LOCATION = Path(__file__).resolve().parents[1] / "alembic"
 
-engine = create_async_engine(TEST_DB_URL, echo=False)
+engine = create_async_engine(
+    TEST_DB_URL,
+    echo=False,
+    connect_args={"check_same_thread": False},
+    poolclass=StaticPool,
+)
 TestSessionLocal = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+
+
+def _alembic_config(connection) -> Config:
+    config = Config(str(ALEMBIC_INI_PATH))
+    config.set_main_option("script_location", str(ALEMBIC_SCRIPT_LOCATION))
+    config.set_main_option("sqlalchemy.url", TEST_DB_URL)
+    config.attributes["connection"] = connection
+    return config
+
+
+def _run_upgrade(connection, revision: str) -> None:
+    command.upgrade(_alembic_config(connection), revision)
+
+
+def _run_downgrade(connection, revision: str) -> None:
+    command.downgrade(_alembic_config(connection), revision)
 
 
 @pytest_asyncio.fixture(autouse=True)
 async def setup_db():
     async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
+        await conn.run_sync(_run_upgrade, "head")
     yield
     async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.drop_all)
+        await conn.run_sync(_run_downgrade, "base")
 
 
 async def override_get_db():
@@ -46,18 +73,30 @@ async def override_get_db():
             await session.close()
 
 
-# Mock user for auth
-MOCK_USER = None
+# Mock auth state for tests
+MOCK_AUTH_CLAIMS = {
+    "uid": "test-firebase-uid",
+    "email": "test@example.com",
+}
 
 
 async def mock_get_current_user():
     async with TestSessionLocal() as session:
         from sqlalchemy import select
-        result = await session.execute(select(User))
+        from sqlalchemy.orm import selectinload
+        result = await session.execute(
+            select(User)
+            .options(selectinload(User.store_roles))
+            .where(User.firebase_uid == MOCK_AUTH_CLAIMS["uid"])
+        )
         user = result.scalar_one_or_none()
         if user:
             return user
     raise Exception("No test user found")
+
+
+async def mock_get_token_claims():
+    return MOCK_AUTH_CLAIMS.copy()
 
 
 app.dependency_overrides[get_db] = override_get_db
@@ -65,15 +104,28 @@ app.dependency_overrides[get_db] = override_get_db
 
 @pytest_asyncio.fixture
 async def client():
-    from app.auth.dependencies import get_current_user as get_user_dep
+    from app.auth.dependencies import (
+        get_current_user as get_user_dep,
+        get_token_claims as get_token_claims_dep,
+    )
 
     app.dependency_overrides[get_user_dep] = mock_get_current_user
+    app.dependency_overrides[get_token_claims_dep] = mock_get_token_claims
 
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as c:
         yield c
 
     app.dependency_overrides.pop(get_user_dep, None)
+    app.dependency_overrides.pop(get_token_claims_dep, None)
+
+
+@pytest.fixture
+def auth_claims():
+    original = MOCK_AUTH_CLAIMS.copy()
+    yield MOCK_AUTH_CLAIMS
+    MOCK_AUTH_CLAIMS.clear()
+    MOCK_AUTH_CLAIMS.update(original)
 
 
 @pytest_asyncio.fixture

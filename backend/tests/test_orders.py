@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import io
 import uuid
-from datetime import UTC, datetime, time
+from datetime import datetime, time, timezone
 
 import pytest
 from httpx import AsyncClient
@@ -323,8 +323,8 @@ async def test_daily_sales_summary(client: AsyncClient, seed_user):
     sku = await _seed_sku(store.id)
 
     # Create orders for today
-    today = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%S")
-    today_date = datetime.now(UTC).strftime("%Y-%m-%d")
+    today = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S")
+    today_date = datetime.now(timezone.utc).strftime("%Y-%m-%d")
 
     for amount in [100.00, 200.00, 150.00]:
         payload = {
@@ -361,8 +361,8 @@ async def test_sales_summary_date_range(client: AsyncClient, seed_user):
     store = await _seed_store_and_user(seed_user)
     sku = await _seed_sku(store.id)
 
-    today = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%S")
-    today_date = datetime.now(UTC).strftime("%Y-%m-%d")
+    today = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S")
+    today_date = datetime.now(timezone.utc).strftime("%Y-%m-%d")
 
     payload = {
         "store_id": str(store.id),
@@ -398,8 +398,8 @@ async def test_sales_by_category(client: AsyncClient, seed_user):
     category = await _seed_category(store.id)
     sku = await _seed_sku(store.id, category_id=category.id)
 
-    today = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%S")
-    today_date = datetime.now(UTC).strftime("%Y-%m-%d")
+    today = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S")
+    today_date = datetime.now(timezone.utc).strftime("%Y-%m-%d")
 
     payload = {
         "store_id": str(store.id),
@@ -437,8 +437,8 @@ async def test_sales_by_brand(client: AsyncClient, seed_user):
     brand = await _seed_brand()
     sku = await _seed_sku(store.id, brand_id=brand.id, sku_code="VE-JWL-BR1")
 
-    today = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%S")
-    today_date = datetime.now(UTC).strftime("%Y-%m-%d")
+    today = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S")
+    today_date = datetime.now(timezone.utc).strftime("%Y-%m-%d")
 
     payload = {
         "store_id": str(store.id),
@@ -467,3 +467,15 @@ async def test_sales_by_brand(client: AsyncClient, seed_user):
     found = [b for b in data if b["brand_name"] == "Victoria Enso"]
     assert len(found) == 1
     assert found[0]["total_sales"] == 599.00
+
+
+@pytest.mark.asyncio
+async def test_nec_xml_import_oversized_file(client: AsyncClient, seed_user):
+    """File exceeding 10MB limit should be rejected."""
+    large_content = b"<SalesExport>" + (b"x" * (10 * 1024 * 1024 + 1)) + b"</SalesExport>"
+    resp = await client.post(
+        "/api/import/nec-sales",
+        files={"file": ("big.xml", large_content, "application/xml")},
+    )
+    assert resp.status_code == 413
+    assert "10MB" in resp.json()["detail"]

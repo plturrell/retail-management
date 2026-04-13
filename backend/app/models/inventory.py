@@ -9,9 +9,12 @@ from sqlalchemy import (
     Integer,
     Numeric,
     String,
+    UniqueConstraint,
+    Enum as SQLEnum,
 )
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
+import enum
 from app.database import Base
 from app.models._mixins import uuid_pk, created_at_col, updated_at_col
 
@@ -33,10 +36,10 @@ class Category(Base):
     updated_at: Mapped[updated_at_col]
 
     # Relationships
-    parent = relationship("Category", remote_side="Category.id", lazy="selectin")
-    store = relationship("Store", back_populates="categories", lazy="selectin")
-    skus = relationship("SKU", back_populates="category", lazy="selectin")
-    promotions = relationship("Promotion", back_populates="category", lazy="selectin")
+    parent = relationship("Category", remote_side="Category.id", lazy="raise")
+    store = relationship("Store", back_populates="categories", lazy="raise")
+    skus = relationship("SKU", back_populates="category", lazy="raise")
+    promotions = relationship("Promotion", back_populates="category", lazy="raise")
 
     def __repr__(self) -> str:
         return f"<Category {self.catg_code}: {self.description}>"
@@ -51,7 +54,7 @@ class Brand(Base):
     created_at: Mapped[created_at_col]
 
     # Relationships
-    skus = relationship("SKU", back_populates="brand", lazy="selectin")
+    skus = relationship("SKU", back_populates="brand", lazy="raise")
 
     def __repr__(self) -> str:
         return f"<Brand {self.name}>"
@@ -88,14 +91,14 @@ class SKU(Base):
     updated_at: Mapped[updated_at_col]
 
     # Relationships
-    category = relationship("Category", back_populates="skus", lazy="selectin")
-    brand = relationship("Brand", back_populates="skus", lazy="selectin")
-    store = relationship("Store", back_populates="skus", lazy="selectin")
-    plus = relationship("PLU", back_populates="sku", lazy="selectin")
-    prices = relationship("Price", back_populates="sku", lazy="selectin")
-    promotions = relationship("Promotion", back_populates="sku", lazy="selectin")
-    inventories = relationship("Inventory", back_populates="sku", lazy="selectin")
-    order_items = relationship("OrderItem", back_populates="sku", lazy="selectin")
+    category = relationship("Category", back_populates="skus", lazy="raise")
+    brand = relationship("Brand", back_populates="skus", lazy="raise")
+    store = relationship("Store", back_populates="skus", lazy="raise")
+    plus = relationship("PLU", back_populates="sku", lazy="raise")
+    prices = relationship("Price", back_populates="sku", lazy="raise")
+    promotions = relationship("Promotion", back_populates="sku", lazy="raise")
+    inventories = relationship("Inventory", back_populates="sku", lazy="raise")
+    order_items = relationship("OrderItem", back_populates="sku", lazy="raise")
 
     def __repr__(self) -> str:
         return f"<SKU {self.sku_code}: {self.description}>"
@@ -114,7 +117,7 @@ class PLU(Base):
     created_at: Mapped[created_at_col]
 
     # Relationships
-    sku = relationship("SKU", back_populates="plus", lazy="selectin")
+    sku = relationship("SKU", back_populates="plus", lazy="raise")
 
     def __repr__(self) -> str:
         return f"<PLU {self.plu_code}>"
@@ -139,8 +142,8 @@ class Price(Base):
     updated_at: Mapped[updated_at_col]
 
     # Relationships
-    sku = relationship("SKU", back_populates="prices", lazy="selectin")
-    store = relationship("Store", back_populates="prices", lazy="selectin")
+    sku = relationship("SKU", back_populates="prices", lazy="raise")
+    store = relationship("Store", back_populates="prices", lazy="raise")
 
     def __repr__(self) -> str:
         return f"<Price SKU={self.sku_id} ${self.price_incl_tax}>"
@@ -167,17 +170,32 @@ class Promotion(Base):
     updated_at: Mapped[updated_at_col]
 
     # Relationships
-    sku = relationship("SKU", back_populates="promotions", lazy="selectin")
-    category = relationship("Category", back_populates="promotions", lazy="selectin")
+    sku = relationship("SKU", back_populates="promotions", lazy="raise")
+    category = relationship("Category", back_populates="promotions", lazy="raise")
 
     def __repr__(self) -> str:
         return f"<Promotion {self.disc_id}>"
 
 
+class InventoryLocationState(str, enum.Enum):
+    STORE = "STORE"
+    TRANSIT = "TRANSIT"
+    WORKSHOP = "WORKSHOP"
+    DECOR = "DECOR"
+
+
 class Inventory(Base):
     __tablename__ = "inventories"
+    __table_args__ = (
+        UniqueConstraint("store_id", "sku_id", name="uq_inventory_store_sku"),
+    )
 
     id: Mapped[uuid_pk]
+    location_status: Mapped[InventoryLocationState] = mapped_column(
+        SQLEnum(InventoryLocationState, name="inventory_location_enum"), 
+        default=InventoryLocationState.STORE, 
+        nullable=False
+    )
     sku_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), ForeignKey("skus.id", ondelete="CASCADE"), nullable=False
     )
@@ -193,8 +211,8 @@ class Inventory(Base):
     updated_at: Mapped[updated_at_col]
 
     # Relationships
-    sku = relationship("SKU", back_populates="inventories", lazy="selectin")
-    store = relationship("Store", back_populates="inventories", lazy="selectin")
+    sku = relationship("SKU", back_populates="inventories", lazy="raise")
+    store = relationship("Store", back_populates="inventories", lazy="raise")
 
     def __repr__(self) -> str:
         return f"<Inventory SKU={self.sku_id} qty={self.qty_on_hand}>"

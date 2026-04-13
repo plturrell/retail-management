@@ -98,6 +98,16 @@ final class AuthViewModel {
         isLoading = false
     }
 
+    /// Refresh the user profile from the backend.
+    func refreshProfile() async {
+        do {
+            let user = try await fetchUserProfile()
+            currentUser = user
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
+
     /// Sign out the current user.
     func signOut() {
         authService.signOut()

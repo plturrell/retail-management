@@ -1,11 +1,12 @@
 from __future__ import annotations
 
-from functools import wraps
-from typing import Callable
+from typing import Any
+from uuid import UUID
 
 from fastapi import Depends, HTTPException, Request, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
 from app.database import get_db
 from app.models.user import RoleEnum, User, UserStoreRole
@@ -38,11 +39,8 @@ def _extract_bearer_token(request: Request) -> str:
     return parts[1]
 
 
-async def get_current_user(
-    request: Request,
-    db: AsyncSession = Depends(get_db),
-) -> User:
-    """Dependency that verifies the Firebase JWT and returns the DB User."""
+async def get_token_claims(request: Request) -> dict[str, Any]:
+    """Verify the bearer token and return decoded Firebase claims."""
     token = _extract_bearer_token(request)
     decoded = await verify_firebase_token(token)
     firebase_uid = decoded.get("uid")
@@ -51,9 +49,20 @@ async def get_current_user(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Token missing uid claim",
         )
+    return decoded
+
+
+async def get_current_user(
+    claims: dict[str, Any] = Depends(get_token_claims),
+    db: AsyncSession = Depends(get_db),
+) -> User:
+    """Dependency that verifies the Firebase JWT and returns the DB User."""
+    firebase_uid = claims["uid"]
 
     result = await db.execute(
-        select(User).where(User.firebase_uid == firebase_uid)
+        select(User)
+        .options(selectinload(User.store_roles))
+        .where(User.firebase_uid == firebase_uid)
     )
     user = result.scalar_one_or_none()
     if user is None:
@@ -64,56 +73,94 @@ async def get_current_user(
     return user
 
 
-def require_role(min_role: RoleEnum, store_id_param: str = "store_id"):
-    """Decorator factory that enforces a minimum role for a store.
+def get_store_role(user: User, store_id: UUID) -> UserStoreRole | None:
+    """Return the user's role assignment for the store, if any."""
+    for assignment in user.store_roles:
+        if assignment.store_id == store_id:
+            return assignment
+    return None
 
-    Usage:
-        @router.get("/stores/{store_id}/inventory")
-        @require_role(RoleEnum.manager)
-        async def list_inventory(store_id: UUID, user: User = Depends(get_current_user), ...):
-            ...
 
-    The decorated function must accept `store_id` (or whatever name is
-    passed via `store_id_param`) as a keyword argument, plus the `user`
-    dependency.
-    """
+def ensure_store_access(user: User, store_id: UUID) -> UserStoreRole:
+    """Ensure the user belongs to the requested store."""
+    assignment = get_store_role(user, store_id)
+    if assignment is None:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="You do not have access to this store",
+        )
+    return assignment
 
-    def decorator(func: Callable) -> Callable:
-        @wraps(func)
-        async def wrapper(*args, **kwargs):
-            user: User | None = kwargs.get("user")
-            store_id = kwargs.get(store_id_param)
 
-            if user is None or store_id is None:
-                raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail="Missing user or store_id for role check",
-                )
+def ensure_store_role(
+    user: User,
+    store_id: UUID,
+    min_role: RoleEnum,
+) -> UserStoreRole:
+    """Ensure the user has at least the required role for the store."""
+    assignment = ensure_store_access(user, store_id)
+    user_level = ROLE_HIERARCHY.get(assignment.role, -1)
+    required_level = ROLE_HIERARCHY.get(min_role, 0)
+    if user_level < required_level:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=f"Requires at least {min_role.value} role",
+        )
+    return assignment
 
-            # Find the user's role for this store
-            role_assignment = None
-            for ur in user.store_roles:
-                if str(ur.store_id) == str(store_id):
-                    role_assignment = ur
-                    break
 
-            if role_assignment is None:
-                raise HTTPException(
-                    status_code=status.HTTP_403_FORBIDDEN,
-                    detail="You do not have access to this store",
-                )
+async def require_store_access(
+    store_id: UUID,
+    user: User = Depends(get_current_user),
+) -> UserStoreRole:
+    """FastAPI dependency for store membership checks on store-scoped routes."""
+    return ensure_store_access(user, store_id)
 
-            user_level = ROLE_HIERARCHY.get(role_assignment.role, -1)
-            required_level = ROLE_HIERARCHY.get(min_role, 0)
 
-            if user_level < required_level:
-                raise HTTPException(
-                    status_code=status.HTTP_403_FORBIDDEN,
-                    detail=f"Requires at least {min_role.value} role",
-                )
+def require_store_role(min_role: RoleEnum):
+    """FastAPI dependency factory for store role checks on store-scoped routes."""
 
-            return await func(*args, **kwargs)
+    async def dependency(
+        store_id: UUID,
+        user: User = Depends(get_current_user),
+    ) -> UserStoreRole:
+        return ensure_store_role(user, store_id, min_role)
 
-        return wrapper
+    return dependency
 
-    return decorator
+
+async def require_self_or_store_manager(
+    user_id: UUID,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> UUID:
+    """Allow users to manage their own profile, or managers of a shared store."""
+    if user.id == user_id:
+        return user_id
+
+    result = await db.execute(
+        select(UserStoreRole.store_id).where(UserStoreRole.user_id == user_id)
+    )
+    target_store_ids = {row[0] for row in result.all()}
+    if not target_store_ids:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="You do not have permission to manage this employee",
+        )
+
+    requester_roles = {
+        assignment.store_id: assignment.role for assignment in user.store_roles
+    }
+    for store_id in target_store_ids:
+        requester_role = requester_roles.get(store_id)
+        if requester_role is None:
+            continue
+        if ROLE_HIERARCHY.get(requester_role, -1) >= ROLE_HIERARCHY[RoleEnum.manager]:
+            return user_id
+
+    raise HTTPException(
+        status_code=status.HTTP_403_FORBIDDEN,
+        detail="You do not have permission to manage this employee",
+    )
+
+

@@ -29,7 +29,10 @@ class User(Base):
 
     # Relationships
     store_roles = relationship("UserStoreRole", back_populates="user", lazy="selectin")
-    orders = relationship("Order", back_populates="staff", lazy="selectin")
+    orders = relationship("Order", back_populates="staff", lazy="raise")
+    employee_profile = relationship("EmployeeProfile", back_populates="user", uselist=False, lazy="raise")
+    created_schedules = relationship("Schedule", back_populates="creator", lazy="raise")
+    time_entries = relationship("TimeEntry", back_populates="user", foreign_keys="[TimeEntry.user_id]", lazy="raise")
 
     def __repr__(self) -> str:
         return f"<User {self.email}>"
@@ -54,8 +57,8 @@ class UserStoreRole(Base):
     created_at: Mapped[created_at_col]
 
     # Relationships
-    user = relationship("User", back_populates="store_roles", lazy="selectin")
-    store = relationship("Store", back_populates="user_roles", lazy="selectin")
+    user = relationship("User", back_populates="store_roles", lazy="raise")
+    store = relationship("Store", back_populates="user_roles", lazy="raise")
 
     def __repr__(self) -> str:
         return f"<UserStoreRole user={self.user_id} store={self.store_id} role={self.role}>"
