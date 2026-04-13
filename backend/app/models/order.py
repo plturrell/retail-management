@@ -9,6 +9,8 @@ from app.database import Base
 from app.models._mixins import uuid_pk, created_at_col, updated_at_col
 
 
+
+
 class OrderStatus(str, enum.Enum):
     open = "open"
     completed = "completed"
@@ -32,6 +34,9 @@ class Order(Base):
     )
     store_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), ForeignKey("stores.id", ondelete="CASCADE"), nullable=False
+    )
+    customer_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("customers.id", ondelete="SET NULL"), nullable=True
     )
     staff_id: Mapped[Optional[uuid.UUID]] = mapped_column(
         UUID(as_uuid=True), ForeignKey("users.id"), nullable=True
@@ -58,6 +63,7 @@ class Order(Base):
 
     # Relationships
     store = relationship("Store", back_populates="orders", lazy="raise")
+    customer = relationship("Customer", back_populates="orders", lazy="raise")
     staff = relationship("User", back_populates="orders", lazy="raise")
     items = relationship("OrderItem", back_populates="order", lazy="selectin")
 

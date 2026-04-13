@@ -23,6 +23,16 @@ class Settings(BaseSettings):
     AI_SYNC_TIMEOUT_SECONDS: int = 15
     AI_ASYNC_TIMEOUT_SECONDS: int = 120
 
+    # Snowflake configuration
+    SNOWFLAKE_ACCOUNT: str = ""         # e.g. "xy12345.ap-southeast-1"
+    SNOWFLAKE_USER: str = ""
+    SNOWFLAKE_PASSWORD: str = ""
+    SNOWFLAKE_DATABASE: str = "RETAILSG"
+    SNOWFLAKE_SCHEMA: str = "ANALYTICS"
+    SNOWFLAKE_WAREHOUSE: str = "RETAILSG_WH"
+    SNOWFLAKE_ROLE: str = "RETAILSG_ROLE"
+    SNOWFLAKE_ETL_SCHEMA: str = "ETL"   # staging schema used by ETL jobs
+
     model_config = {"env_file": ".env", "env_file_encoding": "utf-8"}
 
     @model_validator(mode="after")

@@ -24,6 +24,13 @@ class NationalityEnum(str, enum.Enum):
     foreigner = "foreigner"
 
 
+class EmploymentTypeEnum(str, enum.Enum):
+    full_time = "full_time"
+    part_time = "part_time"
+    contract = "contract"
+    intern = "intern"
+
+
 class PayrollStatusEnum(str, enum.Enum):
     draft = "draft"
     calculated = "calculated"
@@ -44,6 +51,17 @@ class EmployeeProfile(Base):
     date_of_birth: Mapped[date] = mapped_column(Date, nullable=False)
     nationality: Mapped[NationalityEnum] = mapped_column(
         Enum(NationalityEnum, name="nationality_enum"), nullable=False
+    )
+    employment_type: Mapped[EmploymentTypeEnum] = mapped_column(
+        Enum(EmploymentTypeEnum, name="employment_type_enum"),
+        default=EmploymentTypeEnum.full_time,
+        nullable=False,
+    )
+    department_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("departments.id"), nullable=True
+    )
+    job_position_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("job_positions.id"), nullable=True
     )
     basic_salary: Mapped[float] = mapped_column(Numeric(10, 2), nullable=False)
     hourly_rate: Mapped[Optional[float]] = mapped_column(
@@ -66,6 +84,8 @@ class EmployeeProfile(Base):
 
     # Relationships
     user = relationship("User", back_populates="employee_profile", lazy="raise")
+    department = relationship("Department", lazy="raise")
+    job_position = relationship("JobPosition", lazy="raise")
 
     def __repr__(self) -> str:
         return f"<EmployeeProfile user_id={self.user_id}>"

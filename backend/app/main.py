@@ -35,18 +35,24 @@ from app.routers import (
     brands,
     cag_xml,
     categories,
+    customers,
     health,
     hr,
+    intelligence,
     inventory,
+    marketing,
     nec_import,
     orders,
     plus,
     prices,
     promotions,
+    purchases,
     sales,
     schedules,
     skus,
+    staff_hr,
     stores,
+    suppliers,
     timesheets,
     users,
     pricing_engine,
@@ -92,3 +98,9 @@ app.include_router(payroll.router)
 app.include_router(analytics.router)
 app.include_router(ai_jobs.router)
 app.include_router(banking.router)
+app.include_router(customers.router)
+app.include_router(suppliers.router)
+app.include_router(purchases.router)
+app.include_router(marketing.router)
+app.include_router(staff_hr.router)
+app.include_router(intelligence.router)
