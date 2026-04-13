@@ -453,6 +453,7 @@ async def _load_fact_purchases(db: AsyncSession, sf: SnowflakeClient, since: dat
 async def _load_fact_inventory_snapshot(db: AsyncSession, sf: SnowflakeClient) -> int:
     """Full snapshot (not incremental) — captures current stock levels nightly."""
     today = datetime.now(timezone.utc).date()
+    today_str = today.isoformat()  # asyncpg needs str for DATE params in text() queries
     rows = await _pg_fetch(
         db,
         """
@@ -465,7 +466,7 @@ async def _load_fact_inventory_snapshot(db: AsyncSession, sf: SnowflakeClient) -
             :snapshot_date AS snapshot_date
         FROM inventories i
         """,
-        {"snapshot_date": today},
+        {"snapshot_date": today_str},
     )
     if not rows:
         return 0
@@ -478,7 +479,7 @@ async def _load_fact_inventory_snapshot(db: AsyncSession, sf: SnowflakeClient) -
         )
         """
     )
-    await sf.execute(f"DELETE FROM {_STG}.STG_FACT_INVENTORY WHERE SNAPSHOT_DATE = %s", (today,))
+    await sf.execute(f"DELETE FROM {_STG}.STG_FACT_INVENTORY WHERE SNAPSHOT_DATE = %s", (today_str,))
     await sf.executemany(
         f"INSERT INTO {_STG}.STG_FACT_INVENTORY VALUES (%s,%s,%s,%s,%s,%s,%s,%s)",
         [(r["inventory_id"], r["store_id"], r["sku_id"],
@@ -497,7 +498,7 @@ async def _load_fact_inventory_snapshot(db: AsyncSession, sf: SnowflakeClient) -
             WHERE SNAPSHOT_DATE = %s
         )
         """,
-        (today,),
+        (today_str,),
     )
     return len(rows)
 
@@ -669,6 +670,7 @@ async def run_nightly_etl(db: AsyncSession) -> dict:
         ]:
             try:
                 since = await _get_last_sync(sf, name)
+                since = since.replace(tzinfo=None)  # PG columns are TIMESTAMP (no tz)
                 count = await loader(since)
                 result.record(name, count)
                 await _set_last_sync(sf, name, now)
@@ -684,6 +686,7 @@ async def run_nightly_etl(db: AsyncSession) -> dict:
         ]:
             try:
                 since = await _get_last_sync(sf, name)
+                since = since.replace(tzinfo=None)  # PG columns are TIMESTAMP (no tz)
                 count = await loader(since)
                 result.record(name, count)
                 await _set_last_sync(sf, name, now)
