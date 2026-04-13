@@ -1,4 +1,3 @@
-import logging
 import os
 import re
 
@@ -7,8 +6,6 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_asyn
 from sqlalchemy.orm import DeclarativeBase
 
 from app.config import settings
-
-logger = logging.getLogger(__name__)
 
 
 def _parse_engine_config(raw: str) -> tuple[URL, dict]:
@@ -74,16 +71,6 @@ def _parse_engine_config(raw: str) -> tuple[URL, dict]:
 
 
 _engine_url, _connect_args = _parse_engine_config(settings.DATABASE_URL)
-
-_db_pass = os.environ.get("DATABASE_PASSWORD", "")
-logger.info(
-    "DB engine config — host: %s, user: %s, db: %s, pass_len: %d, connect_args: %s",
-    _engine_url.host,
-    _engine_url.username,
-    _engine_url.database,
-    len(_db_pass or str(_engine_url.password or "")),
-    _connect_args,
-)
 
 engine = create_async_engine(
     _engine_url,
