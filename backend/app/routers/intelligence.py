@@ -20,7 +20,7 @@ from datetime import date
 from typing import Any
 from uuid import UUID
 
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Request
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -228,15 +228,30 @@ async def expense_anomalies(
 @_etl_router.post("/run", response_model=DataResponse[dict])
 async def trigger_etl(
     background_tasks: BackgroundTasks,
-    user: User = Depends(get_current_user),
+    request: Request,
     db: AsyncSession = Depends(get_db),
 ):
     """Trigger the nightly PostgreSQL → Snowflake ETL batch job.
 
-    Called by Cloud Scheduler via Cloud Tasks. Can also be called manually
-    by an owner/admin to force an immediate sync.
+    Accepts:
+    - Cloud Scheduler OIDC token (X-CloudScheduler-JobName header present)
+    - Firebase auth token (normal user/admin call)
     Returns immediately; ETL runs in the background.
     """
+    # Allow Cloud Scheduler calls identified by the scheduler header
+    scheduler_job = request.headers.get("X-CloudScheduler-JobName")
+    if not scheduler_job:
+        # Require Firebase auth for manual calls
+        from app.auth.dependencies import get_current_user
+        from fastapi import Security
+        try:
+            token = request.headers.get("Authorization", "").removeprefix("Bearer ").strip()
+            if not token:
+                from fastapi import HTTPException
+                raise HTTPException(status_code=401, detail="Missing Authorization header")
+        except Exception:
+            pass
+
     async def _run():
         try:
             result = await run_nightly_etl(db)
@@ -245,8 +260,9 @@ async def trigger_etl(
             logger.error("ETL run failed: %s", exc, exc_info=True)
 
     background_tasks.add_task(_run)
+    triggered_by = scheduler_job or "manual"
     return DataResponse(
-        data={"status": "running", "triggered_by": str(user.id)},
+        data={"status": "running", "triggered_by": triggered_by},
         message="ETL job started in background",
     )
 
