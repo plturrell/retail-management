@@ -6,14 +6,15 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
-from sqlalchemy import func, select, cast, Date
+from sqlalchemy import func, select, cast, and_, Date
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
 from app.models.inventory import SKU, Category, Brand
 from app.models.order import Order, OrderItem, OrderStatus
-from app.models.user import User
-from app.auth.dependencies import get_current_user
+from app.models.user import User, UserStoreRole
+from app.auth.dependencies import get_current_user, require_store_access
+from app.schemas.common import DataResponse
 
 router = APIRouter(prefix="/api/stores/{store_id}/sales", tags=["sales"])
 
@@ -267,3 +268,52 @@ async def sales_by_brand(
         )
         for row in rows
     ]
+
+
+@router.get("/by-staff", response_model=DataResponse)
+async def sales_by_staff(
+    store_id: UUID,
+    from_date: date = Query(..., alias="from"),
+    to_date: date = Query(..., alias="to"),
+    _: UserStoreRole = Depends(require_store_access),
+    db: AsyncSession = Depends(get_db),
+):
+    """Sales totals grouped by staff member for a date range."""
+    range_start = datetime.combine(from_date, datetime.min.time())
+    range_end = datetime.combine(to_date, datetime.max.time())
+
+    query = (
+        select(
+            User.id,
+            User.full_name,
+            func.count(func.distinct(Order.id)).label("order_count"),
+            func.coalesce(func.sum(Order.grand_total), 0).label("total_sales"),
+        )
+        .select_from(Order)
+        .outerjoin(User, Order.staff_id == User.id)
+        .where(
+            Order.store_id == store_id,
+            Order.order_date >= range_start,
+            Order.order_date <= range_end,
+            Order.status != OrderStatus.voided,
+        )
+        .group_by(User.id, User.full_name)
+        .order_by(func.coalesce(func.sum(Order.grand_total), 0).desc())
+    )
+
+    result = await db.execute(query)
+    rows = result.all()
+
+    return DataResponse(
+        success=True,
+        message="Sales by staff",
+        data=[
+            {
+                "userId": str(row[0]) if row[0] else None,
+                "fullName": row[1] or "Unknown",
+                "totalSales": round(float(row[3] or 0), 2),
+                "orderCount": int(row[2] or 0),
+            }
+            for row in rows
+        ],
+    )

@@ -33,12 +33,16 @@ from app.models.purchase import (
 )
 from app.models.copilot import (
     WorkOrder,
+    WorkOrderComponent,
     WorkOrderStatus,
     StockTransfer,
     StockTransferStatus,
+    BOMRecipe,
+    BOMRecipeItem,
 )
-from app.models.user import UserStoreRole, RoleEnum
-from app.auth.dependencies import require_store_role
+from app.models.purchase import PurchaseOrderItem
+from app.models.user import UserStoreRole, RoleEnum, User
+from app.auth.dependencies import require_store_role, get_current_user
 from app.schemas.common import DataResponse
 
 router = APIRouter(
@@ -71,6 +75,94 @@ class CompleteWorkOrderBody(BaseModel):
 
 class ReceiveTransferBody(BaseModel):
     note: Optional[str] = None
+
+
+class CreateSupplierBody(BaseModel):
+    supplierCode: str
+    name: str
+    contactPerson: Optional[str] = None
+    email: Optional[str] = None
+    phone: Optional[str] = None
+    address: Optional[str] = None
+    country: str = "Singapore"
+    currency: str = "SGD"
+    paymentTermsDays: int = 30
+    gstRegistered: bool = False
+    gstNumber: Optional[str] = None
+    bankAccount: Optional[str] = None
+    bankName: Optional[str] = None
+    notes: Optional[str] = None
+
+
+class UpdateSupplierBody(BaseModel):
+    name: Optional[str] = None
+    contactPerson: Optional[str] = None
+    email: Optional[str] = None
+    phone: Optional[str] = None
+    address: Optional[str] = None
+    country: Optional[str] = None
+    currency: Optional[str] = None
+    paymentTermsDays: Optional[int] = None
+    gstRegistered: Optional[bool] = None
+    gstNumber: Optional[str] = None
+    bankAccount: Optional[str] = None
+    bankName: Optional[str] = None
+    notes: Optional[str] = None
+    isActive: Optional[bool] = None
+
+
+class CreatePOItemBody(BaseModel):
+    skuId: str
+    qtyOrdered: int
+    unitCost: float
+    taxCode: str = "G"  # G=GST, E=Exempt, Z=Zero-rated
+
+
+class CreatePOBody(BaseModel):
+    supplierId: str
+    orderDate: Optional[str] = None
+    expectedDeliveryDate: Optional[str] = None
+    currency: str = "SGD"
+    notes: Optional[str] = None
+    items: list[CreatePOItemBody] = Field(default_factory=list)
+
+
+class CreateTransferBody(BaseModel):
+    skuId: str
+    quantity: int
+    fromInventoryType: str
+    toInventoryType: str
+    note: Optional[str] = None
+    recommendationId: Optional[str] = None
+
+
+class WorkOrderComponentBody(BaseModel):
+    skuId: str
+    quantityRequired: int
+    note: Optional[str] = None
+
+
+class CreateWorkOrderBody(BaseModel):
+    finishedSkuId: str
+    workOrderType: str = "production"
+    targetQuantity: int
+    dueDate: Optional[str] = None
+    note: Optional[str] = None
+    bomRecipeId: Optional[str] = None
+    components: list[WorkOrderComponentBody] = Field(default_factory=list)
+
+
+class BOMRecipeItemBody(BaseModel):
+    skuId: str
+    quantityRequired: int
+    note: Optional[str] = None
+
+
+class CreateBOMRecipeBody(BaseModel):
+    name: str
+    finishedSkuId: str
+    description: Optional[str] = None
+    items: list[BOMRecipeItemBody] = Field(default_factory=list)
 
 
 # ------------------------------------------------------------------ #
@@ -118,6 +210,49 @@ def _transfer_to_dict(t: StockTransfer) -> dict:
         "receivedAt": t.received_at.isoformat() if t.received_at else None,
         "createdAt": t.created_at.isoformat() if t.created_at else None,
         "updatedAt": t.updated_at.isoformat() if t.updated_at else None,
+    }
+
+
+def _supplier_to_dict(s: Supplier) -> dict:
+    return {
+        "id": str(s.id),
+        "supplierCode": s.supplier_code,
+        "name": s.name,
+        "contactPerson": s.contact_person,
+        "email": s.email,
+        "phone": s.phone,
+        "address": s.address,
+        "country": s.country,
+        "currency": s.currency,
+        "paymentTermsDays": s.payment_terms_days,
+        "gstRegistered": s.gst_registered,
+        "gstNumber": s.gst_number,
+        "bankAccount": s.bank_account,
+        "bankName": s.bank_name,
+        "notes": s.notes,
+        "isActive": s.is_active,
+    }
+
+
+def _bom_to_dict(r: BOMRecipe) -> dict:
+    return {
+        "id": str(r.id),
+        "storeId": str(r.store_id),
+        "finishedSkuId": str(r.finished_sku_id),
+        "name": r.name,
+        "description": r.description,
+        "isActive": r.is_active,
+        "items": [
+            {
+                "id": str(i.id),
+                "skuId": str(i.sku_id),
+                "quantityRequired": i.quantity_required,
+                "note": i.note,
+            }
+            for i in (r.items or [])
+        ],
+        "createdAt": r.created_at.isoformat() if r.created_at else None,
+        "updatedAt": r.updated_at.isoformat() if r.updated_at else None,
     }
 
 
@@ -663,3 +798,339 @@ async def receive_transfer(
     await db.commit()
 
     return DataResponse(success=True, message="Transfer received", data=_transfer_to_dict(transfer))
+
+
+# ------------------------------------------------------------------ #
+# POST /suppliers — Create supplier                                    #
+# ------------------------------------------------------------------ #
+
+@router.post("/suppliers", response_model=DataResponse)
+async def create_supplier(
+    store_id: UUID,
+    body: CreateSupplierBody,
+    _: UserStoreRole = Depends(require_store_role(RoleEnum.manager)),
+    db: AsyncSession = Depends(get_db),
+):
+    """Create a new supplier (global, not store-scoped)."""
+    now = _now()
+    supplier = Supplier(
+        id=uuid.uuid4(),
+        supplier_code=body.supplierCode,
+        name=body.name,
+        contact_person=body.contactPerson,
+        email=body.email,
+        phone=body.phone,
+        address=body.address,
+        country=body.country,
+        currency=body.currency,
+        payment_terms_days=body.paymentTermsDays,
+        gst_registered=body.gstRegistered,
+        gst_number=body.gstNumber,
+        bank_account=body.bankAccount,
+        bank_name=body.bankName,
+        notes=body.notes,
+        is_active=True,
+    )
+    db.add(supplier)
+    await db.commit()
+    await db.refresh(supplier)
+    return DataResponse(success=True, message="Supplier created", data=_supplier_to_dict(supplier))
+
+
+# ------------------------------------------------------------------ #
+# PATCH /suppliers/{supplier_id} — Update supplier                    #
+# ------------------------------------------------------------------ #
+
+@router.patch("/suppliers/{supplier_id}", response_model=DataResponse)
+async def update_supplier(
+    store_id: UUID,
+    supplier_id: UUID,
+    body: UpdateSupplierBody,
+    _: UserStoreRole = Depends(require_store_role(RoleEnum.manager)),
+    db: AsyncSession = Depends(get_db),
+):
+    """Update an existing supplier's details."""
+    s_q = await db.execute(select(Supplier).where(Supplier.id == supplier_id))
+    supplier = s_q.scalar_one_or_none()
+    if not supplier:
+        raise HTTPException(status_code=404, detail="Supplier not found")
+
+    if body.name is not None:
+        supplier.name = body.name
+    if body.contactPerson is not None:
+        supplier.contact_person = body.contactPerson
+    if body.email is not None:
+        supplier.email = body.email
+    if body.phone is not None:
+        supplier.phone = body.phone
+    if body.address is not None:
+        supplier.address = body.address
+    if body.country is not None:
+        supplier.country = body.country
+    if body.currency is not None:
+        supplier.currency = body.currency
+    if body.paymentTermsDays is not None:
+        supplier.payment_terms_days = body.paymentTermsDays
+    if body.gstRegistered is not None:
+        supplier.gst_registered = body.gstRegistered
+    if body.gstNumber is not None:
+        supplier.gst_number = body.gstNumber
+    if body.bankAccount is not None:
+        supplier.bank_account = body.bankAccount
+    if body.bankName is not None:
+        supplier.bank_name = body.bankName
+    if body.notes is not None:
+        supplier.notes = body.notes
+    if body.isActive is not None:
+        supplier.is_active = body.isActive
+
+    supplier.updated_at = _now()
+    await db.commit()
+    await db.refresh(supplier)
+    return DataResponse(success=True, message="Supplier updated", data=_supplier_to_dict(supplier))
+
+
+# ------------------------------------------------------------------ #
+# POST /purchase-orders — Create PO                                   #
+# ------------------------------------------------------------------ #
+
+@router.post("/purchase-orders", response_model=DataResponse)
+async def create_purchase_order(
+    store_id: UUID,
+    body: CreatePOBody,
+    _: UserStoreRole = Depends(require_store_role(RoleEnum.manager)),
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Create a new purchase order with line items."""
+    from datetime import date as date_type
+
+    now = _now()
+    po_number = f"PO-{now.strftime('%Y%m%d')}-{uuid.uuid4().hex[:6].upper()}"
+
+    def _parse_date(s: Optional[str]):
+        if not s:
+            return None
+        try:
+            return date_type.fromisoformat(s)
+        except ValueError:
+            return None
+
+    order_date = _parse_date(body.orderDate) or now.date()
+    expected_delivery = _parse_date(body.expectedDeliveryDate)
+
+    GST_RATE = 0.09  # Singapore GST
+    subtotal = sum(item.qtyOrdered * item.unitCost for item in body.items)
+    tax_total = sum(
+        item.qtyOrdered * item.unitCost * GST_RATE
+        for item in body.items if item.taxCode == "G"
+    )
+    grand_total = subtotal + tax_total
+
+    po = PurchaseOrder(
+        id=uuid.uuid4(),
+        po_number=po_number,
+        store_id=store_id,
+        supplier_id=UUID(body.supplierId),
+        order_date=order_date,
+        expected_delivery_date=expected_delivery,
+        status=PurchaseOrderStatus.draft,
+        subtotal=subtotal,
+        tax_total=tax_total,
+        grand_total=grand_total,
+        currency=body.currency,
+        notes=body.notes,
+        created_by=current_user.id,
+    )
+    db.add(po)
+    await db.flush()  # get po.id
+
+    for item in body.items:
+        line_total = item.qtyOrdered * item.unitCost
+        po_item = PurchaseOrderItem(
+            id=uuid.uuid4(),
+            purchase_order_id=po.id,
+            sku_id=UUID(item.skuId),
+            qty_ordered=item.qtyOrdered,
+            qty_received=0,
+            unit_cost=item.unitCost,
+            tax_code=item.taxCode,
+            line_total=line_total,
+        )
+        db.add(po_item)
+
+    await db.commit()
+    return DataResponse(success=True, message="Purchase order created", data=_po_to_dict(po))
+
+
+# ------------------------------------------------------------------ #
+# POST /transfers — Create stock transfer                             #
+# ------------------------------------------------------------------ #
+
+@router.post("/transfers", response_model=DataResponse)
+async def create_transfer(
+    store_id: UUID,
+    body: CreateTransferBody,
+    _: UserStoreRole = Depends(require_store_role(RoleEnum.manager)),
+    db: AsyncSession = Depends(get_db),
+):
+    """Create a new stock transfer between inventory stages."""
+    now = _now()
+    transfer = StockTransfer(
+        id=uuid.uuid4(),
+        store_id=store_id,
+        sku_id=UUID(body.skuId),
+        quantity=body.quantity,
+        from_inventory_type=body.fromInventoryType,
+        to_inventory_type=body.toInventoryType,
+        status="in_transit",
+        note=body.note,
+        recommendation_id=UUID(body.recommendationId) if body.recommendationId else None,
+        dispatched_at=now,
+    )
+    db.add(transfer)
+    await db.commit()
+    await db.refresh(transfer)
+    return DataResponse(success=True, message="Transfer created", data=_transfer_to_dict(transfer))
+
+
+# ------------------------------------------------------------------ #
+# POST /work-orders — Create work order                               #
+# ------------------------------------------------------------------ #
+
+@router.post("/work-orders", response_model=DataResponse)
+async def create_work_order(
+    store_id: UUID,
+    body: CreateWorkOrderBody,
+    _: UserStoreRole = Depends(require_store_role(RoleEnum.manager)),
+    db: AsyncSession = Depends(get_db),
+):
+    """Create a new work order, optionally auto-populating components from a BOM recipe."""
+    from datetime import date as date_type
+
+    now = _now()
+
+    def _parse_date(s: Optional[str]):
+        if not s:
+            return None
+        try:
+            return date_type.fromisoformat(s)
+        except ValueError:
+            return None
+
+    wo = WorkOrder(
+        id=uuid.uuid4(),
+        store_id=store_id,
+        finished_sku_id=UUID(body.finishedSkuId),
+        work_order_type=body.workOrderType,
+        status="scheduled",
+        target_quantity=body.targetQuantity,
+        completed_quantity=0,
+        due_date=_parse_date(body.dueDate),
+        note=body.note,
+    )
+    db.add(wo)
+    await db.flush()  # get wo.id
+
+    # Determine components: BOM recipe takes priority over inline list
+    components_source = body.components
+    if body.bomRecipeId:
+        recipe_q = await db.execute(
+            select(BOMRecipe).where(
+                and_(BOMRecipe.id == UUID(body.bomRecipeId), BOMRecipe.store_id == store_id)
+            )
+        )
+        recipe = recipe_q.scalar_one_or_none()
+        if recipe and recipe.items:
+            components_source = [
+                WorkOrderComponentBody(
+                    skuId=str(item.sku_id),
+                    quantityRequired=item.quantity_required,
+                    note=item.note,
+                )
+                for item in recipe.items
+            ]
+
+    for comp in components_source:
+        wo_comp = WorkOrderComponent(
+            id=uuid.uuid4(),
+            work_order_id=wo.id,
+            sku_id=UUID(comp.skuId),
+            quantity_required=comp.quantityRequired,
+            note=comp.note,
+        )
+        db.add(wo_comp)
+
+    await db.commit()
+
+    # Re-fetch with components loaded
+    wo_q = await db.execute(select(WorkOrder).where(WorkOrder.id == wo.id))
+    wo = wo_q.scalar_one()
+    return DataResponse(success=True, message="Work order created", data=_wo_to_dict(wo))
+
+
+# ------------------------------------------------------------------ #
+# GET /bom-recipes — List BOM recipes                                 #
+# ------------------------------------------------------------------ #
+
+@router.get("/bom-recipes", response_model=DataResponse)
+async def list_bom_recipes(
+    store_id: UUID,
+    active_only: bool = Query(True),
+    _: UserStoreRole = Depends(require_store_role(RoleEnum.staff)),
+    db: AsyncSession = Depends(get_db),
+):
+    """List BOM recipes for this store."""
+    q = select(BOMRecipe).where(BOMRecipe.store_id == store_id)
+    if active_only:
+        q = q.where(BOMRecipe.is_active.is_(True))
+    q = q.order_by(BOMRecipe.name)
+    result = await db.execute(q)
+    recipes = result.scalars().all()
+    return DataResponse(
+        success=True,
+        message="BOM recipes",
+        data={"recipes": [_bom_to_dict(r) for r in recipes]},
+    )
+
+
+# ------------------------------------------------------------------ #
+# POST /bom-recipes — Create BOM recipe                               #
+# ------------------------------------------------------------------ #
+
+@router.post("/bom-recipes", response_model=DataResponse)
+async def create_bom_recipe(
+    store_id: UUID,
+    body: CreateBOMRecipeBody,
+    _: UserStoreRole = Depends(require_store_role(RoleEnum.manager)),
+    db: AsyncSession = Depends(get_db),
+):
+    """Create a new BOM recipe with component items."""
+    now = _now()
+    recipe = BOMRecipe(
+        id=uuid.uuid4(),
+        store_id=store_id,
+        finished_sku_id=UUID(body.finishedSkuId),
+        name=body.name,
+        description=body.description,
+        is_active=True,
+    )
+    db.add(recipe)
+    await db.flush()
+
+    for item in body.items:
+        recipe_item = BOMRecipeItem(
+            id=uuid.uuid4(),
+            recipe_id=recipe.id,
+            sku_id=UUID(item.skuId),
+            quantity_required=item.quantityRequired,
+            note=item.note,
+        )
+        db.add(recipe_item)
+
+    await db.commit()
+
+    # Re-fetch with items loaded
+    r_q = await db.execute(select(BOMRecipe).where(BOMRecipe.id == recipe.id))
+    recipe = r_q.scalar_one()
+    return DataResponse(success=True, message="BOM recipe created", data=_bom_to_dict(recipe))

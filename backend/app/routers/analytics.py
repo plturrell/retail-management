@@ -1,17 +1,21 @@
 """AI-powered analytics endpoints — margin analysis, forecasting, insights."""
 from __future__ import annotations
 
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from typing import Optional
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel
+from sqlalchemy import func, select, and_
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
-from app.models.user import UserStoreRole
-from app.auth.dependencies import require_store_access
+from app.models.user import UserStoreRole, User, UserStoreRole as USR
+from app.models.order import Order, OrderItem, OrderStatus
+from app.models.store import Store
+from app.auth.dependencies import require_store_access, get_current_user
+from app.schemas.common import DataResponse
 from app.services.ai_analytics import (
     AnalyticsReport,
     compute_demand_forecasts,
@@ -111,3 +115,159 @@ async def reorder_suggestions(
     """Intelligent reorder recommendations based on sales velocity and stock levels."""
     recs = await reorder_recommendations(db, store_id, lookback_days)
     return [ReorderRecommendation(**r) for r in recs]
+
+
+# ------------------------------------------------------------------ #
+# Staff performance helpers                                            #
+# ------------------------------------------------------------------ #
+
+async def _staff_performance_rows(db: AsyncSession, store_id: UUID, from_dt: datetime, to_dt: datetime) -> list[dict]:
+    """Return list of {user_id, full_name, total_sales, order_count} sorted by total_sales desc."""
+    query = (
+        select(
+            User.id,
+            User.full_name,
+            func.count(func.distinct(Order.id)).label("order_count"),
+            func.coalesce(func.sum(Order.grand_total), 0).label("total_sales"),
+        )
+        .select_from(User)
+        .join(USR, and_(USR.user_id == User.id, USR.store_id == store_id))
+        .outerjoin(
+            Order,
+            and_(
+                Order.staff_id == User.id,
+                Order.store_id == store_id,
+                Order.order_date >= from_dt,
+                Order.order_date <= to_dt,
+                Order.status != OrderStatus.voided,
+            ),
+        )
+        .group_by(User.id, User.full_name)
+        .order_by(func.coalesce(func.sum(Order.grand_total), 0).desc())
+    )
+    result = await db.execute(query)
+    rows = result.all()
+    return [
+        {
+            "userId": str(row[0]),
+            "fullName": row[1] or "",
+            "orderCount": int(row[2] or 0),
+            "totalSales": float(row[3] or 0),
+        }
+        for row in rows
+    ]
+
+
+# ------------------------------------------------------------------ #
+# GET /staff-performance                                               #
+# ------------------------------------------------------------------ #
+
+@router.get("/staff-performance", response_model=DataResponse)
+async def staff_performance(
+    store_id: UUID,
+    from_date: date = Query(..., alias="from"),
+    to_date: date = Query(..., alias="to"),
+    _: UserStoreRole = Depends(require_store_access),
+    db: AsyncSession = Depends(get_db),
+):
+    """Ranked staff performance for a date range."""
+    from_dt = datetime.combine(from_date, datetime.min.time())
+    to_dt = datetime.combine(to_date, datetime.max.time())
+
+    rows = await _staff_performance_rows(db, store_id, from_dt, to_dt)
+
+    staff_list = []
+    for rank, row in enumerate(rows, start=1):
+        avg = row["totalSales"] / row["orderCount"] if row["orderCount"] > 0 else 0.0
+        staff_list.append({
+            "userId": row["userId"],
+            "fullName": row["fullName"],
+            "totalSales": round(row["totalSales"], 2),
+            "orderCount": row["orderCount"],
+            "avgOrderValue": round(avg, 2),
+            "rank": rank,
+        })
+
+    return DataResponse(
+        success=True,
+        message="Staff performance",
+        data={
+            "period": f"{from_date} to {to_date}",
+            "totalStaff": len(staff_list),
+            "staff": staff_list,
+        },
+    )
+
+
+# ------------------------------------------------------------------ #
+# GET /staff/{user_id}/insights                                        #
+# ------------------------------------------------------------------ #
+
+@router.get("/staff/{user_id}/insights", response_model=DataResponse)
+async def staff_insights(
+    store_id: UUID,
+    user_id: UUID,
+    _: UserStoreRole = Depends(require_store_access),
+    db: AsyncSession = Depends(get_db),
+):
+    """AI-generated coaching insights for a single staff member (last 90 days)."""
+    from app.services.ai_gateway import invoke, AIRequest
+
+    to_dt = datetime.now(timezone.utc).replace(tzinfo=None)
+    from_dt = to_dt - timedelta(days=90)
+    from_date = from_dt.date()
+    to_date = to_dt.date()
+
+    # Fetch this user's performance
+    rows = await _staff_performance_rows(db, store_id, from_dt, to_dt)
+    user_row = next((r for r in rows if r["userId"] == str(user_id)), None)
+
+    # Get user's full name
+    u_q = await db.execute(select(User).where(User.id == user_id))
+    user = u_q.scalar_one_or_none()
+    full_name = user.full_name if user else "this staff member"
+
+    # Get store name
+    s_q = await db.execute(select(Store).where(Store.id == store_id))
+    store = s_q.scalar_one_or_none()
+    store_name = store.name if store else "the store"
+
+    total_sales = round(user_row["totalSales"], 2) if user_row else 0.0
+    order_count = user_row["orderCount"] if user_row else 0
+    avg_order_value = round(total_sales / order_count, 2) if order_count > 0 else 0.0
+    rank = next((i + 1 for i, r in enumerate(rows) if r["userId"] == str(user_id)), len(rows))
+    total_staff = len(rows)
+
+    prompt = (
+        f"You are a retail performance coach. Here is a sales summary for {full_name} at {store_name}:\n"
+        f"- Period: {from_date} to {to_date} (last 90 days)\n"
+        f"- Total sales: SGD {total_sales:,.2f}\n"
+        f"- Orders processed: {order_count}\n"
+        f"- Average order value: SGD {avg_order_value:,.2f}\n"
+        f"- Rank among {total_staff} staff: #{rank}\n\n"
+        "Give 2-3 specific, actionable coaching insights in 150 words or less. "
+        "Be direct, encouraging, and focused on what they can do differently this week."
+    )
+
+    resp = await invoke(
+        AIRequest(prompt=prompt, purpose="staff_insights", timeout_seconds=12),
+        fallback_text="Keep up the great work! Focus on upselling and building customer relationships.",
+    )
+
+    sales_summary = {
+        "userId": str(user_id),
+        "fullName": full_name,
+        "totalSales": total_sales,
+        "orderCount": order_count,
+    }
+
+    return DataResponse(
+        success=True,
+        message="Staff insights",
+        data={
+            "userId": str(user_id),
+            "fullName": full_name,
+            "aiInsights": resp.text,
+            "salesSummary": sales_summary,
+        },
+    )

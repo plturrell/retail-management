@@ -225,3 +225,45 @@ class StockTransfer(Base):
     received_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
     created_at: Mapped[created_at_col]
     updated_at: Mapped[updated_at_col]
+
+
+# ------------------------------------------------------------------ #
+# BOM Recipes (bill-of-materials templates)                            #
+# ------------------------------------------------------------------ #
+
+class BOMRecipe(Base):
+    __tablename__ = "bom_recipes"
+
+    id: Mapped[uuid_pk]
+    store_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("stores.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    finished_sku_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("skus.id", ondelete="RESTRICT"), nullable=False
+    )
+    name: Mapped[str] = mapped_column(String(255), nullable=False)
+    description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    created_at: Mapped[created_at_col]
+    updated_at: Mapped[updated_at_col]
+
+    items: Mapped[list["BOMRecipeItem"]] = relationship(
+        "BOMRecipeItem", back_populates="recipe", lazy="selectin", cascade="all, delete-orphan"
+    )
+
+
+class BOMRecipeItem(Base):
+    __tablename__ = "bom_recipe_items"
+
+    id: Mapped[uuid_pk]
+    recipe_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("bom_recipes.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    sku_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("skus.id", ondelete="RESTRICT"), nullable=False
+    )
+    quantity_required: Mapped[int] = mapped_column(Integer, nullable=False)
+    note: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    created_at: Mapped[created_at_col]
+
+    recipe: Mapped["BOMRecipe"] = relationship("BOMRecipe", back_populates="items")

@@ -49,6 +49,8 @@ from app.models.copilot import (
     WorkOrderComponent,
     StockTransferStatus,
     StockTransfer,
+    BOMRecipe,
+    BOMRecipeItem,
 )
 
 __all__ = [
@@ -121,4 +123,6 @@ __all__ = [
     "WorkOrderComponent",
     "StockTransferStatus",
     "StockTransfer",
+    "BOMRecipe",
+    "BOMRecipeItem",
 ]
