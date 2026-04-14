@@ -37,7 +37,10 @@ def run_migrations_offline() -> None:
 
 
 async def run_async_migrations():
-    connectable = create_async_engine(get_url(), poolclass=pool.NullPool)
+    connect_args = {}
+    if "127.0.0.1" in str(get_url()) or "localhost" in str(get_url()):
+        connect_args["ssl"] = None  # local proxy — no SSL
+    connectable = create_async_engine(get_url(), poolclass=pool.NullPool, connect_args=connect_args)
     async with connectable.connect() as connection:
         await connection.run_sync(do_run_migrations)
     await connectable.dispose()
