@@ -56,6 +56,7 @@ from app.routers import (
     staff_hr,
     stores,
     suppliers,
+    supplier_portal,
     supply_chain,
     timesheets,
     users,
@@ -111,4 +112,5 @@ app.include_router(intelligence.router)
 app.include_router(finance.router)
 app.include_router(reports.router)
 app.include_router(copilot.router)
+app.include_router(supplier_portal.router)
 app.include_router(supply_chain.router)

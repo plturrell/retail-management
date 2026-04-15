@@ -1,0 +1,17 @@
+date,supplier_code,description,amount,currency,fx_rate_to_sgd,reference
+,,,,,,
+,,"--- INSTRUCTIONS ---",,,,
+,,"Fill in one row per bank statement purchase. Fields:",,,,
+,,"  date: YYYY-MM-DD format",,,,
+,,"  supplier_code: SG-001 / TH-001 / CN-001 / OL-001",,,,
+,,"  description: What was purchased (from bank statement)",,,,
+,,"  amount: Amount in the supplier's currency",,,,
+,,"  currency: SGD / THB / CNY",,,,
+,,"  fx_rate_to_sgd: Exchange rate used (1 SGD = X foreign). Leave blank for SGD purchases",,,,
+,,"  reference: Unique ref (bank TT number, cheque #, invoice #)",,,,
+,,"--- DELETE THESE INSTRUCTION ROWS BEFORE IMPORTING ---",,,,
+,,,,,,
+2025-01-15,CN-001,Wire transfer - crystal inventory,8500.00,CNY,5.34,TT-20250115-001
+2025-02-03,TH-001,Silver components order,12000.00,THB,24.00,TT-20250203-001
+2025-03-10,SG-001,Local gemstone purchase,2400.00,SGD,,CHQ-20250310-001
+2025-03-15,OL-001,Alibaba order - packaging materials,350.00,SGD,,ALI-20250315-001
