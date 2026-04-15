@@ -521,15 +521,17 @@ async def supplier_analytics(
     # --- Gather raw data ---
 
     # Monthly spend trend
+    from sqlalchemy import literal_column
+    month_trunc = func.date_trunc(literal_column("'month'"), PurchaseOrder.order_date)
     monthly_spend = await db.execute(
         select(
-            func.date_trunc("month", PurchaseOrder.order_date).label("month"),
+            month_trunc.label("month"),
             func.count(PurchaseOrder.id).label("po_count"),
             func.sum(PurchaseOrder.grand_total).label("spend"),
         )
         .where(PurchaseOrder.supplier_id == supplier_id)
-        .group_by(func.date_trunc("month", PurchaseOrder.order_date))
-        .order_by(func.date_trunc("month", PurchaseOrder.order_date))
+        .group_by(month_trunc)
+        .order_by(month_trunc)
     )
     spend_trend = [
         {"month": row.month.strftime("%Y-%m") if row.month else "", "poCount": row.po_count, "spend": _dec(row.spend)}
