@@ -176,13 +176,21 @@ async def supplier_catalog(
     _: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """Product catalog: all SKUs linked to this supplier, with cost, inventory, and sell-through."""
+    """Product catalog: all SKUs linked to this supplier, with cost, inventory, and sell-through.
+
+    Returns BOTH codes so the client can reconcile with supplier paperwork:
+      * ``internalSkuCode`` — our own hierarchical code (e.g. ``DEC-CRY-000001``)
+      * ``supplierSkuCode`` — the supplier's own code (e.g. ``A361black/brown``)
+    ``skuCode`` is retained as an alias of ``internalSkuCode`` for backwards
+    compatibility with existing clients.
+    """
     # Verify supplier exists
     result = await db.execute(select(Supplier.id).where(Supplier.id == supplier_id))
     if not result.scalar_one_or_none():
         raise HTTPException(404, "Supplier not found")
 
-    # Get all supplier products with SKU details
+    # Get all supplier products with SKU details — include parent category path
+    # by doing two passes: first grab rows, then resolve parent names.
     sp_rows = await db.execute(
         select(
             SupplierProduct,
@@ -191,7 +199,12 @@ async def supplier_catalog(
             SKU.long_description,
             SKU.cost_price,
             SKU.is_unique_piece,
+            SKU.product_type,
+            SKU.attributes,
+            SKU.status,
+            SKU.category_id,
             Category.description.label("category_name"),
+            Category.parent_id.label("parent_category_id"),
         )
         .join(SKU, SupplierProduct.sku_id == SKU.id)
         .outerjoin(Category, SKU.category_id == Category.id)
@@ -199,22 +212,43 @@ async def supplier_catalog(
         .order_by(SKU.sku_code)
     )
 
+    # Resolve parent category names in one query
+    rows = sp_rows.all()
+    parent_ids = {row.parent_category_id for row in rows if row.parent_category_id}
+    parent_name_map: dict[str, str] = {}
+    if parent_ids:
+        parent_rows = await db.execute(
+            select(Category.id, Category.description).where(Category.id.in_(parent_ids))
+        )
+        parent_name_map = {str(cid): desc for cid, desc in parent_rows.all()}
+
     products = []
     sku_ids = []
-    for sp, sku_code, desc, long_desc, cost_price, is_unique, cat_name in sp_rows.all():
+    for row in rows:
+        sp = row.SupplierProduct
         sku_ids.append(sp.sku_id)
+        product_type_val = (
+            row.product_type.value if hasattr(row.product_type, "value") else row.product_type
+        )
+        parent_name = parent_name_map.get(str(row.parent_category_id)) if row.parent_category_id else None
+        category_path = [n for n in (parent_name, row.category_name) if n]
         products.append({
             "supplierProductId": str(sp.id),
             "skuId": str(sp.sku_id),
-            "skuCode": sku_code,
-            "description": desc,
-            "longDescription": long_desc,
-            "category": cat_name,
-            "isUniquePiece": is_unique,
+            "internalSkuCode": row.sku_code,
+            "skuCode": row.sku_code,  # alias, retained for compatibility
             "supplierSkuCode": sp.supplier_sku_code,
+            "description": row.description,
+            "longDescription": row.long_description,
+            "productType": product_type_val,
+            "attributes": row.attributes or {},
+            "status": row.status,
+            "category": row.category_name,
+            "categoryPath": category_path,
+            "isUniquePiece": row.is_unique_piece,
             "supplierUnitCost": _dec(sp.supplier_unit_cost),
             "supplierCurrency": sp.currency,
-            "costPriceSGD": _dec(cost_price),
+            "costPriceSGD": _dec(row.cost_price),
             "minOrderQty": sp.min_order_qty,
             "leadTimeDays": sp.lead_time_days,
             "isPreferred": sp.is_preferred,
@@ -287,6 +321,121 @@ async def supplier_catalog(
                 p["sellThrough"]["marginPercent"] = None
 
     return DataResponse(data={
+        "totalProducts": len(products),
+        "products": products,
+    })
+
+
+# ------------------------------------------------------------------ #
+# 2b. PROXY CATALOG — derived from PO history                           #
+# ------------------------------------------------------------------ #
+
+@router.get("/{supplier_id}/proxy-catalog")
+async def supplier_proxy_catalog(
+    supplier_id: UUID,
+    _: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Derived catalog for suppliers without a formal product list.
+
+    Aggregates every distinct SKU we have ever purchased from this supplier —
+    with total qty ordered, average unit cost, first/last order dates, and
+    current inventory. Useful when the supplier has no digital catalog: our
+    purchase history *becomes* their catalog.
+    """
+    result = await db.execute(select(Supplier).where(Supplier.id == supplier_id))
+    supplier = result.scalar_one_or_none()
+    if not supplier:
+        raise HTTPException(404, "Supplier not found")
+
+    agg = await db.execute(
+        select(
+            PurchaseOrderItem.sku_id,
+            SKU.sku_code,
+            SKU.description,
+            SKU.long_description,
+            SKU.product_type,
+            SKU.attributes,
+            SKU.status,
+            Category.description.label("category_name"),
+            func.sum(PurchaseOrderItem.qty_ordered).label("total_qty_ordered"),
+            func.sum(PurchaseOrderItem.line_total).label("total_spend"),
+            func.avg(PurchaseOrderItem.unit_cost).label("avg_unit_cost"),
+            func.count(func.distinct(PurchaseOrderItem.purchase_order_id)).label("po_count"),
+            func.min(PurchaseOrder.order_date).label("first_ordered"),
+            func.max(PurchaseOrder.order_date).label("last_ordered"),
+        )
+        .join(PurchaseOrder, PurchaseOrderItem.purchase_order_id == PurchaseOrder.id)
+        .join(SKU, PurchaseOrderItem.sku_id == SKU.id)
+        .outerjoin(Category, SKU.category_id == Category.id)
+        .where(PurchaseOrder.supplier_id == supplier_id)
+        .group_by(
+            PurchaseOrderItem.sku_id,
+            SKU.sku_code, SKU.description, SKU.long_description,
+            SKU.product_type, SKU.attributes, SKU.status,
+            Category.description,
+        )
+        .order_by(func.max(PurchaseOrder.order_date).desc())
+    )
+    rows = agg.all()
+
+    # Supplier code map — one SKU can have multiple SupplierProduct entries,
+    # we pick the preferred one or the first.
+    sku_ids = [r.sku_id for r in rows]
+    sp_map: dict[str, str] = {}
+    if sku_ids:
+        sp_rows = await db.execute(
+            select(SupplierProduct.sku_id, SupplierProduct.supplier_sku_code)
+            .where(
+                SupplierProduct.supplier_id == supplier_id,
+                SupplierProduct.sku_id.in_(sku_ids),
+            )
+            .order_by(SupplierProduct.is_preferred.desc())
+        )
+        for sid, code in sp_rows.all():
+            sp_map.setdefault(str(sid), code)
+
+    # Inventory map
+    inv_map: dict[str, int] = {}
+    if sku_ids:
+        inv_rows = await db.execute(
+            select(Inventory.sku_id, func.sum(Inventory.qty_on_hand))
+            .where(Inventory.sku_id.in_(sku_ids))
+            .group_by(Inventory.sku_id)
+        )
+        inv_map = {str(sid): int(qty or 0) for sid, qty in inv_rows.all()}
+
+    products = []
+    for r in rows:
+        product_type_val = (
+            r.product_type.value if hasattr(r.product_type, "value") else r.product_type
+        )
+        products.append({
+            "skuId": str(r.sku_id),
+            "internalSkuCode": r.sku_code,
+            "skuCode": r.sku_code,
+            "supplierSkuCode": sp_map.get(str(r.sku_id)),
+            "description": r.description,
+            "longDescription": r.long_description,
+            "productType": product_type_val,
+            "attributes": r.attributes or {},
+            "status": r.status,
+            "category": r.category_name,
+            "totalQtyOrdered": int(r.total_qty_ordered or 0),
+            "totalSpend": _dec(r.total_spend),
+            "avgUnitCost": _dec(r.avg_unit_cost),
+            "poCount": int(r.po_count or 0),
+            "firstOrdered": r.first_ordered.isoformat() if r.first_ordered else None,
+            "lastOrdered": r.last_ordered.isoformat() if r.last_ordered else None,
+            "currentInventory": inv_map.get(str(r.sku_id), 0),
+        })
+
+    return DataResponse(data={
+        "supplierId": str(supplier.id),
+        "supplierCode": supplier.supplier_code,
+        "supplierName": supplier.name,
+        "supplierCurrency": supplier.currency,
+        "source": "derived_from_purchase_orders",
         "totalProducts": len(products),
         "products": products,
     })

@@ -12,7 +12,7 @@ from sqlalchemy import (
     UniqueConstraint,
     Enum as SQLEnum,
 )
-from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy.dialects.postgresql import UUID, JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 import enum
 from app.database import Base
@@ -21,6 +21,13 @@ from app.models._mixins import uuid_pk, created_at_col, updated_at_col
 # Forward-declare enums used on Inventory (defined in copilot.py to avoid circular imports)
 _INVENTORY_TYPE_ENUM = "inventory_type_enum"
 _SOURCING_STRATEGY_ENUM = "sourcing_strategy_enum"
+_PRODUCT_TYPE_ENUM = "product_type_enum"
+
+
+class ProductType(str, enum.Enum):
+    finished = "finished"
+    material = "material"
+    manufactured = "manufactured"
 
 
 class Category(Base):
@@ -69,7 +76,7 @@ class SKU(Base):
 
     id: Mapped[uuid_pk]
     sku_code: Mapped[str] = mapped_column(
-        String(16), unique=True, index=True, nullable=False
+        String(32), unique=True, index=True, nullable=False
     )
     description: Mapped[str] = mapped_column(String(60), nullable=False)
     long_description: Mapped[Optional[str]] = mapped_column(String(1000), nullable=True)
@@ -88,6 +95,12 @@ class SKU(Base):
     )
     use_stock: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     block_sales: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    product_type: Mapped[ProductType] = mapped_column(
+        SQLEnum(ProductType, name=_PRODUCT_TYPE_ENUM, create_type=False),
+        nullable=False, default=ProductType.finished,
+    )
+    attributes: Mapped[Optional[dict]] = mapped_column(JSONB, nullable=True)
+    status: Mapped[str] = mapped_column(String(20), nullable=False, default="active")
     store_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), ForeignKey("stores.id", ondelete="CASCADE"), nullable=False
     )

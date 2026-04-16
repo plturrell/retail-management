@@ -56,7 +56,7 @@ class BrandRead(BrandBase, UUIDMixin):
 # ---------- SKU ----------
 
 class SKUBase(BaseModel):
-    sku_code: str = Field(..., max_length=16)
+    sku_code: str = Field(..., max_length=32)
     description: str = Field(..., max_length=60)
     long_description: str | None = Field(None, max_length=1000)
     cost_price: float | None = None
@@ -68,6 +68,9 @@ class SKUBase(BaseModel):
     is_unique_piece: bool = False
     use_stock: bool = True
     block_sales: bool = False
+    product_type: str = Field("finished", max_length=20)
+    attributes: dict | None = None
+    status: str = Field("active", max_length=20)
 
 
 class SKUCreate(SKUBase):
@@ -86,6 +89,9 @@ class SKUUpdate(BaseModel):
     is_unique_piece: bool | None = None
     use_stock: bool | None = None
     block_sales: bool | None = None
+    product_type: str | None = Field(None, max_length=20)
+    attributes: dict | None = None
+    status: str | None = Field(None, max_length=20)
 
 
 class SKURead(SKUBase, UUIDMixin, TimestampMixin):
