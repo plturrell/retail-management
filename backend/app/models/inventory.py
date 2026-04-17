@@ -99,8 +99,16 @@ class SKU(Base):
         SQLEnum(ProductType, name=_PRODUCT_TYPE_ENUM, create_type=False),
         nullable=False, default=ProductType.finished,
     )
+    form_factor: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
     attributes: Mapped[Optional[dict]] = mapped_column(JSONB, nullable=True)
     status: Mapped[str] = mapped_column(String(20), nullable=False, default="active")
+    sale_ready: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    stocking_status: Mapped[Optional[str]] = mapped_column(String(30), nullable=True)
+    primary_stocking_location: Mapped[Optional[str]] = mapped_column(String(40), nullable=True)
+    amazon_sku: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
+    google_product_id: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
+    google_product_category: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    legacy_code: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
     store_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), ForeignKey("stores.id", ondelete="CASCADE"), nullable=False
     )
