@@ -39,6 +39,7 @@ struct MainTabView: View {
         case pay = "Pay"
         case performance = "Performance"
         case inventory = "Inventory"
+        case masterData = "Master Data"
         case orders = "Orders"
         case employees = "Employees"
         case financials = "Financials"
@@ -54,6 +55,7 @@ struct MainTabView: View {
             case .pay: return "banknote.fill"
             case .performance: return "trophy.fill"
             case .inventory: return "shippingbox.fill"
+            case .masterData: return "list.bullet.rectangle.portrait"
             case .orders: return "cart.fill"
             case .employees: return "person.3.fill"
             case .financials: return "dollarsign.circle.fill"
@@ -66,7 +68,7 @@ struct MainTabView: View {
             switch self {
             case .employees: return UserRole.manager.level
             case .financials: return UserRole.owner.level
-            case .inventory, .orders: return UserRole.manager.level
+            case .inventory, .orders, .masterData: return UserRole.manager.level
             default: return 0
             }
         }
@@ -98,6 +100,8 @@ struct MainTabView: View {
                 PerformanceView()
             case .inventory:
                 InventoryTabView()
+            case .masterData:
+                MasterDataView()
             case .orders:
                 OrdersTabView()
             case .employees:
@@ -139,6 +143,13 @@ struct MainTabView: View {
                 .tabItem {
                     Label("Performance", systemImage: "trophy.fill")
                 }
+
+            if currentRole.level >= UserRole.manager.level {
+                MasterDataView()
+                    .tabItem {
+                        Label("Master Data", systemImage: "list.bullet.rectangle.portrait")
+                    }
+            }
 
             StaffProfileView()
                 .tabItem {

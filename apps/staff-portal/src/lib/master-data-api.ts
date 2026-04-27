@@ -1,0 +1,203 @@
+// Client for the local master-data API (tools/server/master_data_api.py).
+// No auth -- bound to localhost / LAN. The base URL can be overridden so the
+// same client works on iPad/macOS hitting the Mac's LAN IP.
+
+const STORAGE_KEY = "retailsg.masterDataApiBase";
+
+const DEFAULT_BASE = "http://localhost:8765";
+
+function readStoredBase(): string {
+  if (typeof window === "undefined") return DEFAULT_BASE;
+  return window.localStorage.getItem(STORAGE_KEY) || DEFAULT_BASE;
+}
+
+export function getMasterDataApiBase(): string {
+  return readStoredBase().replace(/\/$/, "");
+}
+
+export function setMasterDataApiBase(url: string) {
+  if (typeof window === "undefined") return;
+  window.localStorage.setItem(STORAGE_KEY, url.replace(/\/$/, ""));
+}
+
+export interface ProductRow {
+  sku_code: string;
+  internal_code?: string | null;
+  supplier_id?: string | null;
+  supplier_name?: string | null;
+  description?: string | null;
+  long_description?: string | null;
+  product_type?: string | null;
+  material?: string | null;
+  category?: string | null;
+  size?: string | null;
+  qty_on_hand?: number | null;
+  cost_price?: number | null;
+  cost_currency?: string | null;
+  cost_basis?: { source_currency?: string; source_amount?: number; fx_rate_cny_per_sgd?: number } | null;
+  retail_price?: number | null;
+  retail_price_note?: string | null;
+  retail_price_set_at?: string | null;
+  sale_ready?: boolean;
+  block_sales?: boolean;
+  needs_retail_price?: boolean;
+  needs_review?: boolean;
+  stocking_location?: string | null;
+  nec_plu?: string | null;
+}
+
+export interface ProductPatch {
+  retail_price?: number;
+  sale_ready?: boolean;
+  block_sales?: boolean;
+  description?: string;
+  long_description?: string;
+  qty_on_hand?: number;
+  notes?: string;
+  stocking_location?: string;
+}
+
+export interface Stats {
+  total: number;
+  sale_ready: number;
+  needs_price_flag: number;
+  needs_review_flag: number;
+  sale_ready_missing_price: number;
+  by_supplier: Record<string, number>;
+}
+
+export interface ExportResult {
+  ok: boolean;
+  exit_code: number;
+  output_path?: string | null;
+  download_url?: string | null;
+  stdout: string;
+  stderr: string;
+}
+
+export interface IngestPreviewItem {
+  line_number?: number | null;
+  supplier_item_code?: string | null;
+  product_name_en?: string | null;
+  material?: string | null;
+  product_type?: string | null;
+  size?: string | null;
+  quantity?: number | null;
+  unit_price_cny?: number | null;
+  proposed_sku?: string | null;
+  proposed_plu?: string | null;
+  proposed_cost_sgd?: number | null;
+  already_exists?: boolean;
+  existing_sku?: string | null;
+  skip_reason?: string | null;
+}
+
+export interface IngestPreview {
+  upload_id: string;
+  document_type?: string | null;
+  document_number?: string | null;
+  document_date?: string | null;
+  supplier_name?: string | null;
+  currency?: string | null;
+  document_total?: number | null;
+  items: IngestPreviewItem[];
+  summary: {
+    total_lines: number;
+    new_skus: number;
+    already_exists: number;
+    skipped: number;
+  };
+}
+
+export interface IngestCommitRequest {
+  upload_id: string;
+  items: IngestPreviewItem[];
+  supplier_id?: string;
+  supplier_name?: string;
+  order_number?: string | null;
+}
+
+export interface IngestCommitResult {
+  added: number;
+  skipped: number;
+  added_entries: ProductRow[];
+  skipped_entries: { item: IngestPreviewItem; reason: string }[];
+}
+
+export interface PriceRecommendation {
+  sku_code: string;
+  recommended_retail_sgd: number;
+  implied_margin_pct?: number | null;
+  confidence: "low" | "medium" | "high";
+  comparable_skus?: string[];
+  rationale: string;
+}
+
+export interface PriceRecommendationsResponse {
+  rules_inferred?: string[];
+  recommendations: PriceRecommendation[];
+  notes?: string | null;
+  n_priced_examples?: number;
+  n_targets?: number;
+}
+
+async function request<T>(path: string, init?: RequestInit): Promise<T> {
+  const base = getMasterDataApiBase();
+  const res = await fetch(`${base}${path}`, {
+    ...init,
+    headers: { "Content-Type": "application/json", ...(init?.headers || {}) },
+  });
+  if (!res.ok) {
+    const body = await res.text();
+    throw new Error(`API ${res.status}: ${body}`);
+  }
+  return res.json() as Promise<T>;
+}
+
+export const masterDataApi = {
+  health: () => request<{ status: string; master_exists: boolean }>("/api/health"),
+  stats: () => request<Stats>("/api/stats"),
+  listProducts: (
+    params: {
+      launch_only?: boolean;
+      needs_price?: boolean;
+      supplier?: string;
+      purchased_only?: boolean;
+    } = {},
+  ) => {
+    const q = new URLSearchParams();
+    if (params.launch_only !== undefined) q.set("launch_only", String(params.launch_only));
+    if (params.needs_price !== undefined) q.set("needs_price", String(params.needs_price));
+    if (params.purchased_only !== undefined) q.set("purchased_only", String(params.purchased_only));
+    if (params.supplier) q.set("supplier", params.supplier);
+    return request<{ count: number; products: ProductRow[] }>(`/api/products?${q.toString()}`);
+  },
+  patchProduct: (sku: string, patch: ProductPatch) =>
+    request<ProductRow>(`/api/products/${encodeURIComponent(sku)}`, {
+      method: "PATCH",
+      body: JSON.stringify(patch),
+    }),
+  exportNecJewel: () => request<ExportResult>(`/api/export/nec_jewel`, { method: "POST" }),
+  downloadUrl: (filename: string) => `${getMasterDataApiBase()}/api/exports/${encodeURIComponent(filename)}`,
+  ingestInvoice: async (file: File): Promise<IngestPreview> => {
+    const base = getMasterDataApiBase();
+    const fd = new FormData();
+    fd.append("file", file);
+    const res = await fetch(`${base}/api/ingest/invoice`, { method: "POST", body: fd });
+    if (!res.ok) throw new Error(`API ${res.status}: ${await res.text()}`);
+    return res.json() as Promise<IngestPreview>;
+  },
+  commitInvoice: (req: IngestCommitRequest) =>
+    request<IngestCommitResult>(`/api/ingest/invoice/commit`, {
+      method: "POST",
+      body: JSON.stringify(req),
+    }),
+  recommendPrices: (params: { target_skus?: string[]; max_targets?: number } = {}) =>
+    request<PriceRecommendationsResponse>(`/api/ai/recommend_prices`, {
+      method: "POST",
+      body: JSON.stringify({
+        target_skus: params.target_skus,
+        max_targets: params.max_targets ?? 80,
+      }),
+    }),
+};
