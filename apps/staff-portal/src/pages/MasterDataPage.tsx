@@ -5,6 +5,7 @@ import {
   masterDataApi,
   type ExportResult,
   type IngestPreview,
+  type ManualProductRequest,
   type PriceRecommendationsResponse,
   type ProductRow,
   type Stats,
@@ -59,6 +60,12 @@ export default function MasterDataPage() {
     | { kind: "uploading"; filename: string }
     | { kind: "preview"; preview: IngestPreview; selected: Set<string> }
     | { kind: "committing" }
+    | { kind: "error"; message: string }
+  >({ kind: "idle" });
+  const [manualState, setManualState] = useState<
+    | { kind: "idle" }
+    | { kind: "open" }
+    | { kind: "saving" }
     | { kind: "error"; message: string }
   >({ kind: "idle" });
   const [aiState, setAiState] = useState<
@@ -318,6 +325,18 @@ export default function MasterDataPage() {
 
   const cancelAi = () => setAiState({ kind: "idle" });
 
+  const submitManual = async (req: ManualProductRequest) => {
+    setManualState({ kind: "saving" });
+    try {
+      const created = await masterDataApi.createManualProduct(req);
+      setManualState({ kind: "idle" });
+      await loadAll();
+      alert(`Added ${created.sku_code} (PLU ${created.nec_plu}).`);
+    } catch (err) {
+      setManualState({ kind: "error", message: (err as Error).message });
+    }
+  };
+
   return (
     <div className="min-h-screen bg-gray-50">
       <header className="border-b border-yellow-300 bg-yellow-50 px-6 py-2 text-sm text-yellow-900">
@@ -347,6 +366,14 @@ export default function MasterDataPage() {
               {ingestState.kind === "uploading"
                 ? `OCR'ing ${ingestState.filename}…`
                 : "Process invoice…"}
+            </button>
+            <button
+              onClick={() => setManualState({ kind: "open" })}
+              disabled={manualState.kind === "saving"}
+              className="rounded-md border border-gray-300 bg-white px-4 py-2 text-sm font-semibold text-gray-800 shadow-sm hover:bg-gray-50 disabled:bg-gray-200"
+              title="Add a one-off SKU that has no supplier order (e.g. Guardian artwork)"
+            >
+              {manualState.kind === "saving" ? "Saving…" : "Add manual SKU…"}
             </button>
             <button
               onClick={requestAiPrices}
@@ -642,7 +669,228 @@ export default function MasterDataPage() {
           onApply={applyAiPrices}
         />
       )}
+
+      {(manualState.kind === "open" || manualState.kind === "saving") && (
+        <ManualSkuModal
+          saving={manualState.kind === "saving"}
+          onCancel={() => setManualState({ kind: "idle" })}
+          onSubmit={submitManual}
+        />
+      )}
+
+      {manualState.kind === "error" && (
+        <div className="fixed inset-0 z-30 flex items-center justify-center bg-black/40 p-4">
+          <div className="max-w-md rounded-md bg-white p-4 shadow-lg">
+            <div className="font-semibold text-red-700">Couldn't add manual SKU</div>
+            <pre className="mt-2 max-h-48 overflow-auto whitespace-pre-wrap rounded bg-gray-50 p-2 text-xs text-red-800">
+              {manualState.message}
+            </pre>
+            <div className="mt-3 text-right">
+              <button
+                onClick={() => setManualState({ kind: "idle" })}
+                className="rounded-md border border-gray-300 px-3 py-1.5 text-sm hover:bg-gray-50"
+              >
+                Close
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
+  );
+}
+
+function ManualSkuModal({
+  saving,
+  onCancel,
+  onSubmit,
+}: {
+  saving: boolean;
+  onCancel: () => void;
+  onSubmit: (req: ManualProductRequest) => void;
+}) {
+  const [description, setDescription] = useState("Guardian artwork piece");
+  const [longDescription, setLongDescription] = useState("");
+  const [productType, setProductType] = useState("Artwork");
+  const [material, setMaterial] = useState("Mixed media");
+  const [size, setSize] = useState("");
+  const [qty, setQty] = useState("1");
+  const [costPrice, setCostPrice] = useState("");
+  const [retailPrice, setRetailPrice] = useState("");
+  const [supplierName, setSupplierName] = useState("Internal / Manual");
+  const [internalCode, setInternalCode] = useState("");
+  const [notes, setNotes] = useState("");
+
+  const canSubmit =
+    description.trim().length > 0 &&
+    productType.trim().length > 0 &&
+    material.trim().length > 0;
+
+  const handle = () => {
+    const req: ManualProductRequest = {
+      description: description.trim(),
+      long_description: longDescription.trim() || undefined,
+      product_type: productType.trim(),
+      material: material.trim(),
+      size: size.trim() || undefined,
+      qty_on_hand: Number.parseFloat(qty) || 1,
+      cost_price: costPrice ? Number.parseFloat(costPrice) : undefined,
+      retail_price: retailPrice ? Number.parseFloat(retailPrice) : undefined,
+      supplier_name: supplierName.trim() || undefined,
+      internal_code: internalCode.trim() || undefined,
+      notes: notes.trim() || undefined,
+    };
+    onSubmit(req);
+  };
+
+  return (
+    <div className="fixed inset-0 z-30 flex items-center justify-center bg-black/50 p-4">
+      <div className="w-full max-w-2xl rounded-md bg-white shadow-xl">
+        <header className="border-b border-gray-200 px-5 py-3">
+          <div className="text-base font-semibold text-gray-900">Add manual SKU</div>
+          <div className="text-xs text-gray-500">
+            For one-off items with no supplier order (e.g. Guardian artwork). The mini-server
+            will allocate a fresh SKU + barcode.
+          </div>
+        </header>
+        <div className="grid grid-cols-1 gap-3 p-5 sm:grid-cols-2">
+          <Field label="Description *" hint="Shown on the receipt and in the master list">
+            <input
+              type="text"
+              value={description}
+              onChange={(e) => setDescription(e.target.value)}
+              className="w-full rounded border border-gray-300 px-2 py-1.5 text-sm focus:border-blue-500 focus:outline-none"
+            />
+          </Field>
+          <Field label="Long description" hint="Optional — used for online listings">
+            <input
+              type="text"
+              value={longDescription}
+              onChange={(e) => setLongDescription(e.target.value)}
+              className="w-full rounded border border-gray-300 px-2 py-1.5 text-sm focus:border-blue-500 focus:outline-none"
+            />
+          </Field>
+          <Field label="Product type *" hint="e.g. Artwork, Bookend, Sphere">
+            <input
+              type="text"
+              value={productType}
+              onChange={(e) => setProductType(e.target.value)}
+              className="w-full rounded border border-gray-300 px-2 py-1.5 text-sm focus:border-blue-500 focus:outline-none"
+            />
+          </Field>
+          <Field label="Material *" hint="e.g. Mixed media, Crystal, Bronze">
+            <input
+              type="text"
+              value={material}
+              onChange={(e) => setMaterial(e.target.value)}
+              className="w-full rounded border border-gray-300 px-2 py-1.5 text-sm focus:border-blue-500 focus:outline-none"
+            />
+          </Field>
+          <Field label="Size">
+            <input
+              type="text"
+              value={size}
+              onChange={(e) => setSize(e.target.value)}
+              placeholder="e.g. 30×40cm"
+              className="w-full rounded border border-gray-300 px-2 py-1.5 text-sm focus:border-blue-500 focus:outline-none"
+            />
+          </Field>
+          <Field label="Qty on hand">
+            <input
+              type="number"
+              min="0"
+              step="1"
+              value={qty}
+              onChange={(e) => setQty(e.target.value)}
+              className="w-full rounded border border-gray-300 px-2 py-1.5 text-sm focus:border-blue-500 focus:outline-none"
+            />
+          </Field>
+          <Field label="Cost SGD" hint="Leave blank for commissioned/internal pieces">
+            <input
+              type="number"
+              min="0"
+              step="0.01"
+              value={costPrice}
+              onChange={(e) => setCostPrice(e.target.value)}
+              className="w-full rounded border border-gray-300 px-2 py-1.5 text-sm focus:border-blue-500 focus:outline-none"
+            />
+          </Field>
+          <Field label="Retail SGD" hint="Set now to mark sale-ready, or leave blank to fill in later">
+            <input
+              type="number"
+              min="0"
+              step="0.01"
+              value={retailPrice}
+              onChange={(e) => setRetailPrice(e.target.value)}
+              className="w-full rounded border border-gray-300 px-2 py-1.5 text-sm focus:border-blue-500 focus:outline-none"
+            />
+          </Field>
+          <Field label="Supplier name">
+            <input
+              type="text"
+              value={supplierName}
+              onChange={(e) => setSupplierName(e.target.value)}
+              className="w-full rounded border border-gray-300 px-2 py-1.5 text-sm focus:border-blue-500 focus:outline-none"
+            />
+          </Field>
+          <Field label="Internal code" hint="Optional — auto-generated if blank">
+            <input
+              type="text"
+              value={internalCode}
+              onChange={(e) => setInternalCode(e.target.value)}
+              placeholder="e.g. GUARDIAN-001"
+              className="w-full rounded border border-gray-300 px-2 py-1.5 text-sm focus:border-blue-500 focus:outline-none"
+            />
+          </Field>
+          <div className="sm:col-span-2">
+            <Field label="Notes">
+              <input
+                type="text"
+                value={notes}
+                onChange={(e) => setNotes(e.target.value)}
+                className="w-full rounded border border-gray-300 px-2 py-1.5 text-sm focus:border-blue-500 focus:outline-none"
+              />
+            </Field>
+          </div>
+        </div>
+        <footer className="flex items-center justify-end gap-2 border-t border-gray-200 px-5 py-3">
+          <button
+            onClick={onCancel}
+            disabled={saving}
+            className="rounded-md border border-gray-300 px-3 py-1.5 text-sm hover:bg-gray-50 disabled:bg-gray-100"
+          >
+            Cancel
+          </button>
+          <button
+            onClick={handle}
+            disabled={!canSubmit || saving}
+            className="rounded-md bg-blue-600 px-4 py-1.5 text-sm font-semibold text-white hover:bg-blue-700 disabled:bg-gray-400"
+          >
+            {saving ? "Adding…" : "Add SKU"}
+          </button>
+        </footer>
+      </div>
+    </div>
+  );
+}
+
+function Field({
+  label,
+  hint,
+  children,
+}: {
+  label: string;
+  hint?: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <label className="block">
+      <span className="block text-xs font-semibold uppercase tracking-wide text-gray-600">
+        {label}
+      </span>
+      {children}
+      {hint && <span className="mt-0.5 block text-[11px] text-gray-500">{hint}</span>}
+    </label>
   );
 }
 

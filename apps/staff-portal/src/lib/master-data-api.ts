@@ -124,6 +124,21 @@ export interface IngestCommitResult {
   skipped_entries: { item: IngestPreviewItem; reason: string }[];
 }
 
+export interface ManualProductRequest {
+  description: string;
+  long_description?: string;
+  product_type: string;
+  material: string;
+  size?: string;
+  qty_on_hand?: number;
+  cost_price?: number;
+  retail_price?: number;
+  supplier_id?: string;
+  supplier_name?: string;
+  internal_code?: string;
+  notes?: string;
+}
+
 export interface PriceRecommendation {
   sku_code: string;
   recommended_retail_sgd: number;
@@ -189,6 +204,11 @@ export const masterDataApi = {
   },
   commitInvoice: (req: IngestCommitRequest) =>
     request<IngestCommitResult>(`/api/ingest/invoice/commit`, {
+      method: "POST",
+      body: JSON.stringify(req),
+    }),
+  createManualProduct: (req: ManualProductRequest) =>
+    request<ProductRow>(`/api/products/manual`, {
       method: "POST",
       body: JSON.stringify(req),
     }),

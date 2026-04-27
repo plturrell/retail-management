@@ -589,6 +589,147 @@ def commit_invoice(req: IngestCommitRequest) -> dict:
     }
 
 
+# ── Manual SKU (no supplier order, no invoice) ───────────────────────────────
+#
+# For one-off items that don't go through the OCR ingest path. The Guardian
+# artwork piece for Jewel Changi is the May-1 example: commissioned, no
+# supplier code, no PO. Allocates a fresh SKU+PLU and writes an entry shaped
+# like the OCR commit so it shows up in the same purchased_only filter.
+
+
+class ManualProductRequest(BaseModel):
+    description: str = Field(..., min_length=1)
+    long_description: Optional[str] = None
+    product_type: str = Field(..., min_length=1, description="e.g. 'Artwork', 'Bookend', 'Sphere'")
+    material: str = Field(..., min_length=1, description="e.g. 'Mixed media', 'Crystal'")
+    size: Optional[str] = None
+    qty_on_hand: float = Field(default=1, ge=0)
+    cost_price: Optional[float] = Field(default=None, ge=0, description="SGD; optional for commissioned/internal items")
+    retail_price: Optional[float] = Field(default=None, gt=0, description="SGD; can be filled in later via /api/products/{sku} PATCH")
+    supplier_id: str = Field(default="INTERNAL")
+    supplier_name: str = Field(default="Internal / Manual")
+    internal_code: Optional[str] = Field(default=None, description="Optional supplier-side code; auto-generated if absent")
+    notes: Optional[str] = None
+
+
+@app.post("/api/products/manual")
+def create_manual_product(req: ManualProductRequest) -> dict:
+    """Create a one-off SKU outside the OCR pipeline (e.g. Guardian artwork)."""
+    from identifier_utils import allocate_identifier_pair, max_sku_sequence
+    from add_hengwei_skus_to_master import (
+        STOCKING_LOCATION,
+        detect_material,
+        detect_product_type,
+        synth_description,
+        synth_long_description,
+    )
+
+    with _lock:
+        data = _read_master()
+        products = data.setdefault("products", [])
+        sku_set = {str(p["sku_code"]).strip() for p in products if p.get("sku_code")}
+        plu_set: set[str] = set()
+        for p in products:
+            for f in ("nec_plu", "plu_code"):
+                v = p.get(f)
+                if v:
+                    plu_set.add(str(v).strip())
+        existing_codes = {
+            str(p["internal_code"]).strip() for p in products if p.get("internal_code")
+        }
+
+        # Material/type abbreviations come from the same helpers the Hengwei
+        # importer uses, so the SKU naming stays consistent.
+        ocr_type_text = req.product_type.strip().lower()
+        type_hit = _OCR_TYPE_TO_ABBR.get(ocr_type_text)
+        if type_hit:
+            type_abbr, type_label = type_hit
+        else:
+            type_abbr, _ts, type_label = detect_product_type(
+                req.size or "", req.material, req.description
+            )
+        mat_abbr, mat_label = detect_material(req.material)
+
+        # Auto-generate an internal_code if the caller didn't pass one.
+        internal_code = (req.internal_code or "").strip()
+        if not internal_code:
+            base = f"MANUAL-{type_abbr}-"
+            n = 1
+            while f"{base}{n:03d}" in existing_codes:
+                n += 1
+            internal_code = f"{base}{n:03d}"
+        elif internal_code in existing_codes:
+            raise HTTPException(
+                status_code=409,
+                detail=f"internal_code '{internal_code}' already in master_product_list.json",
+            )
+
+        next_seq = max(max_sku_sequence(sku_set), 0) + 1
+
+        def _sku_factory(seq: int, _ta=type_abbr, _ma=mat_abbr) -> str:
+            return f"VE{_ta}{_ma}{seq:07d}"
+
+        sku_code, plu_code, _ = allocate_identifier_pair(
+            _sku_factory, sku_set, plu_set, next_seq
+        )
+
+        description = req.description or synth_description(
+            type_label, mat_label, req.size or "", internal_code
+        )
+        long_description = req.long_description or synth_long_description(
+            type_label, mat_label, req.size or "", req.material
+        )
+
+        entry = {
+            "id": f"{req.supplier_id.lower()}-{internal_code.lower()}",
+            "internal_code": internal_code,
+            "sku_code": sku_code,
+            "description": description,
+            "long_description": long_description,
+            "material": mat_label,
+            "product_type": type_label,
+            "category": "Home Decor",
+            "amazon_sku": f"VE-{mat_abbr}-{sku_code[2:5]}-{internal_code}",
+            "google_product_id": f"online:en:SG:{sku_code}",
+            "google_product_category": "Home & Garden > Decor",
+            "nec_plu": plu_code,
+            "cost_price": req.cost_price,
+            "cost_currency": "SGD" if req.cost_price is not None else None,
+            "cost_basis": None,
+            "retail_price": req.retail_price,
+            "qty_on_hand": req.qty_on_hand,
+            "supplier_id": req.supplier_id,
+            "supplier_name": req.supplier_name,
+            "supplier_item_code": internal_code,
+            # Tagged like an invoice-sourced SKU so the purchased_only filter
+            # picks it up — `manual_<timestamp>` keeps it traceable.
+            "source_orders": [f"manual_{datetime.now().strftime('%Y%m%d-%H%M%S')}"],
+            "sources": [f"{req.supplier_id.lower()}_invoice_manual_{datetime.now().strftime('%Y%m%d-%H%M%S')}"],
+            "raw_names": [description],
+            "mention_count": 1,
+            "inventory_type": "purchased",
+            "sourcing_strategy": "internal_manual",
+            "inventory_category": "finished_for_sale",
+            "sale_ready": bool(req.retail_price),
+            "block_sales": False,
+            "stocking_status": "in_stock",
+            "stocking_location": STOCKING_LOCATION,
+            "use_stock": True,
+            "size": req.size or "",
+            "added_at": _now(),
+            "added_via": "master_data_api/create_manual_product",
+            "needs_review": False,
+            "needs_retail_price": req.retail_price is None,
+            "notes": req.notes,
+        }
+        products.append(entry)
+        meta = data.setdefault("metadata", {})
+        meta["last_modified"] = _now()
+        meta["last_modified_by"] = "master_data_api/create_manual_product"
+        _atomic_write_master(data)
+        return entry
+
+
 # ── AI price recommender (DeepSeek reasoner → chat) ──────────────────────────
 #
 # Treats the user's already-priced items as training data: for each unpriced
