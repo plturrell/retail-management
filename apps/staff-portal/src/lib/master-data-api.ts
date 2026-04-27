@@ -63,7 +63,9 @@ export interface Stats {
   needs_price_flag: number;
   needs_review_flag: number;
   sale_ready_missing_price: number;
+  missing_cost?: number;
   by_supplier: Record<string, number>;
+  purchased_only?: boolean;
 }
 
 export interface ExportResult {
@@ -202,7 +204,11 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 
 export const masterDataApi = {
   health: () => request<{ status: string; master_exists: boolean }>("/api/health"),
-  stats: () => request<Stats>("/api/stats"),
+  stats: (params: { purchased_only?: boolean } = {}) => {
+    const q = new URLSearchParams();
+    if (params.purchased_only !== undefined) q.set("purchased_only", String(params.purchased_only));
+    return request<Stats>(`/api/stats${q.toString() ? `?${q.toString()}` : ""}`);
+  },
   listProducts: (
     params: {
       launch_only?: boolean;

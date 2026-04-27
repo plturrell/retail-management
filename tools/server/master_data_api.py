@@ -144,18 +144,28 @@ def health() -> dict:
 
 
 @app.get("/api/stats")
-def stats() -> dict:
+def stats(
+    purchased_only: bool = Query(
+        False,
+        description="If true, restrict the counts to SKUs from real POs/invoices "
+        "(skip catalog-only rows). Matches the same filter as /api/products.",
+    ),
+) -> dict:
     data = _read_master()
     products = data.get("products", [])
+    if purchased_only:
+        products = [p for p in products if _is_purchased(p)]
     by_supplier: dict[str, int] = {}
     sale_ready = 0
     needs_price = 0
     needs_review = 0
     missing_price_in_sale_ready = 0
+    missing_cost = 0
     for p in products:
         sup = p.get("supplier_id") or "(none)"
         by_supplier[sup] = by_supplier.get(sup, 0) + 1
         has_price = bool(p.get("retail_price") or p.get("price_incl_tax"))
+        has_cost = bool(p.get("cost_price"))
         if p.get("sale_ready"):
             sale_ready += 1
             if not has_price:
@@ -164,13 +174,17 @@ def stats() -> dict:
             needs_price += 1
         if p.get("needs_review"):
             needs_review += 1
+        if not has_cost:
+            missing_cost += 1
     return {
         "total": len(products),
         "sale_ready": sale_ready,
         "needs_price_flag": needs_price,
         "needs_review_flag": needs_review,
         "sale_ready_missing_price": missing_price_in_sale_ready,
+        "missing_cost": missing_cost,
         "by_supplier": by_supplier,
+        "purchased_only": purchased_only,
     }
 
 

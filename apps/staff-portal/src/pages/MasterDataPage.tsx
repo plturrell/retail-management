@@ -90,7 +90,7 @@ export default function MasterDataPage() {
     setGlobalError(null);
     try {
       const [statsRes, productsRes] = await Promise.all([
-        masterDataApi.stats(),
+        masterDataApi.stats({ purchased_only: purchasedOnly }),
         masterDataApi.listProducts({
           launch_only: true,
           needs_price: needsPriceOnly,
@@ -451,11 +451,21 @@ export default function MasterDataPage() {
         )}
 
         {stats && (
-          <div className="mb-4 grid grid-cols-2 gap-3 sm:grid-cols-4">
-            <Stat label="Total products" value={stats.total} />
+          <div className="mb-4 grid grid-cols-2 gap-3 sm:grid-cols-5">
+            <Stat
+              label={purchasedOnly ? "Purchased SKUs" : "Total products"}
+              value={stats.total}
+            />
             <Stat label="Sale ready" value={stats.sale_ready} accent={stats.sale_ready > 0 ? "good" : undefined} />
             <Stat label="Sale-ready missing price" value={stats.sale_ready_missing_price} accent={stats.sale_ready_missing_price > 0 ? "warn" : "good"} />
             <Stat label="New SKUs awaiting price" value={stats.needs_price_flag} accent={stats.needs_price_flag > 0 ? "warn" : "good"} />
+            {stats.missing_cost != null && (
+              <Stat
+                label="Missing cost"
+                value={stats.missing_cost}
+                accent={stats.missing_cost > 0 ? "warn" : "good"}
+              />
+            )}
           </div>
         )}
 
