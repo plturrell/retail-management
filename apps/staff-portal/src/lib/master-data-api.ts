@@ -90,6 +90,13 @@ export interface IngestPreviewItem {
   already_exists?: boolean;
   existing_sku?: string | null;
   skip_reason?: string | null;
+  image_url?: string | null;
+  image_match_confidence?: "matched" | "page-fallback" | null;
+}
+
+export interface IngestPreviewPageImage {
+  page_number: number;
+  url: string;
 }
 
 export interface IngestPreview {
@@ -101,11 +108,14 @@ export interface IngestPreview {
   currency?: string | null;
   document_total?: number | null;
   items: IngestPreviewItem[];
+  page_images?: IngestPreviewPageImage[];
   summary: {
     total_lines: number;
     new_skus: number;
     already_exists: number;
     skipped: number;
+    images_extracted?: number;
+    items_with_image?: number;
   };
 }
 
@@ -156,6 +166,27 @@ export interface PriceRecommendationsResponse {
   n_targets?: number;
 }
 
+export interface VisualSearchMatch {
+  rank: number;
+  code?: string | null;
+  file?: string | null;
+  image_url?: string | null;
+  similarity: number;
+  catalog_text?: string | null;
+  sku?: string | null;
+  nec_plu?: string | null;
+  description?: string | null;
+  retail_price?: number | null;
+  qty_on_hand?: number | null;
+}
+
+export interface VisualSearchResponse {
+  descriptor: Record<string, unknown>;
+  query_text: string;
+  matches: VisualSearchMatch[];
+  catalog_size: number;
+}
+
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const base = getMasterDataApiBase();
   const res = await fetch(`${base}${path}`, {
@@ -194,6 +225,13 @@ export const masterDataApi = {
     }),
   exportNecJewel: () => request<ExportResult>(`/api/export/nec_jewel`, { method: "POST" }),
   downloadUrl: (filename: string) => `${getMasterDataApiBase()}/api/exports/${encodeURIComponent(filename)}`,
+  /** Resolve a relative path the server returns (e.g. `/api/uploads/...`) into
+   *  an absolute URL the browser can hit. Pass-through for already-absolute URLs. */
+  resolveAssetUrl: (path?: string | null): string | null => {
+    if (!path) return null;
+    if (/^https?:/i.test(path)) return path;
+    return `${getMasterDataApiBase()}${path.startsWith("/") ? "" : "/"}${path}`;
+  },
   ingestInvoice: async (file: File): Promise<IngestPreview> => {
     const base = getMasterDataApiBase();
     const fd = new FormData();
@@ -220,4 +258,15 @@ export const masterDataApi = {
         max_targets: params.max_targets ?? 80,
       }),
     }),
+  visualSearch: async (file: File, topK: number = 8): Promise<VisualSearchResponse> => {
+    const base = getMasterDataApiBase();
+    const fd = new FormData();
+    fd.append("file", file);
+    const res = await fetch(`${base}/api/ai/visual_search?top_k=${topK}`, {
+      method: "POST",
+      body: fd,
+    });
+    if (!res.ok) throw new Error(`API ${res.status}: ${await res.text()}`);
+    return res.json() as Promise<VisualSearchResponse>;
+  },
 };

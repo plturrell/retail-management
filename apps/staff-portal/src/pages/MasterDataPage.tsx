@@ -9,6 +9,7 @@ import {
   type PriceRecommendationsResponse,
   type ProductRow,
   type Stats,
+  type VisualSearchResponse,
 } from "../lib/master-data-api";
 
 type SaveState = "idle" | "saving" | "saved" | "error";
@@ -75,7 +76,14 @@ export default function MasterDataPage() {
     | { kind: "applying"; total: number; done: number }
     | { kind: "error"; message: string }
   >({ kind: "idle" });
+  const [visualState, setVisualState] = useState<
+    | { kind: "idle" }
+    | { kind: "uploading"; filename: string }
+    | { kind: "results"; previewUrl: string; response: VisualSearchResponse }
+    | { kind: "error"; message: string }
+  >({ kind: "idle" });
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const visualInputRef = useRef<HTMLInputElement | null>(null);
 
   const loadAll = useCallback(async () => {
     setLoading(true);
@@ -325,6 +333,28 @@ export default function MasterDataPage() {
 
   const cancelAi = () => setAiState({ kind: "idle" });
 
+  const onPickVisualPhoto = () => visualInputRef.current?.click();
+
+  const onVisualPhotoFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    e.target.value = "";
+    if (!file) return;
+    setVisualState({ kind: "uploading", filename: file.name });
+    const previewUrl = URL.createObjectURL(file);
+    try {
+      const response = await masterDataApi.visualSearch(file, 8);
+      setVisualState({ kind: "results", previewUrl, response });
+    } catch (err) {
+      URL.revokeObjectURL(previewUrl);
+      setVisualState({ kind: "error", message: (err as Error).message });
+    }
+  };
+
+  const closeVisual = () => {
+    if (visualState.kind === "results") URL.revokeObjectURL(visualState.previewUrl);
+    setVisualState({ kind: "idle" });
+  };
+
   const submitManual = async (req: ManualProductRequest) => {
     setManualState({ kind: "saving" });
     try {
@@ -357,6 +387,14 @@ export default function MasterDataPage() {
               onChange={onInvoiceFile}
               className="hidden"
             />
+            <input
+              ref={visualInputRef}
+              type="file"
+              accept="image/*"
+              capture="environment"
+              onChange={onVisualPhotoFile}
+              className="hidden"
+            />
             <button
               onClick={onPickInvoice}
               disabled={ingestState.kind === "uploading" || ingestState.kind === "committing"}
@@ -366,6 +404,16 @@ export default function MasterDataPage() {
               {ingestState.kind === "uploading"
                 ? `OCR'ing ${ingestState.filename}…`
                 : "Process invoice…"}
+            </button>
+            <button
+              onClick={onPickVisualPhoto}
+              disabled={visualState.kind === "uploading"}
+              className="rounded-md border border-emerald-300 bg-emerald-50 px-4 py-2 text-sm font-semibold text-emerald-800 shadow-sm hover:bg-emerald-100 disabled:bg-gray-200"
+              title="Snap or upload a photo of an item — Gemini matches it against the catalog"
+            >
+              {visualState.kind === "uploading"
+                ? `Searching ${visualState.filename}…`
+                : "Find by photo 📷"}
             </button>
             <button
               onClick={() => setManualState({ kind: "open" })}
@@ -678,6 +726,41 @@ export default function MasterDataPage() {
         />
       )}
 
+      {visualState.kind === "uploading" && (
+        <div className="fixed inset-0 z-30 flex items-center justify-center bg-black/40">
+          <div className="rounded-md bg-white px-6 py-4 shadow-lg text-sm text-gray-700">
+            Gemini is matching your photo against the catalog… ({visualState.filename})
+          </div>
+        </div>
+      )}
+
+      {visualState.kind === "error" && (
+        <div className="fixed inset-0 z-30 flex items-center justify-center bg-black/40 p-4">
+          <div className="max-w-md rounded-md bg-white p-4 shadow-lg">
+            <div className="font-semibold text-red-700">Visual search failed</div>
+            <pre className="mt-2 max-h-48 overflow-auto whitespace-pre-wrap rounded bg-gray-50 p-2 text-xs text-red-800">
+              {visualState.message}
+            </pre>
+            <div className="mt-3 text-right">
+              <button
+                onClick={() => setVisualState({ kind: "idle" })}
+                className="rounded-md border border-gray-300 px-3 py-1.5 text-sm hover:bg-gray-50"
+              >
+                Close
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {visualState.kind === "results" && (
+        <VisualSearchModal
+          previewUrl={visualState.previewUrl}
+          response={visualState.response}
+          onClose={closeVisual}
+        />
+      )}
+
       {manualState.kind === "error" && (
         <div className="fixed inset-0 z-30 flex items-center justify-center bg-black/40 p-4">
           <div className="max-w-md rounded-md bg-white p-4 shadow-lg">
@@ -930,6 +1013,17 @@ function IngestPreviewModal({
                 {preview.summary.new_skus} new · {preview.summary.already_exists} already in master ·{" "}
                 {preview.summary.skipped} skipped
               </span>
+              {(preview.summary.images_extracted ?? 0) > 0 && (
+                <>
+                  {" · "}
+                  <span title="Images extracted from the PDF / matched to line items">
+                    {preview.summary.images_extracted} images extracted
+                    {(preview.summary.items_with_image ?? 0) > 0
+                      ? ` (${preview.summary.items_with_image} matched to lines)`
+                      : ""}
+                  </span>
+                </>
+              )}
             </div>
           </div>
           <button onClick={onCancel} className="text-sm text-gray-500 hover:underline">
@@ -941,6 +1035,7 @@ function IngestPreviewModal({
             <thead className="sticky top-0 bg-gray-100 text-left text-xs uppercase tracking-wide text-gray-600">
               <tr>
                 <th className="px-3 py-2"></th>
+                <th className="px-3 py-2">Image</th>
                 <th className="px-3 py-2">Code</th>
                 <th className="px-3 py-2">Description</th>
                 <th className="px-3 py-2">Type</th>
@@ -959,6 +1054,7 @@ function IngestPreviewModal({
                 const code = it.supplier_item_code ? String(it.supplier_item_code) : null;
                 const isNew = !!(it.proposed_sku && !it.already_exists && !it.skip_reason && code);
                 const isChecked = code ? selected.has(code) : false;
+                const imageHref = masterDataApi.resolveAssetUrl(it.image_url);
                 return (
                   <tr
                     key={`${idx}-${code ?? "noco"}`}
@@ -978,6 +1074,19 @@ function IngestPreviewModal({
                           onChange={() => onToggle(code)}
                         />
                       ) : null}
+                    </td>
+                    <td className="px-3 py-2">
+                      {imageHref ? (
+                        <a href={imageHref} target="_blank" rel="noreferrer" title="Open full-size image">
+                          <img
+                            src={imageHref}
+                            alt={it.product_name_en ?? code ?? "item"}
+                            className="h-12 w-12 rounded border border-gray-200 object-cover"
+                          />
+                        </a>
+                      ) : (
+                        <div className="h-12 w-12 rounded border border-dashed border-gray-200 bg-gray-50" title="No image extracted for this line" />
+                      )}
                     </td>
                     <td className="px-3 py-2 font-mono text-xs">{code || "—"}</td>
                     <td className="px-3 py-2 max-w-sm truncate" title={it.product_name_en ?? ""}>
@@ -1007,6 +1116,38 @@ function IngestPreviewModal({
               })}
             </tbody>
           </table>
+          {preview.page_images && preview.page_images.length > 0 && (
+            <details className="border-t border-gray-200 bg-gray-50 px-5 py-3 text-xs">
+              <summary className="cursor-pointer font-semibold text-gray-700">
+                All extracted images ({preview.page_images.length}) — fallback if a line's thumbnail is wrong
+              </summary>
+              <div className="mt-3 grid grid-cols-6 gap-3 sm:grid-cols-8 md:grid-cols-10">
+                {preview.page_images.map((img, i) => {
+                  const href = masterDataApi.resolveAssetUrl(img.url);
+                  if (!href) return null;
+                  return (
+                    <a
+                      key={`${img.page_number}-${i}`}
+                      href={href}
+                      target="_blank"
+                      rel="noreferrer"
+                      title={`Page ${img.page_number}`}
+                      className="block"
+                    >
+                      <img
+                        src={href}
+                        alt={`Page ${img.page_number} image ${i + 1}`}
+                        className="aspect-square w-full rounded border border-gray-200 object-cover"
+                      />
+                      <div className="mt-0.5 text-center text-[10px] text-gray-500">
+                        p.{img.page_number}
+                      </div>
+                    </a>
+                  );
+                })}
+              </div>
+            </details>
+          )}
         </div>
         <footer className="flex items-center justify-between border-t border-gray-200 px-5 py-3">
           <div className="text-xs text-gray-500">
@@ -1202,6 +1343,116 @@ function PriceRecommendationsModal({
             </button>
           </div>
         </footer>
+      </div>
+    </div>
+  );
+}
+
+function VisualSearchModal({
+  previewUrl,
+  response,
+  onClose,
+}: {
+  previewUrl: string;
+  response: VisualSearchResponse;
+  onClose: () => void;
+}) {
+  const desc = response.descriptor as Record<string, unknown>;
+  const tagList = Array.isArray(desc.style_tags) ? (desc.style_tags as string[]).join(", ") : "";
+  return (
+    <div className="fixed inset-0 z-30 flex items-center justify-center bg-black/50 p-4">
+      <div className="flex max-h-[90vh] w-full max-w-6xl flex-col rounded-md bg-white shadow-xl">
+        <header className="flex items-center justify-between border-b border-gray-200 px-5 py-3">
+          <div>
+            <div className="text-base font-semibold text-gray-900">Find by photo 📷</div>
+            <div className="text-xs text-gray-500">
+              Top {response.matches.length} match{response.matches.length === 1 ? "" : "es"} from a catalog of {response.catalog_size}.
+            </div>
+          </div>
+          <button onClick={onClose} className="text-sm text-gray-500 hover:underline">
+            Close
+          </button>
+        </header>
+        <div className="flex flex-1 gap-4 overflow-auto p-5">
+          <aside className="w-60 shrink-0">
+            <img
+              src={previewUrl}
+              alt="Uploaded item"
+              className="aspect-square w-full rounded border border-gray-200 object-cover"
+            />
+            <div className="mt-3 space-y-1 text-xs text-gray-600">
+              <div><span className="font-semibold">Shape:</span> {String(desc.object_shape ?? "—")}</div>
+              <div><span className="font-semibold">Material:</span> {String(desc.material_type ?? "—")}</div>
+              <div><span className="font-semibold">Colour:</span> {String(desc.dominant_colour ?? "—")}</div>
+              {tagList && <div><span className="font-semibold">Tags:</span> {tagList}</div>}
+              {desc.visual_description && (
+                <p className="mt-2 italic text-gray-500">{String(desc.visual_description)}</p>
+              )}
+            </div>
+          </aside>
+          <div className="flex-1">
+            <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">
+              {response.matches.map((m) => {
+                const href = masterDataApi.resolveAssetUrl(m.image_url);
+                const sim = (m.similarity * 100).toFixed(1);
+                const tone =
+                  m.similarity >= 0.75
+                    ? "border-green-300 bg-green-50"
+                    : m.similarity >= 0.6
+                    ? "border-yellow-300 bg-yellow-50"
+                    : "border-gray-200 bg-white";
+                return (
+                  <div
+                    key={`${m.code}-${m.rank}`}
+                    className={`rounded border ${tone} p-2 text-xs shadow-sm`}
+                  >
+                    {href ? (
+                      <a href={href} target="_blank" rel="noreferrer">
+                        <img
+                          src={href}
+                          alt={m.code ?? "match"}
+                          className="aspect-square w-full rounded object-cover"
+                        />
+                      </a>
+                    ) : (
+                      <div className="aspect-square w-full rounded border border-dashed border-gray-300 bg-gray-50" />
+                    )}
+                    <div className="mt-2 flex items-baseline justify-between">
+                      <div className="font-mono text-[11px] font-semibold text-gray-700">{m.code}</div>
+                      <div className="text-[11px] font-semibold text-gray-600">{sim}%</div>
+                    </div>
+                    {m.sku ? (
+                      <div className="mt-1 space-y-0.5">
+                        <div className="font-mono text-[11px] text-gray-700">{m.sku}</div>
+                        {m.nec_plu && (
+                          <div className="font-mono text-[11px] text-gray-500">PLU {m.nec_plu}</div>
+                        )}
+                        {m.description && (
+                          <div className="line-clamp-2 text-[11px] text-gray-600" title={m.description}>
+                            {m.description}
+                          </div>
+                        )}
+                        <div className="flex gap-3 text-[11px] text-gray-500">
+                          {m.retail_price != null && <span>S${m.retail_price.toFixed(2)}</span>}
+                          {m.qty_on_hand != null && <span>qty {m.qty_on_hand}</span>}
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="mt-1 text-[11px] italic text-gray-400">
+                        No master-list entry yet
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+            {response.matches.length === 0 && (
+              <div className="py-12 text-center text-sm text-gray-500">
+                No catalog matches. Try a different photo or rebuild the catalog index.
+              </div>
+            )}
+          </div>
+        </div>
       </div>
     </div>
   );

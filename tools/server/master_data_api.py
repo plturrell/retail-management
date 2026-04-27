@@ -46,6 +46,9 @@ MASTER_JSON = REPO_ROOT / "data" / "master_product_list.json"
 EXPORT_DIR = REPO_ROOT / "data" / "exports"
 UPLOAD_DIR = REPO_ROOT / "data" / "uploads" / "invoices"
 EXPORT_SCRIPT = REPO_ROOT / "tools" / "scripts" / "export_nec_jewel.py"
+CATALOG_IMAGES_DIR = REPO_ROOT / "data" / "catalog" / "product_images"
+CATALOG_EMBED_NPY = REPO_ROOT / "data" / "catalog" / "product_embeddings.npy"
+CATALOG_EMBED_INDEX = REPO_ROOT / "data" / "catalog" / "product_embedding_index.json"
 
 # Make tools/scripts importable so we can reuse identifier_utils + the
 # entry-shaping helpers that add_hengwei_skus_to_master.py uses today.
@@ -304,6 +307,13 @@ class IngestPreviewItem(BaseModel):
     already_exists: bool = False
     existing_sku: Optional[str] = None
     skip_reason: Optional[str] = None
+    image_url: Optional[str] = None
+    image_match_confidence: Optional[str] = None  # "matched" | "page-fallback" | None
+
+
+class IngestPreviewPageImage(BaseModel):
+    page_number: int
+    url: str
 
 
 class IngestCommitRequest(BaseModel):
@@ -319,10 +329,132 @@ def _safe_filename(name: str) -> str:
     return base or "upload"
 
 
+def _extract_pdf_images(pdf_path: Path, upload_id: str) -> dict[str, Any]:
+    """Pull every embedded image out of a supplier PDF and remember each
+    image's Y-bbox so we can later pair it with the OCR'd line item that
+    sits next to it on the page.
+
+    Returns a dict with `image_dir`, `page_images` (URL list for the modal's
+    fallback gallery), and `image_records` (raw bbox info consumed by
+    `_match_codes_to_images`). Soft-fails to empty results if PyMuPDF is
+    unavailable or the file isn't a PDF — the rest of ingest still works."""
+    try:
+        import fitz  # type: ignore
+    except ImportError:
+        return {"image_dir": None, "page_images": [], "image_records": []}
+
+    image_dir = UPLOAD_DIR / f"{upload_id}_images"
+    image_dir.mkdir(parents=True, exist_ok=True)
+
+    page_images: list[dict] = []
+    image_records: list[dict] = []
+
+    try:
+        doc = fitz.open(str(pdf_path))
+    except Exception:
+        return {"image_dir": image_dir, "page_images": [], "image_records": []}
+
+    try:
+        for page_idx in range(len(doc)):
+            page = doc.load_page(page_idx)
+            page_num = page_idx + 1
+            for img_idx, img_info in enumerate(page.get_images(full=True)):
+                xref = img_info[0]
+                try:
+                    bbox = page.get_image_bbox(img_info)
+                except Exception:
+                    bbox = None
+                fname = f"page_{page_num:02d}_img_{img_idx:02d}.png"
+                try:
+                    pix = fitz.Pixmap(doc, xref)
+                    if pix.n - pix.alpha > 3:  # CMYK → RGB
+                        pix = fitz.Pixmap(fitz.csRGB, pix)
+                    pix.save(str(image_dir / fname))
+                    pix = None
+                except Exception:
+                    continue
+                image_records.append({
+                    "page_number": page_num,
+                    "filename": fname,
+                    "y_top": float(bbox.y0) if bbox else None,
+                    "y_bottom": float(bbox.y1) if bbox else None,
+                })
+                page_images.append({
+                    "page_number": page_num,
+                    "url": f"/api/uploads/{upload_id}_images/{fname}",
+                })
+    finally:
+        doc.close()
+
+    return {
+        "image_dir": image_dir,
+        "page_images": page_images,
+        "image_records": image_records,
+    }
+
+
+def _match_codes_to_images(
+    pdf_path: Path,
+    upload_id: str,
+    codes: list[str],
+    image_records: list[dict],
+) -> dict[str, str]:
+    """For each supplier_item_code, find its Y-position via PDF text search
+    and pick the closest embedded image on the same page. Returns a
+    {code: image_url} map; codes that don't appear in the PDF text or have
+    no images on their page are simply omitted."""
+    if not codes or not image_records:
+        return {}
+    try:
+        import fitz  # type: ignore
+    except ImportError:
+        return {}
+    try:
+        doc = fitz.open(str(pdf_path))
+    except Exception:
+        return {}
+
+    by_page_images: dict[int, list[dict]] = {}
+    for rec in image_records:
+        if rec.get("y_top") is None:
+            continue
+        by_page_images.setdefault(rec["page_number"], []).append(rec)
+
+    matches: dict[str, str] = {}
+    try:
+        for code in codes:
+            if not code:
+                continue
+            code_str = str(code).strip()
+            if not code_str:
+                continue
+            for page_idx in range(len(doc)):
+                page = doc.load_page(page_idx)
+                page_num = page_idx + 1
+                hits = page.search_for(code_str)
+                if not hits:
+                    continue
+                code_y = float(hits[0].y0)
+                page_imgs = by_page_images.get(page_num, [])
+                if not page_imgs:
+                    continue
+                best = min(
+                    page_imgs,
+                    key=lambda r: abs(((r["y_top"] + r["y_bottom"]) / 2) - code_y),
+                )
+                matches[code_str] = f"/api/uploads/{upload_id}_images/{best['filename']}"
+                break
+    finally:
+        doc.close()
+    return matches
+
+
 def _ocr_to_preview(
     extracted: dict,
     upload_id: str,
     products: list[dict],
+    image_lookup: Optional[dict[str, str]] = None,
+    page_images: Optional[list[dict]] = None,
 ) -> dict:
     """Turn the OCR JSON into a list of preview entries with proposed SKU/PLU."""
     from identifier_utils import allocate_identifier_pair, max_sku_sequence
@@ -355,6 +487,14 @@ def _ocr_to_preview(
         unit_price_cny = float(unit_price) if (unit_price and currency == "CNY") else None
         cost_sgd = round(unit_price_cny / FX_CNY_PER_SGD, 2) if unit_price_cny else None
 
+        image_url = None
+        image_match_confidence = None
+        if code and image_lookup:
+            url = image_lookup.get(str(code).strip())
+            if url:
+                image_url = url
+                image_match_confidence = "matched"
+
         item = {
             "line_number": raw.get("line_number"),
             "supplier_item_code": code,
@@ -370,6 +510,8 @@ def _ocr_to_preview(
             "proposed_sku": None,
             "proposed_plu": None,
             "skip_reason": None,
+            "image_url": image_url,
+            "image_match_confidence": image_match_confidence,
         }
 
         if not code:
@@ -418,11 +560,14 @@ def _ocr_to_preview(
         "currency": extracted.get("currency"),
         "document_total": extracted.get("document_total"),
         "items": items_out,
+        "page_images": page_images or [],
         "summary": {
             "total_lines": len(items_out),
             "new_skus": sum(1 for i in items_out if i["proposed_sku"] and not i["already_exists"] and not i["skip_reason"]),
             "already_exists": sum(1 for i in items_out if i["already_exists"]),
             "skipped": sum(1 for i in items_out if i["skip_reason"]),
+            "images_extracted": len(page_images or []),
+            "items_with_image": sum(1 for i in items_out if i.get("image_url")),
         },
     }
 
@@ -465,9 +610,44 @@ async def ingest_invoice(file: UploadFile = File(...)) -> dict:
     raw_path = saved_path.with_suffix(saved_path.suffix + ".ocr.json")
     raw_path.write_text(json.dumps(extracted, indent=2, ensure_ascii=False), encoding="utf-8")
 
+    # Pull embedded images out of the PDF and try to pair each one with an
+    # OCR'd line item by Y-position. Soft-fail: a non-PDF or PyMuPDF-less
+    # environment just yields zero images and the modal falls back to "no
+    # image" cells, which is the pre-image-extraction behaviour.
+    image_info: dict[str, Any] = {"page_images": [], "image_records": []}
+    if (file.filename or "").lower().endswith(".pdf"):
+        image_info = _extract_pdf_images(saved_path, upload_id)
+
+    codes = [
+        str(it.get("supplier_item_code")).strip()
+        for it in extracted.get("items", [])
+        if it.get("supplier_item_code")
+    ]
+    image_lookup = (
+        _match_codes_to_images(saved_path, upload_id, codes, image_info["image_records"])
+        if image_info["image_records"]
+        else {}
+    )
+
     data = _read_master()
-    preview = _ocr_to_preview(extracted, upload_id=upload_id, products=data.get("products", []))
+    preview = _ocr_to_preview(
+        extracted,
+        upload_id=upload_id,
+        products=data.get("products", []),
+        image_lookup=image_lookup,
+        page_images=image_info["page_images"],
+    )
     return preview
+
+
+@app.get("/api/uploads/{subdir}/{filename}")
+def serve_upload(subdir: str, filename: str) -> FileResponse:
+    """Serve an extracted image (or any other artefact) under data/uploads/.
+    Confines the lookup to UPLOAD_DIR so callers can't escape with `../`."""
+    target = (UPLOAD_DIR / subdir / filename).resolve()
+    if not str(target).startswith(str(UPLOAD_DIR.resolve())) or not target.is_file():
+        raise HTTPException(status_code=404)
+    return FileResponse(str(target))
 
 
 @app.post("/api/ingest/invoice/commit")
@@ -894,6 +1074,210 @@ def recommend_prices(req: RecommendPricesRequest) -> dict:
     out["n_priced_examples"] = len(priced)
     out["n_targets"] = len(targets)
     return out
+
+
+# ── Visual search by photo (Gemini vision → embed → cosine vs catalog) ──────
+#
+# Reuses the existing `data/catalog/product_embeddings.npy` (built by
+# tools/pipelines/product_image_pipeline.py with gemini-embedding-2-preview).
+# When the user uploads a photo of an item — e.g. snapped on the showroom
+# floor — we run the same VISION_PROMPT against gemini-2.5-flash, embed the
+# description with the same model, and cosine-match against the catalog
+# index. Each match is cross-referenced to master_product_list.json by
+# internal_code (with a base-code fallback so e.g. A339A also matches A339).
+
+_VISUAL_SEARCH_PROMPT = """You are a luxury retail product cataloguing AI.
+Analyse this product image and return ONLY a JSON object with these exact fields:
+
+{
+  "dominant_colour": "<primary colour of the object, e.g. gold, amber, green>",
+  "secondary_colour": "<secondary colour if present, else null>",
+  "material_type": "<main material, e.g. copper, crystal, marble, glass, stone>",
+  "secondary_material": "<secondary material if present, else null>",
+  "object_shape": "<shape/form, e.g. bookend, vase, figurine, candleholder, bowl, tower>",
+  "style_tags": ["<tag1>", "<tag2>", "<tag3>"],
+  "estimated_height_cm": <number or null>,
+  "surface_finish": "<e.g. polished, matte, textured, rough>",
+  "visual_description": "<2-3 sentence vivid English description of the product for a luxury catalogue>"
+}
+
+Be precise. Do not add commentary outside the JSON object."""
+
+
+def _visual_index_text(d: dict) -> str:
+    """Re-create the same flat description string used when the catalog index
+    was originally built, so embedding-space distances remain comparable."""
+    shape = d.get("object_shape") or "object"
+    material = d.get("material_type") or "unknown material"
+    secondary_material = d.get("secondary_material")
+    if secondary_material:
+        material = f"{material} and {secondary_material}"
+    colour = d.get("dominant_colour") or "unspecified"
+    secondary_colour = d.get("secondary_colour")
+    if secondary_colour:
+        colour = f"{colour} and {secondary_colour}"
+    style = ", ".join(d.get("style_tags") or []) or "classic"
+    description = d.get("visual_description") or ""
+    return (
+        f"{shape} made of {material}. Colour: {colour}. Style: {style}. "
+        f"{description}"
+    ).strip()
+
+
+def _build_internal_code_index(products: list[dict]) -> dict[str, dict]:
+    """Map both the full internal_code (A339A) and its base form (A339) to a
+    representative product entry. Lets us surface SKUs even when only a
+    base-code variant is in the catalog."""
+    by_code: dict[str, dict] = {}
+    for p in products:
+        code = (p.get("internal_code") or "").strip()
+        if not code:
+            continue
+        by_code.setdefault(code, p)
+        base = re.match(r"^([A-Za-z]+\d+)", code)
+        if base:
+            by_code.setdefault(base.group(1), p)
+    return by_code
+
+
+@app.post("/api/ai/visual_search")
+async def visual_search(
+    file: UploadFile = File(...),
+    top_k: int = Query(8, ge=1, le=30),
+) -> dict:
+    """Find the closest catalog items to an uploaded photo.
+
+    Returns a list of `{code, file, image_url, similarity, sku, ...}` ordered
+    by descending cosine similarity. Useful when a customer/staff member
+    points at an item they want to look up but doesn't know the SKU."""
+    if not os.environ.get("GEMINI_API_KEY"):
+        raise HTTPException(
+            status_code=400,
+            detail="GEMINI_API_KEY not set on the server (required for visual search — same key used by tools/pipelines/product_image_pipeline.py).",
+        )
+    if not CATALOG_EMBED_NPY.exists() or not CATALOG_EMBED_INDEX.exists():
+        raise HTTPException(
+            status_code=503,
+            detail=(
+                "Catalog visual index missing. Run "
+                "`python tools/pipelines/product_image_pipeline.py` first to "
+                "build data/catalog/product_embeddings.npy + product_embedding_index.json."
+            ),
+        )
+
+    try:
+        import numpy as np  # type: ignore
+    except ImportError as exc:
+        raise HTTPException(status_code=500, detail=f"numpy not available: {exc}")
+    try:
+        from google import genai  # type: ignore
+        from google.genai import types as genai_types  # type: ignore
+    except ImportError as exc:
+        raise HTTPException(
+            status_code=500,
+            detail=f"google-genai not installed: {exc}. Add it with `pip install google-genai`.",
+        )
+
+    img_bytes = await file.read()
+    if not img_bytes:
+        raise HTTPException(status_code=400, detail="empty image upload")
+
+    mime = file.content_type or "image/png"
+    if mime == "application/octet-stream":
+        ext = (file.filename or "").rsplit(".", 1)[-1].lower()
+        mime = {"png": "image/png", "jpg": "image/jpeg", "jpeg": "image/jpeg", "webp": "image/webp"}.get(ext, "image/png")
+
+    client = genai.Client(api_key=os.environ["GEMINI_API_KEY"])
+    try:
+        vision_resp = client.models.generate_content(
+            model="gemini-2.5-flash",
+            contents=[
+                genai_types.Part.from_bytes(data=img_bytes, mime_type=mime),
+                _VISUAL_SEARCH_PROMPT,
+            ],
+            config=genai_types.GenerateContentConfig(response_mime_type="application/json"),
+        )
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"Gemini vision call failed: {exc}")
+
+    raw_text = (vision_resp.text or "").strip()
+    raw_text = re.sub(r"^```[a-z]*\n?", "", raw_text, flags=re.MULTILINE).strip("` \n")
+    try:
+        descriptor = json.loads(raw_text)
+    except json.JSONDecodeError as exc:
+        raise HTTPException(status_code=502, detail=f"Gemini returned non-JSON: {exc}; raw={raw_text[:200]}")
+
+    query_text = _visual_index_text(descriptor)
+
+    try:
+        embed_resp = client.models.embed_content(
+            model="gemini-embedding-2-preview",
+            contents=query_text,
+            config=genai_types.EmbedContentConfig(task_type="RETRIEVAL_QUERY"),
+        )
+        query_vec = np.asarray(embed_resp.embeddings[0].values, dtype="float32")
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"Gemini embedding call failed: {exc}")
+
+    catalog_emb = np.load(str(CATALOG_EMBED_NPY))
+    catalog_idx = json.loads(CATALOG_EMBED_INDEX.read_text(encoding="utf-8"))
+
+    if query_vec.shape[-1] != catalog_emb.shape[-1]:
+        raise HTTPException(
+            status_code=500,
+            detail=(
+                f"Embedding dimension mismatch (query={query_vec.shape[-1]}, "
+                f"catalog={catalog_emb.shape[-1]}) — rebuild the catalog index "
+                f"with the current EMBED_MODEL."
+            ),
+        )
+
+    q_norm = query_vec / (np.linalg.norm(query_vec) + 1e-9)
+    cat_norms = catalog_emb / (np.linalg.norm(catalog_emb, axis=1, keepdims=True) + 1e-9)
+    sims = cat_norms @ q_norm
+    order = np.argsort(-sims)[:top_k]
+
+    by_code = _build_internal_code_index(_read_master().get("products", []))
+    matches: list[dict] = []
+    for rank, i in enumerate(order):
+        entry = catalog_idx[int(i)]
+        code = entry.get("code")
+        product = by_code.get(code) if code else None
+        # Fallback: trim a trailing colour/letter suffix, e.g. "A340粉" → "A340"
+        if not product and code:
+            base = re.match(r"^([A-Za-z]+\d+)", code)
+            if base:
+                product = by_code.get(base.group(1))
+        matches.append({
+            "rank": rank + 1,
+            "code": code,
+            "file": entry.get("file"),
+            "image_url": f"/api/catalog/images/{entry.get('file')}" if entry.get("file") else None,
+            "similarity": float(sims[int(i)]),
+            "catalog_text": entry.get("text"),
+            "sku": product.get("sku_code") if product else None,
+            "nec_plu": product.get("nec_plu") if product else None,
+            "description": product.get("description") if product else None,
+            "retail_price": product.get("retail_price") if product else None,
+            "qty_on_hand": product.get("qty_on_hand") if product else None,
+        })
+
+    return {
+        "descriptor": descriptor,
+        "query_text": query_text,
+        "matches": matches,
+        "catalog_size": int(catalog_emb.shape[0]),
+    }
+
+
+@app.get("/api/catalog/images/{filename}")
+def serve_catalog_image(filename: str) -> FileResponse:
+    """Serve a product catalog PNG. Confined to CATALOG_IMAGES_DIR so the
+    URL path can't traverse outside it."""
+    target = (CATALOG_IMAGES_DIR / filename).resolve()
+    if not str(target).startswith(str(CATALOG_IMAGES_DIR.resolve())) or not target.is_file():
+        raise HTTPException(status_code=404)
+    return FileResponse(str(target))
 
 
 def _lan_ip() -> str:
