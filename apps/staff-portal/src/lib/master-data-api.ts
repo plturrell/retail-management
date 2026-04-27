@@ -229,6 +229,21 @@ export const masterDataApi = {
       method: "PATCH",
       body: JSON.stringify(patch),
     }),
+  bulkSaleReady: (
+    params: { purchased_only?: boolean; require_price?: boolean; require_cost?: boolean } = {},
+  ) =>
+    request<{
+      updated: number;
+      updated_skus: string[];
+      skipped: { already_ready: number; no_price: number; no_cost: number; not_purchased: number; blocked: number };
+    }>(`/api/products/bulk_sale_ready`, {
+      method: "POST",
+      body: JSON.stringify({
+        purchased_only: params.purchased_only ?? true,
+        require_price: params.require_price ?? true,
+        require_cost: params.require_cost ?? false,
+      }),
+    }),
   exportNecJewel: () => request<ExportResult>(`/api/export/nec_jewel`, { method: "POST" }),
   downloadUrl: (filename: string) => `${getMasterDataApiBase()}/api/exports/${encodeURIComponent(filename)}`,
   /** Resolve a relative path the server returns (e.g. `/api/uploads/...`) into

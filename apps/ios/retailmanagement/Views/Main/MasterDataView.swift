@@ -12,6 +12,7 @@ import UniformTypeIdentifiers
 struct MasterDataView: View {
     @State private var vm = MasterDataViewModel()
     @State private var showFilePicker = false
+    @State private var showVisualPicker = false
     @State private var showApiBaseEditor = false
     @State private var apiBaseDraft = MasterDataService.shared.baseUrl
     @State private var commitAlert: String?
@@ -24,6 +25,7 @@ struct MasterDataView: View {
                     bannerBar
                     headerActions
                     if let err = vm.globalError { errorCard(err) }
+                    bulkBanner
                     if let stats = vm.stats { statsRow(stats) }
                     filterBar
                     if let last = vm.lastExport { exportResultCard(last) }
@@ -40,6 +42,26 @@ struct MasterDataView: View {
                 allowsMultipleSelection: false
             ) { result in
                 handleFilePick(result)
+            }
+            .fileImporter(
+                isPresented: $showVisualPicker,
+                allowedContentTypes: [.image, .jpeg, .png, .heic],
+                allowsMultipleSelection: false
+            ) { result in
+                handleVisualPick(result)
+            }
+            .sheet(isPresented: visualSheetBinding) {
+                if case .result(let response) = vm.visualSearch {
+                    VisualSearchSheet(
+                        response: response,
+                        onClose: { vm.cancelVisualSearch() }
+                    )
+                }
+            }
+            .alert("Visual search failed", isPresented: visualErrorBinding) {
+                Button("OK") { vm.cancelVisualSearch() }
+            } message: {
+                if case .error(let msg) = vm.visualSearch { Text(msg) }
             }
             .sheet(isPresented: previewSheetBinding) {
                 if case .preview(let p, let sel) = vm.ingest {
@@ -148,7 +170,23 @@ struct MasterDataView: View {
             .buttonStyle(.bordered)
             .disabled(isUploadInFlight)
 
+            Button {
+                showVisualPicker = true
+            } label: {
+                Label(visualSearchButtonLabel, systemImage: "camera.viewfinder")
+            }
+            .buttonStyle(.bordered)
+            .disabled(isVisualSearchInFlight)
+
             Spacer()
+
+            Button {
+                Task { await vm.bulkMarkSaleReady() }
+            } label: {
+                Label(bulkButtonLabel, systemImage: "checkmark.seal")
+            }
+            .buttonStyle(.bordered)
+            .disabled(isBulkInFlight)
 
             Button {
                 Task { await vm.regenerateExcel() }
@@ -162,6 +200,16 @@ struct MasterDataView: View {
             .buttonStyle(.borderedProminent)
             .disabled(vm.isExporting)
         }
+    }
+
+    private var bulkButtonLabel: String {
+        if case .running = vm.bulk { return "Marking…" }
+        return "Mark all priced sale-ready"
+    }
+
+    private var isBulkInFlight: Bool {
+        if case .running = vm.bulk { return true }
+        return false
     }
 
     private var uploadButtonLabel: String {
@@ -194,6 +242,54 @@ struct MasterDataView: View {
         }
     }
 
+    private var visualSearchButtonLabel: String {
+        switch vm.visualSearch {
+        case .searching(let f): return "Matching \(f)…"
+        default: return "Find by photo"
+        }
+    }
+
+    private var isVisualSearchInFlight: Bool {
+        if case .searching = vm.visualSearch { return true }
+        return false
+    }
+
+    @ViewBuilder
+    private var bulkBanner: some View {
+        switch vm.bulk {
+        case .done(let r):
+            HStack(alignment: .top, spacing: 8) {
+                Label("\(r.updated) flipped to sale-ready", systemImage: "checkmark.seal.fill")
+                    .font(.callout)
+                    .foregroundStyle(.green)
+                Text("skipped: \(r.skipped.noPrice) no price · \(r.skipped.alreadyReady) already ready")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                Spacer()
+                Button("Dismiss") { vm.dismissBulk() }
+                    .font(.caption2)
+            }
+            .padding(10)
+            .background(Color.green.opacity(0.10))
+            .cornerRadius(6)
+        case .error(let msg):
+            HStack(alignment: .top, spacing: 8) {
+                Label("Bulk update failed", systemImage: "xmark.octagon.fill")
+                    .font(.callout)
+                    .foregroundStyle(.red)
+                Text(msg).font(.caption2).foregroundStyle(.secondary).lineLimit(2)
+                Spacer()
+                Button("Dismiss") { vm.dismissBulk() }
+                    .font(.caption2)
+            }
+            .padding(10)
+            .background(Color.red.opacity(0.08))
+            .cornerRadius(6)
+        default:
+            EmptyView()
+        }
+    }
+
     private func errorCard(_ message: String) -> some View {
         VStack(alignment: .leading, spacing: 4) {
             Text(message).font(.callout).foregroundStyle(.red)
@@ -208,12 +304,16 @@ struct MasterDataView: View {
     }
 
     private func statsRow(_ s: MasterDataStats) -> some View {
-        let columns = [GridItem(.adaptive(minimum: 160), spacing: 12)]
+        let columns = [GridItem(.adaptive(minimum: 150), spacing: 12)]
+        let totalLabel = (s.purchasedOnly ?? false) ? "Purchased SKUs" : "Total products"
         return LazyVGrid(columns: columns, spacing: 12) {
-            statTile("Total products", value: s.total)
+            statTile(totalLabel, value: s.total)
             statTile("Sale ready", value: s.saleReady, tone: s.saleReady > 0 ? .green : nil)
             statTile("Sale-ready missing price", value: s.saleReadyMissingPrice, tone: s.saleReadyMissingPrice > 0 ? .orange : .green)
             statTile("New SKUs awaiting price", value: s.needsPriceFlag, tone: s.needsPriceFlag > 0 ? .orange : .green)
+            if let missing = s.missingCost {
+                statTile("Missing cost", value: missing, tone: missing > 0 ? .orange : .green)
+            }
         }
     }
 
@@ -350,12 +450,28 @@ struct MasterDataView: View {
         }
     }
 
+    private func handleVisualPick(_ result: Result<[URL], Error>) {
+        switch result {
+        case .success(let urls):
+            guard let url = urls.first else { return }
+            let didStart = url.startAccessingSecurityScopedResource()
+            let mime = mimeType(for: url)
+            Task {
+                defer { if didStart { url.stopAccessingSecurityScopedResource() } }
+                await vm.runVisualSearch(fileURL: url, mimeType: mime)
+            }
+        case .failure(let err):
+            vm.globalError = err.localizedDescription
+        }
+    }
+
     private func mimeType(for url: URL) -> String {
         switch url.pathExtension.lowercased() {
         case "pdf": return "application/pdf"
         case "png": return "image/png"
         case "jpg", "jpeg": return "image/jpeg"
         case "tif", "tiff": return "image/tiff"
+        case "heic", "heif": return "image/heic"
         default: return "application/octet-stream"
         }
     }
@@ -393,6 +509,20 @@ struct MasterDataView: View {
         Binding(
             get: { if case .error = vm.recommendations { return true } else { return false } },
             set: { if !$0 { vm.cancelRecommendations() } }
+        )
+    }
+
+    private var visualSheetBinding: Binding<Bool> {
+        Binding(
+            get: { if case .result = vm.visualSearch { return true } else { return false } },
+            set: { if !$0 { vm.cancelVisualSearch() } }
+        )
+    }
+
+    private var visualErrorBinding: Binding<Bool> {
+        Binding(
+            get: { if case .error = vm.visualSearch { return true } else { return false } },
+            set: { if !$0 { vm.cancelVisualSearch() } }
         )
     }
 
@@ -630,7 +760,41 @@ private struct IngestPreviewSheet: View {
         }
         let s = preview.summary
         parts.append("\(s.newSkus) new · \(s.alreadyExists) exists · \(s.skipped) skipped")
+        if let withImg = s.itemsWithImage, let extracted = s.imagesExtracted, extracted > 0 {
+            parts.append("\(withImg)/\(s.totalLines) matched to \(extracted) images")
+        }
         return parts.joined(separator: " · ")
+    }
+
+    @ViewBuilder
+    private func thumbnail(for path: String?, confidence: String?) -> some View {
+        if let url = MasterDataService.shared.resolveAssetUrl(path) {
+            AsyncImage(url: url) { phase in
+                switch phase {
+                case .empty:
+                    Rectangle().fill(Color.secondary.opacity(0.12))
+                case .success(let image):
+                    image.resizable().aspectRatio(contentMode: .fill)
+                case .failure:
+                    Image(systemName: "photo")
+                        .foregroundStyle(.secondary)
+                @unknown default:
+                    EmptyView()
+                }
+            }
+            .frame(width: 56, height: 56)
+            .clipShape(RoundedRectangle(cornerRadius: 6))
+            .overlay(
+                RoundedRectangle(cornerRadius: 6)
+                    .stroke(confidence == "matched" ? Color.green.opacity(0.6) : Color.secondary.opacity(0.3), lineWidth: 1)
+            )
+        } else {
+            Rectangle()
+                .fill(Color.secondary.opacity(0.08))
+                .frame(width: 56, height: 56)
+                .overlay(Image(systemName: "photo").foregroundStyle(.secondary).opacity(0.4))
+                .clipShape(RoundedRectangle(cornerRadius: 6))
+        }
     }
 
     @ViewBuilder
@@ -654,6 +818,8 @@ private struct IngestPreviewSheet: View {
                     .foregroundStyle(.secondary)
                     .opacity(0.4)
             }
+
+            thumbnail(for: item.imageUrl, confidence: item.imageMatchConfidence)
 
             VStack(alignment: .leading, spacing: 2) {
                 Text(item.productNameEn ?? "—").font(.subheadline).lineLimit(2)
@@ -863,5 +1029,117 @@ private struct PriceRecommendationsSheet: View {
         case .medium: return .orange
         case .low: return .red
         }
+    }
+}
+
+// MARK: - Visual search sheet
+
+private struct VisualSearchSheet: View {
+    let response: VisualSearchResponse
+    let onClose: () -> Void
+
+    var body: some View {
+        NavigationStack {
+            VStack(alignment: .leading, spacing: 0) {
+                header
+                List {
+                    Section("Top \(response.matches.count) matches") {
+                        ForEach(response.matches) { match in
+                            matchRow(match)
+                        }
+                    }
+                }
+                .listStyle(.inset)
+            }
+            .navigationTitle("Visual search")
+            #if os(iOS)
+            .navigationBarTitleDisplayMode(.inline)
+            #endif
+            .toolbar {
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Done", action: onClose)
+                }
+            }
+        }
+    }
+
+    private var header: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text("Gemini description")
+                .font(.headline)
+            Text(response.queryText.isEmpty ? "—" : response.queryText)
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+            Text("Searched \(response.catalogSize) catalog images")
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+        }
+        .padding()
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color.secondary.opacity(0.06))
+    }
+
+    @ViewBuilder
+    private func matchRow(_ m: VisualSearchMatch) -> some View {
+        HStack(alignment: .top, spacing: 12) {
+            thumbnail(m.imageUrl)
+                .frame(width: 72, height: 72)
+                .clipShape(RoundedRectangle(cornerRadius: 6))
+
+            VStack(alignment: .leading, spacing: 2) {
+                HStack(spacing: 8) {
+                    Text(m.sku ?? m.code ?? "—")
+                        .font(.callout.monospaced())
+                    if let plu = m.necPlu {
+                        Text("PLU \(plu)")
+                            .font(.caption2.monospaced())
+                            .foregroundStyle(.secondary)
+                    }
+                }
+                Text(m.description ?? m.catalogText ?? "—")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(2)
+            }
+
+            Spacer()
+
+            VStack(alignment: .trailing, spacing: 2) {
+                Text("\(Int((m.similarity * 100).rounded()))%")
+                    .font(.headline.monospaced())
+                    .foregroundStyle(similarityColor(m.similarity))
+                if let p = m.retailPrice {
+                    Text("S$\(String(format: "%.2f", p))").font(.caption2.monospaced())
+                }
+                if let q = m.qtyOnHand {
+                    Text("qty \(Int(q))").font(.caption2).foregroundStyle(.secondary)
+                }
+            }
+        }
+        .padding(.vertical, 4)
+    }
+
+    @ViewBuilder
+    private func thumbnail(_ path: String?) -> some View {
+        if let url = MasterDataService.shared.resolveAssetUrl(path) {
+            AsyncImage(url: url) { phase in
+                switch phase {
+                case .empty: Rectangle().fill(Color.secondary.opacity(0.12))
+                case .success(let img): img.resizable().aspectRatio(contentMode: .fill)
+                case .failure: Image(systemName: "photo").foregroundStyle(.secondary)
+                @unknown default: EmptyView()
+                }
+            }
+        } else {
+            Rectangle()
+                .fill(Color.secondary.opacity(0.08))
+                .overlay(Image(systemName: "photo").foregroundStyle(.secondary).opacity(0.4))
+        }
+    }
+
+    private func similarityColor(_ s: Double) -> Color {
+        if s >= 0.85 { return .green }
+        if s >= 0.7 { return .orange }
+        return .secondary
     }
 }

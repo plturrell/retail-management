@@ -82,7 +82,9 @@ struct MasterDataStats: Codable, Sendable {
     let needsPriceFlag: Int
     let needsReviewFlag: Int
     let saleReadyMissingPrice: Int
+    let missingCost: Int?
     let bySupplier: [String: Int]
+    let purchasedOnly: Bool?
 
     enum CodingKeys: String, CodingKey {
         case total
@@ -90,7 +92,9 @@ struct MasterDataStats: Codable, Sendable {
         case needsPriceFlag = "needs_price_flag"
         case needsReviewFlag = "needs_review_flag"
         case saleReadyMissingPrice = "sale_ready_missing_price"
+        case missingCost = "missing_cost"
         case bySupplier = "by_supplier"
+        case purchasedOnly = "purchased_only"
     }
 }
 
@@ -136,6 +140,8 @@ struct IngestPreviewItem: Codable, Hashable, Sendable, Identifiable {
     let alreadyExists: Bool?
     let existingSku: String?
     let skipReason: String?
+    let imageUrl: String?
+    let imageMatchConfidence: String?
 
     enum CodingKeys: String, CodingKey {
         case lineNumber = "line_number"
@@ -152,6 +158,19 @@ struct IngestPreviewItem: Codable, Hashable, Sendable, Identifiable {
         case alreadyExists = "already_exists"
         case existingSku = "existing_sku"
         case skipReason = "skip_reason"
+        case imageUrl = "image_url"
+        case imageMatchConfidence = "image_match_confidence"
+    }
+}
+
+struct IngestPreviewPageImage: Codable, Hashable, Sendable, Identifiable {
+    var id: Int { pageNumber }
+    let pageNumber: Int
+    let url: String
+
+    enum CodingKeys: String, CodingKey {
+        case pageNumber = "page_number"
+        case url
     }
 }
 
@@ -160,12 +179,16 @@ struct IngestPreviewSummary: Codable, Sendable {
     let newSkus: Int
     let alreadyExists: Int
     let skipped: Int
+    let imagesExtracted: Int?
+    let itemsWithImage: Int?
 
     enum CodingKeys: String, CodingKey {
         case totalLines = "total_lines"
         case newSkus = "new_skus"
         case alreadyExists = "already_exists"
         case skipped
+        case imagesExtracted = "images_extracted"
+        case itemsWithImage = "items_with_image"
     }
 }
 
@@ -178,6 +201,7 @@ struct IngestPreview: Codable, Sendable {
     let currency: String?
     let documentTotal: Double?
     let items: [IngestPreviewItem]
+    let pageImages: [IngestPreviewPageImage]?
     let summary: IngestPreviewSummary
 
     enum CodingKeys: String, CodingKey {
@@ -189,6 +213,7 @@ struct IngestPreview: Codable, Sendable {
         case currency
         case documentTotal = "document_total"
         case items
+        case pageImages = "page_images"
         case summary
     }
 }
@@ -267,6 +292,46 @@ struct PriceRecommendationsResponse: Codable, Sendable {
     }
 }
 
+struct BulkSaleReadyRequest: Codable, Sendable {
+    let purchasedOnly: Bool
+    let requirePrice: Bool
+    let requireCost: Bool
+
+    enum CodingKeys: String, CodingKey {
+        case purchasedOnly = "purchased_only"
+        case requirePrice = "require_price"
+        case requireCost = "require_cost"
+    }
+}
+
+struct BulkSaleReadySkipped: Codable, Sendable {
+    let alreadyReady: Int
+    let noPrice: Int
+    let noCost: Int
+    let notPurchased: Int
+    let blocked: Int
+
+    enum CodingKeys: String, CodingKey {
+        case alreadyReady = "already_ready"
+        case noPrice = "no_price"
+        case noCost = "no_cost"
+        case notPurchased = "not_purchased"
+        case blocked
+    }
+}
+
+struct BulkSaleReadyResult: Codable, Sendable {
+    let updated: Int
+    let updatedSkus: [String]
+    let skipped: BulkSaleReadySkipped
+
+    enum CodingKeys: String, CodingKey {
+        case updated
+        case updatedSkus = "updated_skus"
+        case skipped
+    }
+}
+
 struct RecommendPricesRequest: Codable, Sendable {
     let targetSkus: [String]?
     let maxTargets: Int?
@@ -274,5 +339,49 @@ struct RecommendPricesRequest: Codable, Sendable {
     enum CodingKeys: String, CodingKey {
         case targetSkus = "target_skus"
         case maxTargets = "max_targets"
+    }
+}
+
+// MARK: - Visual search (find SKU by photo)
+
+struct VisualSearchMatch: Codable, Hashable, Sendable, Identifiable {
+    var id: String { (sku ?? code ?? file ?? "") + "::" + String(rank) }
+
+    let rank: Int
+    let code: String?
+    let file: String?
+    let imageUrl: String?
+    let similarity: Double
+    let catalogText: String?
+    let sku: String?
+    let necPlu: String?
+    let description: String?
+    let retailPrice: Double?
+    let qtyOnHand: Double?
+
+    enum CodingKeys: String, CodingKey {
+        case rank
+        case code
+        case file
+        case imageUrl = "image_url"
+        case similarity
+        case catalogText = "catalog_text"
+        case sku
+        case necPlu = "nec_plu"
+        case description
+        case retailPrice = "retail_price"
+        case qtyOnHand = "qty_on_hand"
+    }
+}
+
+struct VisualSearchResponse: Codable, Sendable {
+    let queryText: String
+    let matches: [VisualSearchMatch]
+    let catalogSize: Int
+
+    enum CodingKeys: String, CodingKey {
+        case queryText = "query_text"
+        case matches
+        case catalogSize = "catalog_size"
     }
 }

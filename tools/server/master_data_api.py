@@ -249,6 +249,64 @@ def patch_product(sku: str, patch: ProductPatch) -> dict:
     return target
 
 
+class BulkSaleReadyRequest(BaseModel):
+    """Mark every purchased SKU as sale_ready in one shot. Skips entries
+    without a retail_price unless require_price is False — the May 1 launch
+    workflow is: enter prices first, then flip the switch on everything that
+    actually arrives in the store."""
+
+    purchased_only: bool = True
+    require_price: bool = True
+    require_cost: bool = False
+
+
+@app.post("/api/products/bulk_sale_ready")
+def bulk_sale_ready(req: BulkSaleReadyRequest) -> dict:
+    updated_skus: list[str] = []
+    skipped: dict[str, int] = {"already_ready": 0, "no_price": 0, "no_cost": 0, "not_purchased": 0, "blocked": 0}
+
+    with _lock:
+        data = _read_master()
+        for p in data.get("products", []):
+            sku = p.get("sku_code")
+            if not sku:
+                continue
+            if req.purchased_only and not _is_purchased(p):
+                skipped["not_purchased"] += 1
+                continue
+            if p.get("block_sales"):
+                skipped["blocked"] += 1
+                continue
+            if p.get("sale_ready"):
+                skipped["already_ready"] += 1
+                continue
+            if req.require_price and not (p.get("retail_price") or p.get("price_incl_tax")):
+                skipped["no_price"] += 1
+                continue
+            if req.require_cost and not p.get("cost_price"):
+                skipped["no_cost"] += 1
+                continue
+
+            p["sale_ready"] = True
+            p.pop("needs_retail_price", None)
+            p.pop("needs_review", None)
+            p["last_modified_at"] = _now()
+            p["last_modified_via"] = "master_data_api:bulk_sale_ready"
+            updated_skus.append(sku)
+
+        if updated_skus:
+            meta = data.setdefault("metadata", {})
+            meta["last_modified"] = _now()
+            meta["last_modified_by"] = "master_data_api:bulk_sale_ready"
+            _atomic_write_master(data)
+
+    return {
+        "updated": len(updated_skus),
+        "updated_skus": updated_skus,
+        "skipped": skipped,
+    }
+
+
 @app.post("/api/export/nec_jewel")
 def export_nec_jewel(store: str = "JEWEL-01") -> dict:
     EXPORT_DIR.mkdir(parents=True, exist_ok=True)

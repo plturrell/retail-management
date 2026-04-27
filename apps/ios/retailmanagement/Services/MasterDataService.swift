@@ -103,9 +103,22 @@ final class MasterDataService: @unchecked Sendable {
         return try await send(URLRequest(url: u), as: [String: AnyCodable].self)
     }
 
-    func stats() async throws -> MasterDataStats {
-        guard let u = url("/api/stats") else { throw MasterDataServiceError.transport(URLError(.badURL)) }
+    func stats(purchasedOnly: Bool = false) async throws -> MasterDataStats {
+        let q = [URLQueryItem(name: "purchased_only", value: String(purchasedOnly))]
+        guard let u = url("/api/stats", query: q) else { throw MasterDataServiceError.transport(URLError(.badURL)) }
         return try await send(URLRequest(url: u), as: MasterDataStats.self)
+    }
+
+    /// Resolve a relative path the server returns (e.g. `/api/uploads/...`)
+    /// into an absolute URL the device can hit. Pass-through for absolute URLs.
+    func resolveAssetUrl(_ path: String?) -> URL? {
+        guard let path, !path.isEmpty else { return nil }
+        if path.hasPrefix("http://") || path.hasPrefix("https://") {
+            return URL(string: path)
+        }
+        let trimmed = baseUrl.hasSuffix("/") ? String(baseUrl.dropLast()) : baseUrl
+        let suffix = path.hasPrefix("/") ? path : "/\(path)"
+        return URL(string: trimmed + suffix)
     }
 
     func listProducts(
@@ -132,6 +145,25 @@ final class MasterDataService: @unchecked Sendable {
         req.setValue("application/json", forHTTPHeaderField: "Content-Type")
         req.httpBody = try encoder.encode(patch)
         return try await send(req, as: MasterDataProductRow.self)
+    }
+
+    /// Flip every purchased SKU with a retail_price to sale_ready in one
+    /// shot. Skips entries without a price unless `requirePrice = false`.
+    func bulkSaleReady(
+        purchasedOnly: Bool = true,
+        requirePrice: Bool = true,
+        requireCost: Bool = false
+    ) async throws -> BulkSaleReadyResult {
+        guard let u = url("/api/products/bulk_sale_ready") else { throw MasterDataServiceError.transport(URLError(.badURL)) }
+        var req = URLRequest(url: u)
+        req.httpMethod = "POST"
+        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        req.httpBody = try encoder.encode(BulkSaleReadyRequest(
+            purchasedOnly: purchasedOnly,
+            requirePrice: requirePrice,
+            requireCost: requireCost
+        ))
+        return try await send(req, as: BulkSaleReadyResult.self)
     }
 
     func exportNecJewel() async throws -> MasterDataExportResult {
@@ -176,6 +208,37 @@ final class MasterDataService: @unchecked Sendable {
         req.setValue("application/json", forHTTPHeaderField: "Content-Type")
         req.httpBody = try encoder.encode(payload)
         return try await send(req, as: IngestCommitResult.self)
+    }
+
+    /// Upload a photo and ask Gemini to find the closest matches in the
+    /// embedded product catalog. Returns the top-K matches by cosine
+    /// similarity — the iPad rear camera (`.image` UIImagePicker) is the
+    /// expected source on the shop floor.
+    func visualSearch(fileURL: URL, mimeType: String, topK: Int = 8) async throws -> VisualSearchResponse {
+        let q = [URLQueryItem(name: "top_k", value: String(topK))]
+        guard let u = url("/api/ai/visual_search", query: q) else { throw MasterDataServiceError.transport(URLError(.badURL)) }
+        let data: Data
+        do {
+            data = try Data(contentsOf: fileURL)
+        } catch {
+            throw MasterDataServiceError.missingFile
+        }
+
+        let boundary = "Boundary-\(UUID().uuidString)"
+        var req = URLRequest(url: u)
+        req.httpMethod = "POST"
+        req.setValue("multipart/form-data; boundary=\(boundary)", forHTTPHeaderField: "Content-Type")
+
+        var body = Data()
+        let filename = fileURL.lastPathComponent
+        body.append("--\(boundary)\r\n".data(using: .utf8)!)
+        body.append("Content-Disposition: form-data; name=\"file\"; filename=\"\(filename)\"\r\n".data(using: .utf8)!)
+        body.append("Content-Type: \(mimeType)\r\n\r\n".data(using: .utf8)!)
+        body.append(data)
+        body.append("\r\n--\(boundary)--\r\n".data(using: .utf8)!)
+        req.httpBody = body
+
+        return try await send(req, as: VisualSearchResponse.self)
     }
 
     func recommendPrices(targetSkus: [String]? = nil, maxTargets: Int = 80) async throws -> PriceRecommendationsResponse {

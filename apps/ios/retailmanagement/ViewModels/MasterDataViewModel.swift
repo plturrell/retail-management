@@ -51,6 +51,20 @@ enum MasterDataRecommendationState: Sendable {
     case error(String)
 }
 
+enum MasterDataVisualSearchState: Sendable {
+    case idle
+    case searching(filename: String)
+    case result(VisualSearchResponse)
+    case error(String)
+}
+
+enum MasterDataBulkState: Sendable {
+    case idle
+    case running
+    case done(BulkSaleReadyResult)
+    case error(String)
+}
+
 @MainActor
 @Observable
 final class MasterDataViewModel {
@@ -72,6 +86,8 @@ final class MasterDataViewModel {
     // Invoice ingest state
     var ingest: MasterDataIngestState = .idle
     var recommendations: MasterDataRecommendationState = .idle
+    var visualSearch: MasterDataVisualSearchState = .idle
+    var bulk: MasterDataBulkState = .idle
 
     private let service: MasterDataService
 
@@ -85,7 +101,7 @@ final class MasterDataViewModel {
         isLoading = true
         globalError = nil
         do {
-            async let statsCall = service.stats()
+            async let statsCall = service.stats(purchasedOnly: purchasedOnly)
             async let productsCall = service.listProducts(
                 launchOnly: true,
                 needsPrice: needsPriceOnly,
@@ -287,6 +303,38 @@ final class MasterDataViewModel {
             return 0
         }
     }
+
+    // MARK: - Visual search
+
+    func runVisualSearch(fileURL: URL, mimeType: String, topK: Int = 8) async {
+        visualSearch = .searching(filename: fileURL.lastPathComponent)
+        do {
+            let response = try await service.visualSearch(fileURL: fileURL, mimeType: mimeType, topK: topK)
+            visualSearch = .result(response)
+        } catch {
+            visualSearch = .error(error.localizedDescription)
+        }
+    }
+
+    func cancelVisualSearch() { visualSearch = .idle }
+
+    // MARK: - Bulk sale-ready
+
+    func bulkMarkSaleReady() async {
+        bulk = .running
+        do {
+            let result = try await service.bulkSaleReady(
+                purchasedOnly: true,
+                requirePrice: true
+            )
+            bulk = .done(result)
+            await load()
+        } catch {
+            bulk = .error(error.localizedDescription)
+        }
+    }
+
+    func dismissBulk() { bulk = .idle }
 
     private func recommendationNote(existing: String, recommendation: PriceRecommendation) -> String {
         let comparableList = recommendation.comparableSkus ?? []

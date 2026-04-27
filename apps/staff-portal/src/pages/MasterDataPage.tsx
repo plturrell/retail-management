@@ -82,6 +82,12 @@ export default function MasterDataPage() {
     | { kind: "results"; previewUrl: string; response: VisualSearchResponse }
     | { kind: "error"; message: string }
   >({ kind: "idle" });
+  const [bulkState, setBulkState] = useState<
+    | { kind: "idle" }
+    | { kind: "running" }
+    | { kind: "done"; updated: number; skipped: { already_ready: number; no_price: number; no_cost: number; not_purchased: number; blocked: number } }
+    | { kind: "error"; message: string }
+  >({ kind: "idle" });
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const visualInputRef = useRef<HTMLInputElement | null>(null);
 
@@ -185,6 +191,23 @@ export default function MasterDataPage() {
   const handleApiBase = (next: string) => {
     setMasterDataApiBase(next);
     setApiBase(next);
+  };
+
+  const bulkMarkSaleReady = async () => {
+    if (!confirm("Mark every purchased SKU with a retail price as sale-ready? Unpriced SKUs will be skipped.")) {
+      return;
+    }
+    setBulkState({ kind: "running" });
+    try {
+      const res = await masterDataApi.bulkSaleReady({
+        purchased_only: true,
+        require_price: true,
+      });
+      setBulkState({ kind: "done", updated: res.updated, skipped: res.skipped });
+      await loadAll();
+    } catch (e) {
+      setBulkState({ kind: "error", message: (e as Error).message });
+    }
   };
 
   const regenerate = async () => {
@@ -432,6 +455,14 @@ export default function MasterDataPage() {
               {aiState.kind === "loading" ? "Thinking…" : "AI suggest prices ✨"}
             </button>
             <button
+              onClick={bulkMarkSaleReady}
+              disabled={bulkState.kind === "running"}
+              className="rounded-md border border-emerald-300 bg-emerald-50 px-4 py-2 text-sm font-semibold text-emerald-800 shadow-sm hover:bg-emerald-100 disabled:bg-gray-200"
+              title="Flip every purchased + priced SKU to sale-ready in one click. Skips unpriced/blocked entries."
+            >
+              {bulkState.kind === "running" ? "Marking…" : "Mark all priced sale-ready ✅"}
+            </button>
+            <button
               onClick={regenerate}
               disabled={exporting}
               className="rounded-md bg-blue-600 px-4 py-2 text-sm font-semibold text-white shadow-sm hover:bg-blue-700 disabled:bg-gray-400"
@@ -440,6 +471,28 @@ export default function MasterDataPage() {
             </button>
           </div>
         </div>
+
+        {bulkState.kind === "done" && (
+          <div className="mb-3 rounded-md border border-emerald-300 bg-emerald-50 px-3 py-2 text-sm text-emerald-900">
+            <span className="font-semibold">{bulkState.updated}</span> SKUs flipped to sale-ready ·
+            skipped: {bulkState.skipped.no_price} no price, {bulkState.skipped.already_ready} already ready
+            {bulkState.skipped.blocked ? `, ${bulkState.skipped.blocked} blocked` : ""}
+            {bulkState.skipped.not_purchased ? `, ${bulkState.skipped.not_purchased} catalog-only` : ""}.
+            <button
+              onClick={() => setBulkState({ kind: "idle" })}
+              className="ml-3 text-xs underline"
+            >dismiss</button>
+          </div>
+        )}
+        {bulkState.kind === "error" && (
+          <div className="mb-3 rounded-md border border-red-300 bg-red-50 px-3 py-2 text-sm text-red-800">
+            Bulk update failed: {bulkState.message}
+            <button
+              onClick={() => setBulkState({ kind: "idle" })}
+              className="ml-3 text-xs underline"
+            >dismiss</button>
+          </div>
+        )}
 
         {globalError && (
           <div className="mb-4 rounded-md border border-red-300 bg-red-50 p-3 text-sm text-red-800">
