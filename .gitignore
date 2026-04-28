@@ -1,6 +1,9 @@
 # ─── Secrets (NEVER commit) ───────────────────────────────────
 .env
 *.env
+.env.local
+.env.*.local
+.env.e2e
 backend/.env
 firebase-service-account.json
 *-service-account*.json
@@ -47,9 +50,19 @@ ocr_outputs/
 # ─── Node ─────────────────────────────────────────────────────
 node_modules/
 
+# ─── Frontend build / cache artifacts ────────────────────────
+.vite/
+*.tsbuildinfo
+
 # ─── Firebase / Firestore local logs ─────────────────────────
 firestore-debug.log
 firebase-debug.log
+
+# ─── Backups ─────────────────────────────────────────────────
+*.bak
+
+# ─── Agent / IDE worktree state ──────────────────────────────
+.claude/
 
 # ─── Misc ────────────────────────────────────────────────────
 .superpowers/
