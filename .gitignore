@@ -44,8 +44,17 @@ mangle_facts/
 mangle_facts_test/
 ocr_outputs/
 
+# ─── Node ─────────────────────────────────────────────────────
+node_modules/
+
+# ─── Firebase / Firestore local logs ─────────────────────────
+firestore-debug.log
+firebase-debug.log
+
 # ─── Misc ────────────────────────────────────────────────────
 .superpowers/
 **/superpowers/
 .shopify_auth.json
 victoriaenso/
+.gradle/
+google-services.json

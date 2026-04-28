@@ -28,6 +28,79 @@ jobs:
 
       - name: Run tests
         env:
-          DATABASE_URL: postgresql+asyncpg://retailsg:retailsg@127.0.0.1:5432/retailsg
           FIREBASE_PROJECT_ID: ci-placeholder
         run: pytest
+
+  ios-macos-build:
+    name: SwiftUI app build (macOS + iOS Simulator)
+    runs-on: macos-14
+    defaults:
+      run:
+        working-directory: apps/ios
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Show Xcode version
+        run: xcodebuild -version
+
+      - name: Lint — no unguarded iOS-only SwiftUI symbols
+        shell: bash
+        run: |
+          set -eu
+          # Check that every occurrence of the following iOS-only modifiers is
+          # either inside a `#if canImport(UIKit)` / `#if !os(macOS)` block or
+          # is within a platform-compat shim in PlatformHelpers.swift.
+          # Any new bare usage will fail the build early — far cheaper than
+          # discovering it on the macOS build step below.
+          offenders=0
+          iosOnlyPatterns=(
+            '\.keyboardType\('
+            '\.navigationBarTitleDisplayMode\('
+            '\.navigationBarHidden\('
+            '\.textInputAutocapitalization\('
+            '\.listStyle\(\.insetGrouped\)'
+          )
+          for pattern in "${iosOnlyPatterns[@]}"; do
+            # shellcheck disable=SC2013
+            while IFS=: read -r file line _; do
+              [ -z "$file" ] && continue
+              # Skip PlatformHelpers.swift (the compat shim lives there).
+              case "$file" in
+                *PlatformHelpers.swift) continue ;;
+              esac
+              # Look backwards for the nearest #if / #endif to detect guard.
+              guard=$(awk -v target="$line" '
+                NR<=target && /^[[:space:]]*#if[[:space:]]+(canImport\(UIKit\)|!os\(macOS\)|os\(iOS\)|os\(visionOS\))/ { inside=1 }
+                NR<=target && /^[[:space:]]*#endif/ { inside=0 }
+                END { print inside+0 }
+              ' "$file")
+              if [ "$guard" != "1" ]; then
+                echo "::error file=$file,line=$line::Unguarded iOS-only symbol '$pattern' (must be wrapped in #if canImport(UIKit) or equivalent, or moved to a PlatformHelpers shim)"
+                offenders=$((offenders+1))
+              fi
+            done < <(grep -rn -E "$pattern" retailmanagement --include='*.swift' || true)
+          done
+          if [ "$offenders" -gt 0 ]; then
+            echo "Found $offenders unguarded iOS-only SwiftUI call(s)."
+            exit 1
+          fi
+
+      - name: Build for macOS (native)
+        run: |
+          xcodebuild \
+            -project retailmanagement.xcodeproj \
+            -scheme retailmanagement \
+            -destination 'platform=macOS' \
+            -skipPackagePluginValidation \
+            CODE_SIGNING_ALLOWED=NO \
+            build
+
+      - name: Build for iOS Simulator
+        run: |
+          xcodebuild \
+            -project retailmanagement.xcodeproj \
+            -scheme retailmanagement \
+            -destination 'generic/platform=iOS Simulator' \
+            -skipPackagePluginValidation \
+            CODE_SIGNING_ALLOWED=NO \
+            build
