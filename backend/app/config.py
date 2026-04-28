@@ -27,13 +27,14 @@ class Settings(BaseSettings):
     MULTICA_ENDPOINT_URL: str = ""
 
     # Snowflake configuration
-    SNOWFLAKE_ACCOUNT: str = ""
+    SNOWFLAKE_ACCOUNT: str = ""         # e.g. "xy12345.ap-southeast-1"
     SNOWFLAKE_USER: str = ""
     SNOWFLAKE_PASSWORD: str = ""
-    SNOWFLAKE_DATABASE: str = ""
-    SNOWFLAKE_SCHEMA: str = "PUBLIC"
-    SNOWFLAKE_WAREHOUSE: str = "COMPUTE_WH"
-    SNOWFLAKE_ROLE: str = "ACCOUNTADMIN"
+    SNOWFLAKE_DATABASE: str = "RETAILSG"
+    SNOWFLAKE_SCHEMA: str = "ANALYTICS"
+    SNOWFLAKE_WAREHOUSE: str = "RETAILSG_WH"
+    SNOWFLAKE_ROLE: str = "RETAILSG_ROLE"
+    SNOWFLAKE_ETL_SCHEMA: str = "ETL"   # staging schema used by ETL jobs
 
     model_config = {"env_file": ".env", "env_file_encoding": "utf-8"}
 

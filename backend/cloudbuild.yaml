@@ -56,6 +56,14 @@ steps:
       - "--set-env-vars=GCP_PROJECT_ID=${PROJECT_ID}"
       - "--set-env-vars=FIREBASE_PROJECT_ID=${PROJECT_ID}"
       - "--set-secrets=DATABASE_URL=retailsg-db-url:latest"
+      - "--set-secrets=SNOWFLAKE_ACCOUNT=retailsg-snowflake-account:latest"
+      - "--set-secrets=SNOWFLAKE_USER=retailsg-snowflake-user:latest"
+      - "--set-secrets=SNOWFLAKE_PASSWORD=retailsg-snowflake-password:latest"
+      - "--set-secrets=SNOWFLAKE_DATABASE=retailsg-snowflake-database:latest"
+      - "--set-secrets=SNOWFLAKE_SCHEMA=retailsg-snowflake-schema:latest"
+      - "--set-secrets=SNOWFLAKE_WAREHOUSE=retailsg-snowflake-warehouse:latest"
+      - "--set-secrets=SNOWFLAKE_ROLE=retailsg-snowflake-role:latest"
+      - "--set-secrets=SNOWFLAKE_ETL_SCHEMA=retailsg-snowflake-etl-schema:latest"
       - "--service-account=retailsg-api@${PROJECT_ID}.iam.gserviceaccount.com"
 
 images:
