@@ -7,9 +7,6 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel
-from google.cloud.firestore_v1.client import Client as FirestoreClient
-
-from app.firestore import get_firestore_db
 from app.auth.dependencies import ROLE_HIERARCHY, RoleEnum, get_current_user, require_store_access
 from app.services.ai_analytics import (
     AnalyticsReport,
@@ -60,7 +57,6 @@ async def full_analytics_report(
     to_date: date = Query(..., alias="to"),
     include_gemini: bool = Query(False, description="Include Gemini AI summary"),
     _: dict = Depends(require_store_access),
-    db: FirestoreClient = Depends(get_firestore_db),
 ):
     """Full analytics report: margins, trends, forecasts, AI insights."""
     margins = await compute_margin_analysis(store_id, from_date, to_date)
@@ -99,7 +95,6 @@ async def margin_analysis(
     from_date: date = Query(..., alias="from"),
     to_date: date = Query(..., alias="to"),
     _: dict = Depends(require_store_access),
-    db: FirestoreClient = Depends(get_firestore_db),
 ):
     """Profitability analysis per SKU."""
     return await compute_margin_analysis(store_id, from_date, to_date)
@@ -111,7 +106,6 @@ async def demand_forecast(
     lookback_days: int = Query(60, ge=7, le=365),
     top_n: int = Query(20, ge=1, le=100),
     _: dict = Depends(require_store_access),
-    db: FirestoreClient = Depends(get_firestore_db),
 ):
     """Demand forecasting per SKU based on sales velocity trends."""
     return await compute_demand_forecasts(store_id, lookback_days, top_n)
@@ -122,7 +116,6 @@ async def reorder_suggestions(
     store_id: UUID,
     lookback_days: int = Query(30, ge=7, le=180),
     _: dict = Depends(require_store_access),
-    db: FirestoreClient = Depends(get_firestore_db),
 ):
     """Intelligent reorder recommendations based on sales velocity and stock levels."""
     recs = await reorder_recommendations(store_id, lookback_days)
@@ -140,7 +133,6 @@ async def staff_performance(
     to_date: date = Query(..., alias="to"),
     role_assignment: dict = Depends(require_store_access),
     user: dict = Depends(get_current_user),
-    db: FirestoreClient = Depends(get_firestore_db),
 ):
     """Staff performance overview.
 
@@ -167,7 +159,6 @@ async def staff_insights(
     user_id: UUID,
     role_assignment: dict = Depends(require_store_access),
     user: dict = Depends(get_current_user),
-    db: FirestoreClient = Depends(get_firestore_db),
 ):
     """AI-generated insights for an individual staff member."""
     if str(user.get("id")) != str(user_id) and not _is_manager_or_above(role_assignment):
@@ -182,7 +173,6 @@ async def staff_insights(
 async def scheduling_recommendations(
     store_id: UUID,
     _: dict = Depends(require_store_access),
-    db: FirestoreClient = Depends(get_firestore_db),
 ):
     """AI-powered scheduling recommendations based on sales patterns."""
     return await get_scheduling_recommendations(store_id)

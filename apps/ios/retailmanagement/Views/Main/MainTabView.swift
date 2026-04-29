@@ -42,6 +42,7 @@ struct MainTabView: View {
         case schedule = "Schedule"
         case timesheet = "Timesheet"
         case pay = "Pay"
+        case commission = "Commission"
         case performance = "Performance"
         case inventory = "Inventory"
         case masterData = "Master Data"
@@ -63,6 +64,7 @@ struct MainTabView: View {
             case .schedule: return "calendar"
             case .timesheet: return "clock.fill"
             case .pay: return "banknote.fill"
+            case .commission: return "percent"
             case .performance: return "trophy.fill"
             case .inventory: return "shippingbox.fill"
             case .masterData: return "list.bullet.rectangle.portrait"
@@ -113,6 +115,8 @@ struct MainTabView: View {
                 TimesheetView()
             case .pay:
                 PayView()
+            case .commission:
+                CommissionView()
             case .performance:
                 PerformanceView()
             case .inventory:
@@ -164,6 +168,11 @@ struct MainTabView: View {
             PayView()
                 .tabItem {
                     Label("Pay", systemImage: "banknote.fill")
+                }
+
+            CommissionView()
+                .tabItem {
+                    Label("Commission", systemImage: "percent")
                 }
 
             PerformanceView()

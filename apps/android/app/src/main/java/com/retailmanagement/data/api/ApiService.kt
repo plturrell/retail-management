@@ -42,6 +42,51 @@ interface ApiService {
         @Path("roleId") roleId: String
     )
 
+    @POST("api/users/{userId}/reset-password")
+    suspend fun adminResetPassword(
+        @Path("userId") userId: String
+    ): AdminResetResult
+
+    @POST("api/users/{userId}/disable")
+    suspend fun adminDisableUser(
+        @Path("userId") userId: String
+    ): AdminMessageResult
+
+    @POST("api/users/{userId}/enable")
+    suspend fun adminEnableUser(
+        @Path("userId") userId: String
+    ): AdminMessageResult
+
+    @POST("api/users/me/change-password")
+    suspend fun changePassword(
+        @Body request: ChangePasswordRequest
+    ): ChangePasswordResponse
+
+    @GET("api/users/me/sessions")
+    suspend fun listMySessions(): DataResponse<List<SessionRead>>
+
+    @POST("api/users/me/sign-out-other-devices")
+    suspend fun signOutOtherDevices(
+        @Body body: Map<String, String> = emptyMap()
+    ): SignOutResponse
+
+    // ── NEC CAG scheduler ──
+
+    @GET("api/cag/config")
+    suspend fun getCagConfig(): CagConfigPublic
+
+    @PUT("api/cag/config")
+    suspend fun putCagConfig(@Body body: CagConfigPatch): CagConfigPublic
+
+    @DELETE("api/cag/config")
+    suspend fun clearCagConfig(): CagConfigPublic
+
+    @POST("api/cag/config/test")
+    suspend fun testCagSftp(@Body body: Map<String, String> = emptyMap()): CagSftpTestResponse
+
+    @POST("api/cag/export/push/test")
+    suspend fun runScheduledCagPush(@Body body: CagScheduledPushRequest): CagPushResponse
+
     // ── Schedules ──
 
     @GET("api/stores/{storeId}/schedules/my-shifts")
@@ -244,6 +289,12 @@ interface ApiService {
         @Path("storeId") storeId: String,
         @Path("runId") runId: String
     ): DataResponse<PayrollRunRead>
+
+    @GET("api/stores/{storeId}/commission-rules")
+    suspend fun listCommissionRules(
+        @Path("storeId") storeId: String,
+        @Query("active_only") activeOnly: Boolean = true
+    ): DataResponse<List<CommissionRuleRead>>
 
     // ── Sales / Performance ──
 

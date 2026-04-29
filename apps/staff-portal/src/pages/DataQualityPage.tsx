@@ -9,6 +9,44 @@ import type {
 } from "../lib/data-quality-types";
 import { auth } from "../lib/firebase";
 
+/* ───────────────── NEC preview types ───────────────── */
+
+interface NecPreviewIssue {
+  sku_code: string;
+  field: string;
+  severity: "error" | "warning";
+  message: string;
+}
+
+interface PluBulkPlanRow {
+  sku_id: string;
+  sku_code: string;
+  description: string;
+  old_plu: string | null;
+  new_plu: string;
+  reason: "missing" | "invalid" | "misaligned";
+}
+
+interface PluBulkPlan {
+  applied: boolean;
+  summary: Record<string, number>;
+  plan: PluBulkPlanRow[];
+  plan_total: number;
+}
+
+interface NecPreview {
+  sellable_count: number;
+  excluded_count: number;
+  counts: Record<string, number>;
+  tenant_code: string;
+  nec_store_id: string;
+  taxable: boolean;
+  is_ready: boolean;
+  errors: NecPreviewIssue[];
+  warnings: NecPreviewIssue[];
+  excluded_summary: Record<string, number>;
+}
+
 /* ───────────────── helpers ───────────────── */
 
 function badge(severity: "error" | "warning") {
@@ -286,7 +324,9 @@ export default function DataQualityPage() {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [draft, setDraft] = useState<Partial<Product> | null>(null);
   const [saving, setSaving] = useState(false);
-  const [saveMsg, setSaveMsg] = useState("");
+  // Discriminated so the banner can render success vs. failure distinctly —
+  // every call site below sets `kind` explicitly.
+  const [saveMsg, setSaveMsg] = useState<{ text: string; kind: "success" | "error" } | null>(null);
   const [page, setPage] = useState(0);
   const [pendingCorrections, setPendingCorrections] = useState<Map<string, ProductCorrection>>(new Map());
   // Pending retail_price changes are tracked separately because they persist
@@ -295,6 +335,15 @@ export default function DataQualityPage() {
   const [pendingPrices, setPendingPrices] = useState<Map<string, { sku_code: string; legacy_code: string; retail_price: number }>>(new Map());
   const [savingPrices, setSavingPrices] = useState(false);
   const [exporting, setExporting] = useState(false);
+  const [exportingTxt, setExportingTxt] = useState(false);
+  const [pushingSftp, setPushingSftp] = useState(false);
+  const [cagStoreId, setCagStoreId] = useState<string>(() => localStorage.getItem("cag_nec_store_id") ?? "");
+  const [cagAirside, setCagAirside] = useState<boolean>(() => localStorage.getItem("cag_nec_airside") === "1");
+  const [previewLoading, setPreviewLoading] = useState(false);
+  const [preview, setPreview] = useState<NecPreview | null>(null);
+  const [pluPlan, setPluPlan] = useState<PluBulkPlan | null>(null);
+  const [pluLoading, setPluLoading] = useState(false);
+  const [pluApplying, setPluApplying] = useState(false);
   const tableRef = useRef<HTMLDivElement>(null);
 
   const load = useCallback(async () => {
@@ -454,7 +503,7 @@ export default function DataQualityPage() {
   const savePrices = async () => {
     if (pendingPrices.size === 0) return;
     setSavingPrices(true);
-    setSaveMsg("");
+    setSaveMsg(null);
     try {
       const prices = Array.from(pendingPrices.values()).map((p) => ({
         sku_code: p.sku_code || undefined,
@@ -465,10 +514,10 @@ export default function DataQualityPage() {
         "/data-quality/prices/bulk",
         { prices },
       );
-      setSaveMsg(res.message);
+      setSaveMsg({ text: res.message, kind: "success" });
       setPendingPrices(new Map());
     } catch (err) {
-      setSaveMsg(err instanceof Error ? err.message : "Price save failed");
+      setSaveMsg({ text: err instanceof Error ? err.message : "Price save failed", kind: "error" });
     } finally {
       setSavingPrices(false);
     }
@@ -478,15 +527,15 @@ export default function DataQualityPage() {
   const savePending = async () => {
     if (pendingCorrections.size === 0) return;
     setSaving(true);
-    setSaveMsg("");
+    setSaveMsg(null);
     try {
       const corrections = Array.from(pendingCorrections.values());
       const res = await api.post<{ applied: number; message: string }>("/data-quality/corrections", { corrections });
-      setSaveMsg(res.message);
+      setSaveMsg({ text: res.message, kind: "success" });
       setPendingCorrections(new Map());
       await load();
     } catch (err) {
-      setSaveMsg(err instanceof Error ? err.message : "Save failed");
+      setSaveMsg({ text: err instanceof Error ? err.message : "Save failed", kind: "error" });
     } finally {
       setSaving(false);
     }
@@ -528,6 +577,141 @@ export default function DataQualityPage() {
       setSaveMsg(err instanceof Error ? err.message : "Export failed");
     } finally {
       setExporting(false);
+    }
+  };
+
+  const downloadCagTxtBundle = async () => {
+    if (!cagStoreId.trim()) {
+      setSaveMsg("Enter the 5-digit NEC Store ID before downloading the CAG TXT bundle");
+      return;
+    }
+    localStorage.setItem("cag_nec_store_id", cagStoreId.trim());
+    localStorage.setItem("cag_nec_airside", cagAirside ? "1" : "0");
+    setExportingTxt(true);
+    setSaveMsg("");
+    try {
+      const user = auth.currentUser;
+      if (!user) throw new Error("Not authenticated");
+      const token = await user.getIdToken();
+      const params = new URLSearchParams({
+        nec_store_id: cagStoreId.trim(),
+        taxable: cagAirside ? "false" : "true",
+      });
+      const res = await fetch(`${API_BASE_URL}/cag/export/txt?${params.toString()}`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (!res.ok) {
+        const body = await res.text();
+        throw new Error(`API ${res.status}: ${body}`);
+      }
+      const blob = await res.blob();
+      const disposition = res.headers.get("Content-Disposition") ?? "";
+      const counts = res.headers.get("X-Cag-File-Counts") ?? "";
+      const m = disposition.match(/filename="?([^"]+)"?/i);
+      const filename = m?.[1] ?? `cag_nec_master_${Date.now()}.zip`;
+      const url = window.URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = filename;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      window.URL.revokeObjectURL(url);
+      setSaveMsg(`Downloaded ${filename}${counts ? ` — ${counts}` : ""}`);
+    } catch (err) {
+      setSaveMsg(err instanceof Error ? err.message : "CAG TXT export failed");
+    } finally {
+      setExportingTxt(false);
+    }
+  };
+
+  const previewPluPlan = async () => {
+    setPluLoading(true);
+    setSaveMsg("");
+    try {
+      const res = await api.get<PluBulkPlan>("/data-quality/plus/bulk-preview");
+      setPluPlan(res);
+    } catch (err) {
+      setSaveMsg(err instanceof Error ? `PLU preview failed: ${err.message}` : "PLU preview failed");
+    } finally {
+      setPluLoading(false);
+    }
+  };
+
+  const applyPluPlan = async () => {
+    if (!pluPlan) return;
+    if (
+      !confirm(
+        `Generate / repair ${pluPlan.summary.total} PLU code(s)?\n\n` +
+          `• missing: ${pluPlan.summary.missing ?? 0}\n` +
+          `• invalid: ${pluPlan.summary.invalid ?? 0}\n` +
+          `• misaligned: ${pluPlan.summary.misaligned ?? 0}\n\n` +
+          "This rewrites Firestore. Existing aligned PLUs are left untouched.",
+      )
+    )
+      return;
+    setPluApplying(true);
+    try {
+      const res = await api.post<PluBulkPlan>("/data-quality/plus/bulk-apply", {});
+      setPluPlan(res);
+      setSaveMsg(`PLU bulk-assign applied — ${res.summary.total ?? 0} row(s) updated.`);
+      void load();
+    } catch (err) {
+      setSaveMsg(err instanceof Error ? `PLU apply failed: ${err.message}` : "PLU apply failed");
+    } finally {
+      setPluApplying(false);
+    }
+  };
+
+  const runNecPreview = async () => {
+    setPreviewLoading(true);
+    setSaveMsg("");
+    try {
+      const params = new URLSearchParams({ taxable: cagAirside ? "false" : "true" });
+      if (cagStoreId.trim()) params.set("nec_store_id", cagStoreId.trim());
+      const res = await api.get<NecPreview>(`/cag/export/preview?${params.toString()}`);
+      setPreview(res);
+    } catch (err) {
+      setSaveMsg(err instanceof Error ? `Preview failed: ${err.message}` : "Preview failed");
+    } finally {
+      setPreviewLoading(false);
+    }
+  };
+
+  const pushCagBundleToSftp = async () => {
+    if (!cagStoreId.trim()) {
+      setSaveMsg("Enter the 5-digit NEC Store ID before pushing");
+      return;
+    }
+    if (!confirm("Push the master TXT bundle to the CAG SFTP Inbound/Working folder?")) return;
+    localStorage.setItem("cag_nec_store_id", cagStoreId.trim());
+    localStorage.setItem("cag_nec_airside", cagAirside ? "1" : "0");
+    setPushingSftp(true);
+    setSaveMsg("");
+    try {
+      const user = auth.currentUser;
+      if (!user) throw new Error("Not authenticated");
+      const token = await user.getIdToken();
+      const params = new URLSearchParams({
+        nec_store_id: cagStoreId.trim(),
+        taxable: cagAirside ? "false" : "true",
+      });
+      const res = await fetch(`${API_BASE_URL}/cag/export/push?${params.toString()}`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      const body = await res.json();
+      if (!res.ok) throw new Error(body?.detail ?? `API ${res.status}`);
+      const counts = Object.entries(body.counts ?? {})
+        .map(([k, v]) => `${k}=${v}`)
+        .join(", ");
+      setSaveMsg(
+        `SFTP push OK — ${body.files_uploaded.length} files, ${body.bytes_uploaded} bytes (${counts}).`,
+      );
+    } catch (err) {
+      setSaveMsg(err instanceof Error ? `SFTP push failed: ${err.message}` : "SFTP push failed");
+    } finally {
+      setPushingSftp(false);
     }
   };
 
@@ -609,10 +793,61 @@ export default function DataQualityPage() {
           <button
             onClick={downloadNecExport}
             disabled={exporting}
-            title="Generate the live Jewel NEC POS workbook from Postgres"
+            title="Generate the live Jewel NEC POS workbook (Excel artefact)"
             className="rounded-lg bg-emerald-600 px-4 py-2 text-sm font-semibold text-white hover:bg-emerald-700 disabled:opacity-50"
           >
-            {exporting ? "Exporting..." : "Download NEC Export"}
+            {exporting ? "Exporting..." : "Download NEC Excel"}
+          </button>
+          <div className="flex items-center gap-1 rounded-lg border border-emerald-300 bg-emerald-50 px-2 py-1">
+            <input
+              type="text"
+              inputMode="numeric"
+              value={cagStoreId}
+              onChange={(e) => setCagStoreId(e.target.value)}
+              placeholder="NEC Store ID"
+              title="5-digit NEC-assigned Store ID (e.g. 80001)"
+              className="w-28 rounded border border-emerald-200 bg-white px-2 py-1 text-xs"
+            />
+            <label className="flex items-center gap-1 text-[11px] text-emerald-800" title="Airside stores price tax-exclusive">
+              <input
+                type="checkbox"
+                checked={cagAirside}
+                onChange={(e) => setCagAirside(e.target.checked)}
+              />
+              airside
+            </label>
+            <button
+              onClick={runNecPreview}
+              disabled={previewLoading}
+              title="Dry-run the export: counts + spec violations without writing any files"
+              className="rounded bg-blue-600 px-2 py-1 text-xs font-semibold text-white hover:bg-blue-700 disabled:opacity-50"
+            >
+              {previewLoading ? "Checking..." : "Preview"}
+            </button>
+            <button
+              onClick={downloadCagTxtBundle}
+              disabled={exportingTxt}
+              title="Build the spec-compliant 6-file TXT bundle (CATG/SKU/PLU/PRICE/INVDETAILS/PROMO) as ZIP"
+              className="rounded bg-emerald-700 px-2 py-1 text-xs font-semibold text-white hover:bg-emerald-800 disabled:opacity-50"
+            >
+              {exportingTxt ? "Building..." : "TXT (.zip)"}
+            </button>
+            <button
+              onClick={pushCagBundleToSftp}
+              disabled={pushingSftp}
+              title="Upload the bundle to CAG SFTP Inbound/Working/<tenant>/"
+              className="rounded bg-emerald-900 px-2 py-1 text-xs font-semibold text-white hover:bg-black disabled:opacity-50"
+            >
+              {pushingSftp ? "Pushing..." : "Push SFTP"}
+            </button>
+          </div>
+          <button
+            onClick={previewPluPlan}
+            disabled={pluLoading}
+            title="Find SKUs with missing / invalid / misaligned NEC EAN-13 PLU barcodes"
+            className="rounded-lg bg-indigo-600 px-3 py-2 text-sm font-semibold text-white hover:bg-indigo-700 disabled:opacity-50"
+          >
+            {pluLoading ? "Scanning..." : "Fix PLUs"}
           </button>
           <button onClick={load} className="rounded-lg bg-gray-100 px-3 py-2 text-sm font-medium text-gray-600 hover:bg-gray-200">
             Refresh
@@ -622,6 +857,240 @@ export default function DataQualityPage() {
 
       {saveMsg && (
         <div className="rounded-lg border border-green-200 bg-green-50 px-4 py-2 text-sm text-green-700">{saveMsg}</div>
+      )}
+
+      {preview && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+          <div className="w-full max-w-3xl overflow-hidden rounded-xl bg-white shadow-2xl">
+            <div className="flex items-start justify-between border-b border-gray-200 bg-gray-50 px-5 py-3">
+              <div>
+                <h3 className="text-base font-semibold text-gray-800">NEC export pre-flight</h3>
+                <p className="text-xs text-gray-500">
+                  Tenant <code>{preview.tenant_code}</code> · Store <code>{preview.nec_store_id}</code> ·{" "}
+                  {preview.taxable ? "Landside (G — taxable)" : "Airside (N — non-taxable)"}
+                </p>
+              </div>
+              <button
+                onClick={() => setPreview(null)}
+                className="rounded p-1 text-gray-400 hover:bg-gray-200 hover:text-gray-700"
+                aria-label="Close"
+              >
+                ✕
+              </button>
+            </div>
+
+            <div className="max-h-[70vh] space-y-4 overflow-y-auto px-5 py-4">
+              <div className="flex flex-wrap items-center gap-3">
+                <span
+                  className={
+                    preview.is_ready
+                      ? "rounded-full bg-emerald-100 px-3 py-1 text-xs font-semibold text-emerald-700"
+                      : "rounded-full bg-red-100 px-3 py-1 text-xs font-semibold text-red-700"
+                  }
+                >
+                  {preview.is_ready ? "READY TO PUSH" : "NOT READY"}
+                </span>
+                <span className="text-xs text-gray-600">
+                  {preview.sellable_count} sellable · {preview.excluded_count} excluded
+                </span>
+                {preview.errors.length > 0 && (
+                  <span className="text-xs font-semibold text-red-700">{preview.errors.length} error(s)</span>
+                )}
+                {preview.warnings.length > 0 && (
+                  <span className="text-xs font-semibold text-amber-700">
+                    {preview.warnings.length} warning(s)
+                  </span>
+                )}
+              </div>
+
+              <section>
+                <h4 className="mb-2 text-xs font-semibold uppercase tracking-wide text-gray-500">
+                  Row counts (per file)
+                </h4>
+                <div className="grid grid-cols-3 gap-2 text-xs sm:grid-cols-6">
+                  {Object.entries(preview.counts).map(([k, v]) => (
+                    <div key={k} className="rounded border border-gray-200 bg-gray-50 px-3 py-2">
+                      <div className="text-[11px] uppercase text-gray-500">{k}</div>
+                      <div className="text-sm font-semibold text-gray-800">{v}</div>
+                    </div>
+                  ))}
+                </div>
+              </section>
+
+              {Object.keys(preview.excluded_summary).length > 0 && (
+                <section>
+                  <h4 className="mb-2 text-xs font-semibold uppercase tracking-wide text-gray-500">
+                    Excluded items by reason
+                  </h4>
+                  <ul className="space-y-1 text-xs text-gray-700">
+                    {Object.entries(preview.excluded_summary).map(([k, v]) => (
+                      <li key={k}>
+                        <span className="font-mono text-[11px] text-gray-500">{k}</span> — {v}
+                      </li>
+                    ))}
+                  </ul>
+                </section>
+              )}
+
+              {preview.errors.length > 0 && (
+                <section>
+                  <h4 className="mb-2 text-xs font-semibold uppercase tracking-wide text-red-600">
+                    Errors (must fix before push)
+                  </h4>
+                  <IssueTable issues={preview.errors} />
+                </section>
+              )}
+
+              {preview.warnings.length > 0 && (
+                <section>
+                  <h4 className="mb-2 text-xs font-semibold uppercase tracking-wide text-amber-600">
+                    Warnings (push will succeed but data may be truncated/odd)
+                  </h4>
+                  <IssueTable issues={preview.warnings} />
+                </section>
+              )}
+            </div>
+
+            <div className="flex items-center justify-end gap-2 border-t border-gray-200 bg-gray-50 px-5 py-3">
+              <button
+                onClick={() => setPreview(null)}
+                className="rounded-lg bg-gray-200 px-3 py-1.5 text-xs font-medium text-gray-700 hover:bg-gray-300"
+              >
+                Close
+              </button>
+              <button
+                onClick={() => {
+                  setPreview(null);
+                  void pushCagBundleToSftp();
+                }}
+                disabled={!preview.is_ready}
+                className="rounded-lg bg-emerald-700 px-3 py-1.5 text-xs font-semibold text-white hover:bg-emerald-800 disabled:opacity-40"
+              >
+                Push to SFTP
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {pluPlan && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+          <div className="w-full max-w-3xl overflow-hidden rounded-xl bg-white shadow-2xl">
+            <div className="flex items-start justify-between border-b border-gray-200 bg-gray-50 px-5 py-3">
+              <div>
+                <h3 className="text-base font-semibold text-gray-800">PLU bulk-assign / repair</h3>
+                <p className="text-xs text-gray-500">
+                  Generates aligned EAN-13 barcodes (prefix <code>200</code>) for every SKU that
+                  lacks a valid one. Existing valid + aligned PLUs are left untouched.
+                </p>
+              </div>
+              <button
+                onClick={() => setPluPlan(null)}
+                className="rounded p-1 text-gray-400 hover:bg-gray-200 hover:text-gray-700"
+                aria-label="Close"
+              >
+                ✕
+              </button>
+            </div>
+
+            <div className="max-h-[70vh] space-y-4 overflow-y-auto px-5 py-4">
+              <div className="grid grid-cols-2 gap-2 text-xs sm:grid-cols-4">
+                <div className="rounded border border-gray-200 bg-gray-50 px-3 py-2">
+                  <div className="text-[11px] uppercase text-gray-500">total</div>
+                  <div className="text-sm font-semibold text-gray-800">{pluPlan.summary.total ?? 0}</div>
+                </div>
+                <div className="rounded border border-red-200 bg-red-50 px-3 py-2">
+                  <div className="text-[11px] uppercase text-red-600">missing</div>
+                  <div className="text-sm font-semibold text-red-700">{pluPlan.summary.missing ?? 0}</div>
+                </div>
+                <div className="rounded border border-amber-200 bg-amber-50 px-3 py-2">
+                  <div className="text-[11px] uppercase text-amber-600">invalid</div>
+                  <div className="text-sm font-semibold text-amber-700">{pluPlan.summary.invalid ?? 0}</div>
+                </div>
+                <div className="rounded border border-blue-200 bg-blue-50 px-3 py-2">
+                  <div className="text-[11px] uppercase text-blue-600">misaligned</div>
+                  <div className="text-sm font-semibold text-blue-700">{pluPlan.summary.misaligned ?? 0}</div>
+                </div>
+              </div>
+
+              {pluPlan.applied && (
+                <div className="rounded border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs text-emerald-700">
+                  Applied. Reload Data Quality to see the new PLUs propagate.
+                </div>
+              )}
+
+              {pluPlan.plan.length === 0 ? (
+                <p className="text-xs italic text-gray-500">
+                  No PLUs need attention — every SKU has a valid, SKU-aligned EAN-13 barcode.
+                </p>
+              ) : (
+                <div className="overflow-x-auto rounded border border-gray-200">
+                  <table className="min-w-full text-xs">
+                    <thead className="bg-gray-50 text-[11px] uppercase tracking-wide text-gray-500">
+                      <tr>
+                        <th className="px-2 py-1 text-left">SKU</th>
+                        <th className="px-2 py-1 text-left">Reason</th>
+                        <th className="px-2 py-1 text-left">Old PLU</th>
+                        <th className="px-2 py-1 text-left">→ New PLU</th>
+                        <th className="px-2 py-1 text-left">Description</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {pluPlan.plan.map((row) => (
+                        <tr key={row.sku_id} className="border-t border-gray-100">
+                          <td className="px-2 py-1 font-mono text-[11px]">{row.sku_code}</td>
+                          <td className="px-2 py-1">
+                            <span
+                              className={
+                                row.reason === "missing"
+                                  ? "rounded-full bg-red-100 px-2 py-0.5 text-[10px] font-semibold text-red-700"
+                                  : row.reason === "invalid"
+                                    ? "rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-semibold text-amber-700"
+                                    : "rounded-full bg-blue-100 px-2 py-0.5 text-[10px] font-semibold text-blue-700"
+                              }
+                            >
+                              {row.reason}
+                            </span>
+                          </td>
+                          <td className="px-2 py-1 font-mono text-[11px] text-gray-500">
+                            {row.old_plu ?? "—"}
+                          </td>
+                          <td className="px-2 py-1 font-mono text-[11px] text-emerald-700">{row.new_plu}</td>
+                          <td className="px-2 py-1 text-gray-700">{row.description}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                  {pluPlan.plan_total > pluPlan.plan.length && (
+                    <p className="px-2 py-1 text-[11px] italic text-gray-500">
+                      Showing first {pluPlan.plan.length} of {pluPlan.plan_total}. Apply will process all rows.
+                    </p>
+                  )}
+                </div>
+              )}
+            </div>
+
+            <div className="flex items-center justify-end gap-2 border-t border-gray-200 bg-gray-50 px-5 py-3">
+              <button
+                onClick={() => setPluPlan(null)}
+                className="rounded-lg bg-gray-200 px-3 py-1.5 text-xs font-medium text-gray-700 hover:bg-gray-300"
+              >
+                Close
+              </button>
+              <button
+                onClick={() => void applyPluPlan()}
+                disabled={pluApplying || pluPlan.plan_total === 0 || pluPlan.applied}
+                className="rounded-lg bg-indigo-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-indigo-700 disabled:opacity-40"
+              >
+                {pluApplying
+                  ? "Applying..."
+                  : pluPlan.applied
+                    ? "Applied"
+                    : `Apply (${pluPlan.plan_total})`}
+              </button>
+            </div>
+          </div>
+        </div>
       )}
 
       {/* Summary Cards */}
@@ -825,6 +1294,35 @@ export default function DataQualityPage() {
           </button>
         </div>
       )}
+    </div>
+  );
+}
+
+function IssueTable({ issues }: { issues: NecPreviewIssue[] }) {
+  return (
+    <div className="max-h-56 overflow-y-auto rounded border border-gray-200">
+      <table className="min-w-full text-xs">
+        <thead className="bg-gray-50 text-[11px] uppercase tracking-wide text-gray-500">
+          <tr>
+            <th className="px-2 py-1 text-left">SKU</th>
+            <th className="px-2 py-1 text-left">Field</th>
+            <th className="px-2 py-1 text-left">Severity</th>
+            <th className="px-2 py-1 text-left">Message</th>
+          </tr>
+        </thead>
+        <tbody>
+          {issues.map((i, idx) => (
+            <tr key={`${i.sku_code}-${i.field}-${idx}`} className="border-t border-gray-100">
+              <td className="px-2 py-1 font-mono text-[11px]">{i.sku_code}</td>
+              <td className="px-2 py-1 font-mono text-[11px]">{i.field}</td>
+              <td className="px-2 py-1">
+                <span className={badge(i.severity)}>{i.severity}</span>
+              </td>
+              <td className="px-2 py-1 text-gray-700">{i.message}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
     </div>
   );
 }

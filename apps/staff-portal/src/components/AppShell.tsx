@@ -1,6 +1,7 @@
 import { NavLink, Outlet } from "react-router-dom";
 import { useState } from "react";
 import { Icon, type IconName } from "./Icon";
+import { Bell } from "./ui/Bell";
 import { useAuth, type StoreSummary } from "../contexts/AuthContext";
 
 interface NavItemConfig {
@@ -92,9 +93,12 @@ export default function AppShell() {
   ];
   const ownerNavItems: NavItemConfig[] = [
     { to: "/master-data", label: "Master Data", icon: "package" },
+    { to: "/publish", label: "Publish", icon: "spark" },
     { to: "/vault", label: "Staging Vault", icon: "archive" },
     { to: "/supplier-review", label: "Invoice Review", icon: "document" },
+    { to: "/pos-readiness", label: "POS Readiness", icon: "check-circle" },
     { to: "/data-quality", label: "Data Quality", icon: "database" },
+    { to: "/settings/cag-nec", label: "CAG / NEC POS", icon: "lock" },
     { to: "/admin/audit", label: "Audit Log", icon: "shield" },
   ];
   const navItems: NavItemConfig[] = isManager
@@ -168,6 +172,7 @@ export default function AppShell() {
               </select>
             </div>
             <div className="flex items-center gap-3">
+              <Bell />
               <div className="text-right">
                 <div className="text-sm font-medium text-gray-700">{profile?.full_name ?? user?.email}</div>
                 <div className="text-xs text-gray-500">{user?.email}</div>

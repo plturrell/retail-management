@@ -33,6 +33,7 @@ import subprocess
 import sys
 import tempfile
 import threading
+import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Optional
@@ -225,6 +226,7 @@ def list_products(
     supplier: Optional[str] = Query(None),
     purchased_only: bool = Query(True, description="Only products from real POs/invoices (skip catalog-only rows)"),
     sourcing_strategy: Optional[str] = Query(None, description="Filter by sourcing_strategy. Pass 'manufactured' to match any manufactured_* value."),
+    group_variants: bool = Query(False, description="Populate variant_siblings on family heads when true."),
 ) -> dict:
     data = _read_master()
     products = data.get("products", [])
@@ -233,6 +235,30 @@ def list_products(
         if _matches_filters(p, launch_only, needs_price, supplier, purchased_only, sourcing_strategy)
     ]
     rows.sort(key=lambda p: ((p.get("supplier_id") or "zzz"), (p.get("product_type") or ""), (p.get("sku_code") or "")))
+    if group_variants:
+        by_group: dict[str, list[dict[str, Any]]] = {}
+        for p in rows:
+            group_id = p.get("variant_group_id")
+            if group_id:
+                by_group.setdefault(str(group_id), []).append(p)
+        grouped_rows: list[dict[str, Any]] = []
+        consumed: set[str] = set()
+        for p in rows:
+            sku = str(p.get("sku_code") or "")
+            group_id = p.get("variant_group_id")
+            if not group_id:
+                grouped_rows.append(p)
+                continue
+            family = by_group.get(str(group_id), [])
+            head = family[0] if family else p
+            head_sku = str(head.get("sku_code") or "")
+            if sku != head_sku or head_sku in consumed:
+                continue
+            clone = dict(head)
+            clone["variant_siblings"] = [dict(sib) for sib in family[1:]]
+            grouped_rows.append(clone)
+            consumed.add(head_sku)
+        rows = grouped_rows
     return {"count": len(rows), "products": rows}
 
 
@@ -1026,6 +1052,49 @@ class AiDescribeProductResponse(BaseModel):
     model: Optional[str] = None
 
 
+# Few-shot cache: load up to N rows from the master JSON the first time the
+# AI describe endpoint runs, then reuse forever within the process. We
+# deliberately skip rows whose long_description starts with our deterministic
+# synth template ("crafted from") so we don't teach the model its own
+# fallback voice — we want it to learn from the human-edited rows.
+_FEW_SHOT_CACHE: list[dict[str, str]] | None = None
+
+
+def _few_shot_describe_examples(n: int = 3) -> list[dict[str, str]]:
+    global _FEW_SHOT_CACHE
+    if _FEW_SHOT_CACHE is not None:
+        return _FEW_SHOT_CACHE
+    try:
+        data = _read_master()
+    except (OSError, json.JSONDecodeError):
+        _FEW_SHOT_CACHE = []
+        return _FEW_SHOT_CACHE
+    buckets: dict[str, dict[str, str]] = {}
+    for r in data.get("products", []) or []:
+        desc = (r.get("description") or "").strip()
+        long_desc = (r.get("long_description") or "").strip()
+        if not desc or len(long_desc) < 80:
+            continue
+        # Skip our own synth-template output to avoid AI training on AI fallback.
+        if "crafted from" in long_desc.lower() and "hand-finished" in long_desc.lower():
+            continue
+        sourcing = str(r.get("sourcing_strategy") or r.get("inventory_type") or "unknown")
+        if sourcing.startswith("manufactured"):
+            bucket = "manufactured"
+        elif sourcing.startswith("supplier"):
+            bucket = "supplier"
+        else:
+            bucket = "other"
+        buckets.setdefault(bucket, {"description": desc[:120], "long_description": long_desc[:400]})
+        if len(buckets) >= n:
+            break
+    _FEW_SHOT_CACHE = list(buckets.values())[:n]
+    return _FEW_SHOT_CACHE
+
+
+_FEW_SHOT_CACHE = _few_shot_describe_examples()
+
+
 async def ai_describe_product(req: AiDescribeProductRequest) -> AiDescribeProductResponse:
     """Use DeepSeek V3 (chat) to draft retail copy for a new SKU."""
     from add_hengwei_skus_to_master import (
@@ -1066,23 +1135,55 @@ async def ai_describe_product(req: AiDescribeProductRequest) -> AiDescribeProduc
             + (f" (item code {req.supplier_item_code})" if req.supplier_item_code else "")
         )
 
+    examples = _few_shot_describe_examples()
+    examples_block = ""
+    if examples:
+        rendered: list[str] = []
+        for ex in examples:
+            rendered.append(
+                "{"
+                f'"description": {json.dumps(ex["description"])}, '
+                f'"long_description": {json.dumps(ex["long_description"])}'
+                "}"
+            )
+        examples_block = (
+            "House style — three real rows we have shipped (match this voice):\n"
+            + "\n".join(rendered)
+            + "\n\n"
+        )
+
     prompt = (
-        "You write retail copy for a Singapore-based home-decor and jewellery boutique "
-        "(Victoria Enso). Produce JSON with keys 'description' (max 110 chars, suitable "
-        "for an in-store label) and 'long_description' (2 short sentences, listing material "
-        "and size, no marketing fluff). British English. No emoji.\n\n"
-        f"Product type: {type_label}\n"
-        f"Material: {mat_label} (raw: {req.material})\n"
-        f"Size: {size or 'unspecified'}\n"
-        f"Origin: {sourcing_label or req.sourcing_strategy or 'unspecified'}\n"
-        f"{supplier_block}\n"
-        f"Catalog hint: {catalog_hint or 'none'}\n\n"
+        "You write retail copy for Victoria Enso, a Singapore boutique selling "
+        "stone/crystal home decor and gemstone jewellery. Voice: factual, calm, "
+        "informative. British English spellings (colour, jewellery, finish). "
+        "Never use marketing fluff like 'stunning', 'must-have', 'breathtaking'. "
+        "When the piece is finished by us, end with the suffix 'Hand-finished.' When the "
+        "raw material is imported, you may say 'Imported from China'. No emoji. "
+        "No exclamation marks.\n\n"
+        "Output JSON with two keys:\n"
+        "  - description: max 110 chars, suitable for an in-store label and the "
+        "POS screen. Lead with the product type and main material.\n"
+        "  - long_description: 2-3 short sentences. Mention materials and "
+        "dimensions plainly. Add one sentence of context about how the piece "
+        "is finished or its intended use. No invented provenance or claims.\n\n"
+        f"{examples_block}"
+        "Now write copy for this row:\n"
+        f"  Product type: {type_label}\n"
+        f"  Material: {mat_label} (raw text from supplier: {req.material})\n"
+        f"  Size: {size or 'unspecified'}\n"
+        f"  Origin: {sourcing_label or req.sourcing_strategy or 'unspecified'}\n"
+        f"  {supplier_block}\n"
+        f"  Catalog hint: {catalog_hint or 'none'}\n\n"
         'Return ONLY a JSON object: {"description": "...", "long_description": "..."}'
     )
 
     ai_req = AIRequest(
         prompt=prompt,
-        model="deepseek-chat",  # DeepSeek V3
+        # DeepSeek's chat alias resolves to the latest DeepSeek-V3 checkpoint —
+        # this is the model the user has standardised on for retail copy.
+        # `deepseek-reasoner` (R1) is reserved for OCR clean-up where we want
+        # chain-of-thought; for short structured copy V3 is faster and cheaper.
+        model="deepseek-chat",
         purpose="master_data.describe_product",
         temperature=0.4,
         max_output_tokens=400,
@@ -1159,6 +1260,16 @@ class ManualProductCreateRequest(BaseModel):
         description="Auto-derived from sourcing_strategy when omitted.",
     )
     notes: Optional[str] = None
+    image_urls: Optional[list[str]] = None
+    variant_of_sku: Optional[str] = Field(
+        default=None,
+        description="When set, create this SKU as a variant of the existing parent SKU.",
+    )
+    variant_label: Optional[str] = Field(
+        default=None,
+        max_length=80,
+        description="Human label for this variant, e.g. 'Size M' or 'Black'.",
+    )
 
 
 def create_product(req: ManualProductCreateRequest, *, created_by: str = "master_data_api") -> dict:
@@ -1195,7 +1306,7 @@ def create_product(req: ManualProductCreateRequest, *, created_by: str = "master
 
     is_supplier_origin = sourcing.startswith("supplier_")
     supplier_id = (req.supplier_id or "").strip() or None
-    if is_supplier_origin and not supplier_id:
+    if is_supplier_origin and not supplier_id and not req.variant_of_sku:
         raise HTTPException(
             status_code=400,
             detail="supplier_id is required when sourcing_strategy is supplier_*",
@@ -1236,7 +1347,36 @@ def create_product(req: ManualProductCreateRequest, *, created_by: str = "master
                 if v:
                     existing_plus.add(str(v).strip())
 
+        variant_label = (req.variant_label or "").strip() or None
+        variant_parent = None
+        variant_group_id = None
+        if req.variant_of_sku:
+            parent_sku = req.variant_of_sku.strip()
+            variant_parent = next(
+                (p for p in products if str(p.get("sku_code") or "").strip() == parent_sku),
+                None,
+            )
+            if not variant_parent:
+                raise HTTPException(status_code=404, detail=f"variant_of_sku {parent_sku} not found")
+            if not variant_label:
+                raise HTTPException(status_code=400, detail="variant_label is required for variants")
+            variant_group_id = str(variant_parent.get("variant_group_id") or uuid.uuid4())
+            if not variant_parent.get("variant_group_id"):
+                variant_parent["variant_group_id"] = variant_group_id
+
+            supplier_id = (variant_parent.get("supplier_id") or supplier_id)
+            supplier_name = (variant_parent.get("supplier_name") or supplier_name)
+            type_label = variant_parent.get("product_type") or type_label
+            material_input = variant_parent.get("material") or material_input
+            inherited_type = _TYPE_LABEL_TO_ABBR.get(str(type_label).lower())
+            if inherited_type:
+                type_abbr, type_label = inherited_type
+            mat_abbr, _ = detect_material(str(material_input))
+            mat_label = variant_parent.get("material") or mat_label
+
         supplier_item_code = (req.supplier_item_code or "").strip() or None
+        if variant_parent and not supplier_item_code:
+            supplier_item_code = variant_parent.get("supplier_item_code") or variant_parent.get("internal_code")
         internal_code = (req.internal_code or "").strip() or supplier_item_code
 
         if internal_code and internal_code in existing_codes:
@@ -1255,11 +1395,17 @@ def create_product(req: ManualProductCreateRequest, *, created_by: str = "master
         )
 
         size = req.size or ""
-        long_desc = (
-            req.long_description.strip()
-            if req.long_description and req.long_description.strip()
-            else synth_long_description(type_label, mat_label, size, material_input)
-        )
+        if variant_parent:
+            parent_desc = (variant_parent.get("description") or description).strip()
+            description = f"{parent_desc} - {variant_label}"[:120]
+            parent_long = (variant_parent.get("long_description") or "").strip()
+            long_desc = f"{parent_long} Variant: {variant_label}.".strip() if parent_long else description
+        else:
+            long_desc = (
+                req.long_description.strip()
+                if req.long_description and req.long_description.strip()
+                else synth_long_description(type_label, mat_label, size, material_input)
+            )
 
         # Use the user's explicit description when present; only fall through
         # to the synth helper if they didn't supply one (the modal makes it
@@ -1317,7 +1463,11 @@ def create_product(req: ManualProductCreateRequest, *, created_by: str = "master
             "added_via": f"master_data_api/manual_create/{created_by}",
             "needs_review": False,
             "needs_retail_price": True,
+            "image_urls": list(req.image_urls or []),
         }
+        if variant_group_id:
+            entry["variant_group_id"] = variant_group_id
+            entry["variant_label"] = variant_label
         products.append(entry)
 
         meta = data.setdefault("metadata", {})

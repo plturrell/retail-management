@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import sys
 import uuid as _uuid
+from io import BytesIO
 from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 from pathlib import Path
@@ -95,6 +96,35 @@ def _legacy_master_data():
 
 router = APIRouter(prefix="/api/master-data", tags=["master-data"])
 
+_IMAGE_CONTENT_TYPES = {
+    "image/jpeg": "jpg",
+    "image/png": "png",
+    "image/webp": "webp",
+}
+_LOCAL_IMAGE_ROOT = _REPO_ROOT / "data" / "images"
+
+
+def _image_url_for_path(sku: str, filename: str) -> str:
+    return f"/api/master-data/images/{sku}/{filename}"
+
+
+def _patch_product_images(sku: str, urls: list[str]) -> dict:
+    legacy = _legacy_master_data()
+    with legacy._lock:
+        data = legacy._read_master()
+        for product in data.get("products", []):
+            if str(product.get("sku_code") or "") == sku:
+                existing = [str(u) for u in product.get("image_urls", []) or [] if u]
+                for url in urls:
+                    if url not in existing:
+                        existing.append(url)
+                product["image_urls"] = existing
+                data.setdefault("metadata", {})["last_modified"] = datetime.now(timezone.utc).isoformat()
+                data.setdefault("metadata", {})["last_modified_by"] = "master_data_api/image_upload"
+                legacy._atomic_write_master(data)
+                return product
+    raise HTTPException(status_code=404, detail=f"sku_code {sku} not found")
+
 
 @router.get("/health")
 def health(
@@ -119,6 +149,7 @@ def list_products(
     supplier: Optional[str] = Query(None),
     purchased_only: bool = Query(True),
     sourcing_strategy: Optional[str] = Query(None),
+    group_variants: bool = Query(False),
     _: dict = Depends(require_any_store_role(RoleEnum.owner)),
 ) -> dict:
     legacy_master_data = _legacy_master_data()
@@ -128,6 +159,7 @@ def list_products(
         supplier=supplier,
         purchased_only=purchased_only,
         sourcing_strategy=sourcing_strategy,
+        group_variants=group_variants,
     )
 
 
@@ -138,6 +170,83 @@ def get_product(
 ) -> dict:
     legacy_master_data = _legacy_master_data()
     return legacy_master_data.get_product(sku)
+
+
+@router.get("/images/{sku}/{filename}")
+def get_product_image(
+    sku: str,
+    filename: str,
+) -> FileResponse:
+    safe_name = Path(filename).name
+    safe = (_LOCAL_IMAGE_ROOT / sku / safe_name).resolve()
+    root = (_LOCAL_IMAGE_ROOT / sku).resolve()
+    if root not in safe.parents or not safe.exists():
+        raise HTTPException(status_code=404, detail="image not found")
+    return FileResponse(str(safe), filename=safe_name)
+
+
+@router.post("/products/{sku}/images")
+async def upload_product_image(
+    sku: str,
+    request: Request,
+    file: UploadFile = File(...),
+    _: dict = Depends(require_any_store_role(RoleEnum.owner)),
+    actor: dict = Depends(get_current_user),
+) -> dict:
+    content_type = (file.content_type or "").lower()
+    ext = _IMAGE_CONTENT_TYPES.get(content_type)
+    if not ext:
+        raise HTTPException(status_code=415, detail="Only JPEG, PNG, and WebP images are supported.")
+
+    raw = await file.read()
+    if len(raw) > 5 * 1024 * 1024:
+        raise HTTPException(status_code=413, detail="Image must be 5MB or smaller.")
+    if not raw:
+        raise HTTPException(status_code=400, detail="Image file is empty.")
+
+    try:
+        from PIL import Image
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail="Pillow is required for thumbnail generation.") from exc
+
+    try:
+        image = Image.open(BytesIO(raw))
+        image.verify()
+        image = Image.open(BytesIO(raw))
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail="Invalid image file.") from exc
+
+    image_id = _uuid.uuid4().hex
+    filename = f"{image_id}.{ext}"
+    thumb_filename = f"{image_id}_thumb.webp"
+
+    if settings.ENVIRONMENT == "production":
+        from app.services.gcs import upload_bytes
+
+        image_path = f"products/{sku}/{filename}"
+        thumbnail_path = f"products/{sku}/{thumb_filename}"
+        thumb_io = BytesIO()
+        image.thumbnail((200, 200))
+        image.convert("RGB").save(thumb_io, format="WEBP", quality=85)
+        url = await upload_bytes(raw, image_path, content_type)
+        thumbnail_url = await upload_bytes(thumb_io.getvalue(), thumbnail_path, "image/webp")
+    else:
+        target_dir = _LOCAL_IMAGE_ROOT / sku
+        target_dir.mkdir(parents=True, exist_ok=True)
+        (target_dir / filename).write_bytes(raw)
+        image.thumbnail((200, 200))
+        image.convert("RGB").save(target_dir / thumb_filename, format="WEBP", quality=85)
+        url = _image_url_for_path(sku, filename)
+        thumbnail_url = _image_url_for_path(sku, thumb_filename)
+
+    product = _patch_product_images(sku, [url])
+    log_event(
+        "master_data.product_image_upload",
+        actor=actor,
+        metadata={"sku_code": sku, "url": url, "thumbnail_url": thumbnail_url},
+        request=request,
+    )
+    return {"url": url, "thumbnail_url": thumbnail_url, "product": product}
 
 
 @router.patch("/products/{sku}")
@@ -499,9 +608,99 @@ def publish_price(
     return _do_publish_price(sku, req, actor=actor, request=request)
 
 
+class BulkPublishItem(BaseModel):
+    sku: str = Field(min_length=1)
+    retail_price: float = Field(gt=0)
+    store_code: str = Field(default="JEWEL-01")
+    currency: str = Field(default="SGD", min_length=3, max_length=3)
+    tax_code: str = Field(default="G")
+    expected_active_price_id: Optional[str] = None
+
+
+class BulkPublishRequest(BaseModel):
+    items: list[BulkPublishItem] = Field(min_length=1, max_length=500)
+
+
+class BulkPublishItemResult(BaseModel):
+    sku: str
+    ok: bool
+    price_id: Optional[str] = None
+    superseded_price_ids: list[str] = Field(default_factory=list)
+    error: Optional[dict] = None
+
+
+class BulkPublishResponse(BaseModel):
+    ok: bool
+    succeeded: int
+    failed: int
+    results: list[BulkPublishItemResult]
+
+
+@router.post("/products/publish_prices_bulk", response_model=BulkPublishResponse)
+def publish_prices_bulk(
+    req: BulkPublishRequest,
+    request: Request,
+    actor: dict = Depends(require_publish_price_owner),
+) -> BulkPublishResponse:
+    """Publish many SKUs' retail prices in one request.
+
+    Each item is published independently via ``_do_publish_price`` so a single
+    failure (e.g. 409 stale ``expected_active_price_id``) doesn't abort the
+    batch; per-item outcomes are returned in ``results``. The owner-role +
+    publisher-allowlist gate is enforced once at the endpoint boundary.
+    """
+    results: list[BulkPublishItemResult] = []
+    succeeded = 0
+    failed = 0
+    for item in req.items:
+        publish_req = PublishPriceRequest(
+            retail_price=item.retail_price,
+            store_code=item.store_code,
+            currency=item.currency,
+            tax_code=item.tax_code,
+            expected_active_price_id=item.expected_active_price_id,
+        )
+        try:
+            out = _do_publish_price(
+                item.sku, publish_req, actor=actor, request=request
+            )
+        except HTTPException as exc:
+            failed += 1
+            detail = exc.detail if isinstance(exc.detail, dict) else {"message": str(exc.detail)}
+            results.append(
+                BulkPublishItemResult(
+                    sku=item.sku,
+                    ok=False,
+                    error={"status_code": exc.status_code, **detail},
+                )
+            )
+            continue
+        succeeded += 1
+        results.append(
+            BulkPublishItemResult(
+                sku=item.sku,
+                ok=True,
+                price_id=out.get("price_id"),
+                superseded_price_ids=out.get("superseded_price_ids", []) or [],
+            )
+        )
+    return BulkPublishResponse(
+        ok=failed == 0,
+        succeeded=succeeded,
+        failed=failed,
+        results=results,
+    )
+
+
 class ManualCreateAndPublishRequest(BaseModel):
     """Wrapper around the legacy ManualProductCreateRequest plus optional
-    inline price-publish, so the staff portal can do create+price in one click."""
+    inline price-publish, so the staff portal can do create+price in one click.
+
+    SKU code and NEC PLU are intentionally absent — they are always
+    auto-allocated server-side from the shared identifier sequence. Do not
+    re-add caller overrides for them; misaligned SKU/PLU pairs are a class
+    of bug we want to make impossible by construction.
+    """
 
     model_config = ConfigDict(extra="allow")
 
@@ -510,17 +709,25 @@ class ManualCreateAndPublishRequest(BaseModel):
     product_type: str = Field(min_length=1)
     material: str = Field(min_length=1)
     size: Optional[str] = None
-    supplier_id: str = Field(default="CN-001")
+    supplier_id: Optional[str] = Field(
+        default=None,
+        description="Required when sourcing_strategy starts with 'supplier_'.",
+    )
     supplier_name: Optional[str] = None
+    supplier_item_code: Optional[str] = Field(
+        default=None,
+        description="Supplier's own catalog code; links the row back to the supplier catalog.",
+    )
     internal_code: Optional[str] = None
     cost_price: Optional[float] = Field(default=None, ge=0)
     cost_currency: Optional[str] = Field(default="SGD")
     qty_on_hand: Optional[int] = Field(default=None, ge=0)
-    sku_code: Optional[str] = None
-    nec_plu: Optional[str] = None
     sourcing_strategy: str = Field(default="supplier_premade")
-    inventory_type: str = Field(default="purchased")
+    inventory_type: Optional[str] = None
     notes: Optional[str] = None
+    image_urls: Optional[list[str]] = None
+    variant_of_sku: Optional[str] = None
+    variant_label: Optional[str] = Field(default=None, max_length=80)
 
     # Optional inline publish — when retail_price is set, the server creates
     # the SKU then immediately publishes the price in the same request so the
@@ -563,15 +770,17 @@ def create_product_route(
         size=req.size,
         supplier_id=req.supplier_id,
         supplier_name=req.supplier_name,
+        supplier_item_code=req.supplier_item_code,
         internal_code=req.internal_code,
         cost_price=req.cost_price,
         cost_currency=req.cost_currency,
         qty_on_hand=req.qty_on_hand,
-        sku_code=req.sku_code,
-        nec_plu=req.nec_plu,
         sourcing_strategy=req.sourcing_strategy,
         inventory_type=req.inventory_type,
         notes=req.notes,
+        image_urls=req.image_urls,
+        variant_of_sku=req.variant_of_sku,
+        variant_label=req.variant_label,
     )
     product = legacy.create_product(legacy_req, created_by=actor_email or "unknown")
 
@@ -588,6 +797,18 @@ def create_product_route(
         },
         request=request,
     )
+    if req.variant_of_sku:
+        log_event(
+            "master_data.product_create_variant",
+            actor=actor,
+            metadata={
+                "sku_code": product.get("sku_code"),
+                "variant_of_sku": req.variant_of_sku,
+                "variant_group_id": product.get("variant_group_id"),
+                "variant_label": product.get("variant_label"),
+            },
+            request=request,
+        )
 
     publish_result: Optional[dict] = None
     if req.retail_price is not None:
@@ -612,3 +833,104 @@ def create_product_route(
         "product": product,
         "publish_result": publish_result,
     }
+
+
+# ── Sourcing taxonomy + supplier catalog (server-driven for the modal) ───────
+
+
+@router.get("/sourcing-options")
+def sourcing_options(
+    _: dict = Depends(require_any_store_role(RoleEnum.owner)),
+) -> dict:
+    """Return the canonical inventory-origin choices for the create-product UI.
+
+    Lives on the server so adding a new sourcing strategy doesn't require a
+    frontend deploy. See ``tools/server/master_data_api.py::_SOURCING_OPTIONS``.
+    """
+    legacy = _legacy_master_data()
+    return legacy.list_sourcing_options()
+
+
+@router.get("/suppliers")
+def suppliers(
+    _: dict = Depends(require_any_store_role(RoleEnum.owner)),
+) -> dict:
+    """List suppliers that have a structured catalog snapshot under
+    ``docs/suppliers/<slug>/catalog_products.json`` (plus any folders without
+    one, so staff can still pick them when creating an off-catalog SKU)."""
+    legacy = _legacy_master_data()
+    return legacy.list_suppliers()
+
+
+@router.get("/suppliers/{slug}/catalog")
+def supplier_catalog(
+    slug: str,
+    query: Optional[str] = Query(None, description="Free-text filter."),
+    limit: int = Query(50, ge=1, le=200),
+    _: dict = Depends(require_any_store_role(RoleEnum.owner)),
+) -> dict:
+    legacy = _legacy_master_data()
+    return legacy.list_supplier_catalog(slug, query=query, limit=limit)
+
+
+SupplierCatalogEntryAdd = (
+    legacy_master_data.SupplierCatalogEntryAdd if legacy_master_data else _UnavailableLegacyRequest
+)
+
+
+@router.post("/suppliers/{slug}/catalog")
+def add_supplier_catalog_entry(
+    slug: str,
+    req: SupplierCatalogEntryAdd,
+    request: Request,
+    actor: dict = Depends(get_current_user),
+    _: dict = Depends(require_any_store_role(RoleEnum.owner)),
+) -> dict:
+    """Append a new entry to the supplier's catalog snapshot.
+
+    Used when staff are creating a SKU from a supplier item that isn't yet in
+    our catalog file — e.g. a new product the supplier just added. The catalog
+    snapshot is the source of truth for re-order matching, so we want it to
+    grow as we discover new items rather than letting them live only as
+    one-off master_product_list rows.
+    """
+    legacy = _legacy_master_data()
+    actor_email = actor.get("email") if isinstance(actor, dict) else getattr(actor, "email", None)
+    entry = legacy.add_supplier_catalog_entry(
+        slug, req, created_by=actor_email or "unknown"
+    )
+    log_event(
+        "master_data.supplier_catalog_add",
+        actor=actor,
+        metadata={
+            "supplier_slug": slug,
+            "supplier_item_code": entry.get("primary_supplier_item_code"),
+            "display_name": entry.get("display_name"),
+        },
+        request=request,
+    )
+    return entry
+
+
+# ── DeepSeek V3 description assist ───────────────────────────────────────────
+
+AiDescribeProductRequest = (
+    legacy_master_data.AiDescribeProductRequest if legacy_master_data else _UnavailableLegacyRequest
+)
+
+
+@router.post("/ai/describe_product")
+async def ai_describe_product(
+    req: AiDescribeProductRequest,
+    _: dict = Depends(require_any_store_role(RoleEnum.owner)),
+) -> dict:
+    """Ask DeepSeek V3 to draft retail-facing description copy for a new SKU.
+
+    Falls back to the deterministic synth helpers when the AI gateway is
+    unavailable or returns invalid JSON, so the create flow never blocks on
+    the network call. ``is_fallback`` flags which path was taken so the UI
+    can warn the user when the AI didn't actually produce output.
+    """
+    legacy = _legacy_master_data()
+    resp = await legacy.ai_describe_product(req)
+    return resp.model_dump()

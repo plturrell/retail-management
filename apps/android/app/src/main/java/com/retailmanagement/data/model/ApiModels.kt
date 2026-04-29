@@ -371,3 +371,135 @@ data class RecommendPricesRequest(
     @SerializedName("target_skus") val targetSkus: List<String>? = null,
     @SerializedName("max_targets") val maxTargets: Int = 80
 )
+
+// ── Self-service password change (mirrors backend ChangePasswordRequest) ──
+
+data class ChangePasswordRequest(
+    @SerializedName("new_password") val newPassword: String
+)
+
+data class ChangePasswordResponse(
+    val message: String? = null
+)
+
+// ── Active sessions (mirrors backend SessionRead) ──
+
+data class SessionRead(
+    val fingerprint: String,
+    val ip: String? = null,
+    @SerializedName("user_agent") val userAgent: String? = null,
+    @SerializedName("first_seen") val firstSeen: String? = null,
+    @SerializedName("last_seen") val lastSeen: String? = null,
+    val count: Int = 0
+)
+
+data class SignOutResponse(val message: String? = null)
+
+// ── Admin user actions (mirrors backend reset/disable/enable) ──
+
+data class AdminResetResult(
+    @SerializedName("user_id") val userId: String,
+    val email: String,
+    @SerializedName("reset_link") val resetLink: String,
+    @SerializedName("expires_in_seconds") val expiresInSeconds: Int,
+    val message: String
+)
+
+data class AdminMessageResult(val message: String? = null)
+
+// ── Commission rules (mirrors backend CommissionRuleRead) ──
+
+data class CommissionTierRead(
+    val min: Double,
+    val max: Double? = null,
+    val rate: Double
+)
+
+data class CommissionRuleRead(
+    val id: String,
+    @SerializedName("store_id") val storeId: String,
+    val name: String,
+    val tiers: List<CommissionTierRead> = emptyList(),
+    @SerializedName("is_active") val isActive: Boolean = true,
+    @SerializedName("created_at") val createdAt: String? = null
+)
+
+// ── NEC CAG scheduler config (mirrors backend CagConfigPublic) ──
+
+data class CagConfigPublic(
+    val host: String = "",
+    val port: Int = 22,
+    val username: String = "",
+    @SerializedName("key_path") val keyPath: String = "",
+    @SerializedName("tenant_folder") val tenantFolder: String = "",
+    @SerializedName("inbound_working") val inboundWorking: String = "Inbound/Working",
+    @SerializedName("inbound_error") val inboundError: String = "Inbound/Error",
+    @SerializedName("inbound_archive") val inboundArchive: String = "Inbound/Archive",
+    @SerializedName("default_nec_store_id") val defaultNecStoreId: String = "",
+    @SerializedName("default_taxable") val defaultTaxable: Boolean = true,
+    @SerializedName("scheduler_enabled") val schedulerEnabled: Boolean = false,
+    @SerializedName("scheduler_cron") val schedulerCron: String = "",
+    @SerializedName("scheduler_default_tenant") val schedulerDefaultTenant: String = "",
+    @SerializedName("scheduler_default_store_id") val schedulerDefaultStoreId: String = "",
+    @SerializedName("scheduler_default_taxable") val schedulerDefaultTaxable: Boolean = false,
+    @SerializedName("scheduler_last_run_at") val schedulerLastRunAt: String = "",
+    @SerializedName("scheduler_last_run_status") val schedulerLastRunStatus: String = "",
+    @SerializedName("scheduler_last_run_message") val schedulerLastRunMessage: String = "",
+    @SerializedName("scheduler_last_run_files") val schedulerLastRunFiles: Int = 0,
+    @SerializedName("scheduler_last_run_bytes") val schedulerLastRunBytes: Int = 0,
+    @SerializedName("scheduler_last_run_trigger") val schedulerLastRunTrigger: String = "",
+    @SerializedName("scheduler_sa_email") val schedulerSaEmail: String = "",
+    @SerializedName("scheduler_audience") val schedulerAudience: String = "",
+    @SerializedName("has_password") val hasPassword: Boolean = false,
+    @SerializedName("has_key_passphrase") val hasKeyPassphrase: Boolean = false,
+    @SerializedName("is_configured") val isConfigured: Boolean = false,
+    @SerializedName("updated_at") val updatedAt: String = "",
+    @SerializedName("updated_by") val updatedBy: String = ""
+)
+
+/**
+ * PUT /api/cag/config patch. Optional secrets (password, keyPassphrase) are
+ * omitted when null so the backend keeps the existing value.
+ */
+data class CagConfigPatch(
+    val host: String,
+    val port: Int,
+    val username: String,
+    val password: String?,
+    @SerializedName("key_path") val keyPath: String,
+    @SerializedName("key_passphrase") val keyPassphrase: String?,
+    @SerializedName("tenant_folder") val tenantFolder: String,
+    @SerializedName("inbound_working") val inboundWorking: String,
+    @SerializedName("inbound_error") val inboundError: String,
+    @SerializedName("inbound_archive") val inboundArchive: String,
+    @SerializedName("default_nec_store_id") val defaultNecStoreId: String,
+    @SerializedName("default_taxable") val defaultTaxable: Boolean,
+    @SerializedName("scheduler_enabled") val schedulerEnabled: Boolean,
+    @SerializedName("scheduler_cron") val schedulerCron: String,
+    @SerializedName("scheduler_default_tenant") val schedulerDefaultTenant: String,
+    @SerializedName("scheduler_default_store_id") val schedulerDefaultStoreId: String,
+    @SerializedName("scheduler_default_taxable") val schedulerDefaultTaxable: Boolean
+)
+
+data class CagSftpTestResponse(
+    val ok: Boolean = false,
+    val message: String = "",
+    @SerializedName("working_dir") val workingDir: String? = null,
+    @SerializedName("error_dir") val errorDir: String? = null,
+    @SerializedName("archive_dir") val archiveDir: String? = null
+)
+
+data class CagScheduledPushRequest(
+    @SerializedName("tenant_code") val tenantCode: String? = null,
+    @SerializedName("nec_store_id") val necStoreId: String? = null,
+    val taxable: Boolean? = null
+)
+
+data class CagPushResponse(
+    @SerializedName("files_uploaded") val filesUploaded: List<String> = emptyList(),
+    @SerializedName("bytes_uploaded") val bytesUploaded: Long = 0,
+    val counts: Map<String, Int> = emptyMap(),
+    @SerializedName("started_at") val startedAt: String = "",
+    @SerializedName("finished_at") val finishedAt: String? = null,
+    val errors: List<String> = emptyList()
+)

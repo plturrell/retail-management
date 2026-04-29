@@ -32,28 +32,76 @@ steps:
 
   # Deploy to Cloud Run
   - name: "gcr.io/cloud-builders/gcloud"
+    entrypoint: "bash"
     args:
-      - "run"
-      - "deploy"
-      - "${_SERVICE_NAME}"
-      - "--image=${_REGION}-docker.pkg.dev/${PROJECT_ID}/retailsg/${_SERVICE_NAME}:${BUILD_ID}"
-      - "--region=${_REGION}"
-      - "--platform=managed"
-      # TODO: Replace with --no-allow-unauthenticated + API Gateway/Load Balancer
-      # for Firebase token validation at the edge. Kept public for now because the
-      # iOS app hits Cloud Run directly and all endpoints enforce Firebase auth.
-      - "--allow-unauthenticated"
-      - "--port=8000"
-      - "--memory=512Mi"
-      - "--cpu=1"
-      - "--min-instances=0"
-      - "--max-instances=10"
-      - "--set-env-vars=ENVIRONMENT=production"
-      - "--set-env-vars=GCP_PROJECT_ID=${PROJECT_ID}"
-      - "--set-env-vars=FIREBASE_PROJECT_ID=${PROJECT_ID}"
-      - "--set-env-vars=^@^CORS_ORIGINS=[\"http://localhost:5173\",\"https://${PROJECT_ID}.web.app\",\"https://${PROJECT_ID}.firebaseapp.com\"]"
-      - "--set-env-vars=AI_GCS_BUCKET=${PROJECT_ID}-ai-artifacts"
-      - "--service-account=retailsg-api@${PROJECT_ID}.iam.gserviceaccount.com"
+      - "-c"
+      - |
+        set -euo pipefail
+
+        deploy_args=(
+          "run" "deploy" "${_SERVICE_NAME}"
+          "--image=${_REGION}-docker.pkg.dev/${PROJECT_ID}/retailsg/${_SERVICE_NAME}:${BUILD_ID}"
+          "--region=${_REGION}"
+          "--platform=managed"
+          # TODO: Replace with --no-allow-unauthenticated + API Gateway/Load Balancer
+          # for Firebase token validation at the edge. Kept public for now because the
+          # iOS app hits Cloud Run directly and all endpoints enforce Firebase auth.
+          "--allow-unauthenticated"
+          "--port=8000"
+          "--memory=512Mi"
+          "--cpu=1"
+          "--min-instances=0"
+          "--max-instances=10"
+          "--set-env-vars=ENVIRONMENT=production"
+          "--set-env-vars=GCP_PROJECT_ID=${PROJECT_ID}"
+          "--set-env-vars=FIREBASE_PROJECT_ID=${PROJECT_ID}"
+          "--set-env-vars=^@^CORS_ORIGINS=[\"http://localhost:5173\",\"https://${PROJECT_ID}.web.app\",\"https://${PROJECT_ID}.firebaseapp.com\"]"
+          "--set-env-vars=AI_GCS_BUCKET=${PROJECT_ID}-ai-artifacts"
+          # Cloud Scheduler -> Cloud Run OIDC push (NEC CAG every 3h). The
+          # audience MUST match the actual deployed Cloud Run URL exactly.
+          "--set-env-vars=CAG_SCHEDULER_SA_EMAIL=cag-scheduler@${PROJECT_ID}.iam.gserviceaccount.com"
+          "--set-env-vars=CAG_SCHEDULER_AUDIENCE=https://retailsg-api-gih5bcqjoa-as.a.run.app"
+          # Store default is NEC's 5-digit Store ID, not the app store code.
+          "--set-env-vars=CAG_SCHEDULED_PUSH_DEFAULT_TENANT=victoriaenso"
+          "--set-env-vars=CAG_SCHEDULED_PUSH_DEFAULT_STORE_ID=80001"
+        )
+
+        set_secrets=()
+        if gcloud secrets versions describe latest \
+          --secret=retailsg-tidb-database-url \
+          --project="${PROJECT_ID}" \
+          --format="value(state)" 2>/dev/null | grep -qx "ENABLED"; then
+          set_secrets+=("TIDB_DATABASE_URL=retailsg-tidb-database-url:latest")
+        else
+          echo "TIDB secret latest version is not enabled; deploying with TiDB disabled."
+        fi
+
+        if gcloud secrets versions describe latest \
+          --secret=retailsg-snowflake-password \
+          --project="${PROJECT_ID}" \
+          --format="value(state)" 2>/dev/null | grep -qx "ENABLED"; then
+          deploy_args+=(
+            "--set-env-vars=SNOWFLAKE_ACCOUNT=NDKTJHV-MH65474"
+            "--set-env-vars=SNOWFLAKE_USER=RETAILSG_SVC"
+            "--set-env-vars=SNOWFLAKE_DATABASE=RETAILSG"
+            "--set-env-vars=SNOWFLAKE_SCHEMA=ANALYTICS"
+            "--set-env-vars=SNOWFLAKE_WAREHOUSE=RETAILSG_WH"
+            "--set-env-vars=SNOWFLAKE_ROLE=RETAILSG_ROLE"
+            "--set-env-vars=SNOWFLAKE_ETL_SCHEMA=ETL"
+          )
+          set_secrets+=("SNOWFLAKE_PASSWORD=retailsg-snowflake-password:latest")
+        else
+          echo "Snowflake password secret latest version is not enabled; deploying with Snowflake disabled."
+        fi
+
+        if [[ ${#set_secrets[@]} -gt 0 ]]; then
+          IFS=,
+          deploy_args+=("--set-secrets=${set_secrets[*]}")
+          unset IFS
+        fi
+
+        deploy_args+=("--service-account=retailsg-api@${PROJECT_ID}.iam.gserviceaccount.com")
+        gcloud "${deploy_args[@]}"
 
 images:
   - "${_REGION}-docker.pkg.dev/${PROJECT_ID}/retailsg/${_SERVICE_NAME}:${BUILD_ID}"

@@ -417,6 +417,7 @@ fun MasterDataScreen(
         if (isLoading && rows.isEmpty()) {
             item { Box(Modifier.fillMaxWidth().padding(32.dp), contentAlignment = Alignment.Center) { CircularProgressIndicator() } }
         }
+        if (canEdit) item { com.retailmanagement.ui.staff.NecStatusCard() }
         busyLabel?.let { item { Text(it, color = MaterialTheme.colorScheme.primary) } }
         error?.let { item { Text(it, color = MaterialTheme.colorScheme.error) } }
         stats?.let {

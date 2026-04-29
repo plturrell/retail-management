@@ -39,6 +39,22 @@ private nonisolated struct UpdateRoleBody: Encodable, Sendable {
     let role: String
 }
 
+struct AdminResetResult: Decodable, Sendable {
+    let userId: String
+    let email: String
+    let resetLink: String
+    let expiresInSeconds: Int
+    let message: String
+    enum CodingKeys: String, CodingKey {
+        case userId = "user_id", email
+        case resetLink = "reset_link"
+        case expiresInSeconds = "expires_in_seconds"
+        case message
+    }
+}
+
+struct AdminMessageResult: Decodable, Sendable { let message: String? }
+
 @MainActor
 @Observable
 final class EmployeesViewModel {
@@ -60,6 +76,26 @@ final class EmployeesViewModel {
         }
 
         isLoading = false
+    }
+
+    /// Generate a one-time password reset link for the target user. Owners
+    /// only on the backend; the UI must also gate the action.
+    func resetPassword(userId: String) async throws -> AdminResetResult {
+        let result: AdminResetResult = try await NetworkService.shared.post(
+            endpoint: "/api/users/\(userId)/reset-password",
+            body: EmptyBody()
+        )
+        return result
+    }
+
+    /// Disable or re-enable an account. Backend uses two distinct endpoints.
+    func setDisabled(userId: String, disabled: Bool) async throws -> String {
+        let endpoint = "/api/users/\(userId)/" + (disabled ? "disable" : "enable")
+        let result: AdminMessageResult = try await NetworkService.shared.post(
+            endpoint: endpoint,
+            body: EmptyBody()
+        )
+        return result.message ?? (disabled ? "Account disabled." : "Account re-enabled.")
     }
 }
 
@@ -232,8 +268,13 @@ struct EmployeeDetailView: View {
     @Environment(\.dismiss) private var dismiss
     @State private var showRolePicker = false
     @State private var showRemoveConfirm = false
+    @State private var showResetConfirm = false
+    @State private var showDisableConfirm = false
     @State private var isProcessing = false
     @State private var actionError: String?
+    @State private var lastResetLink: String?
+    @State private var lastResetMessage: String?
+    @State private var lastDisableMessage: String?
 
     private var isOwner: Bool {
         guard let user = authViewModel.currentUser,
@@ -287,6 +328,20 @@ struct EmployeeDetailView: View {
                         }
                         .disabled(isProcessing)
 
+                        Button {
+                            showResetConfirm = true
+                        } label: {
+                            Label("Reset password", systemImage: "key.viewfinder")
+                        }
+                        .disabled(isProcessing)
+
+                        Button {
+                            showDisableConfirm = true
+                        } label: {
+                            Label("Disable account", systemImage: "lock.slash")
+                        }
+                        .disabled(isProcessing)
+
                         Button(role: .destructive) {
                             showRemoveConfirm = true
                         } label: {
@@ -294,6 +349,21 @@ struct EmployeeDetailView: View {
                         }
                         .disabled(isProcessing)
                     }
+                }
+
+                if let link = lastResetLink {
+                    Section("Reset link") {
+                        Text(link)
+                            .font(.caption.monospaced())
+                            .textSelection(.enabled)
+                        if let msg = lastResetMessage {
+                            Text(msg).font(.caption2).foregroundStyle(.secondary)
+                        }
+                    }
+                }
+
+                if let msg = lastDisableMessage {
+                    Section { Text(msg).font(.caption).foregroundStyle(.green) }
                 }
 
                 if let error = actionError {
@@ -327,6 +397,45 @@ struct EmployeeDetailView: View {
             } message: {
                 Text("Are you sure you want to remove \(employee.fullName) from this store?")
             }
+            .alert("Reset password?", isPresented: $showResetConfirm) {
+                Button("Generate link") {
+                    Task { await resetPassword() }
+                }
+                Button("Cancel", role: .cancel) {}
+            } message: {
+                Text("This generates a one-time password reset link for \(employee.fullName). They will be forced to change their password on next sign-in.")
+            }
+            .alert("Disable account?", isPresented: $showDisableConfirm) {
+                Button("Disable", role: .destructive) {
+                    Task { await setDisabled(true) }
+                }
+                Button("Cancel", role: .cancel) {}
+            } message: {
+                Text("\(employee.fullName) will be unable to sign in until you re-enable the account.")
+            }
+        }
+    }
+
+    private func resetPassword() async {
+        isProcessing = true; actionError = nil
+        defer { isProcessing = false }
+        do {
+            let result = try await EmployeesViewModel().resetPassword(userId: employee.id)
+            lastResetLink = result.resetLink
+            lastResetMessage = result.message
+        } catch {
+            actionError = error.localizedDescription
+        }
+    }
+
+    private func setDisabled(_ disabled: Bool) async {
+        isProcessing = true; actionError = nil
+        defer { isProcessing = false }
+        do {
+            lastDisableMessage = try await EmployeesViewModel()
+                .setDisabled(userId: employee.id, disabled: disabled)
+        } catch {
+            actionError = error.localizedDescription
         }
     }
 

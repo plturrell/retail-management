@@ -48,6 +48,15 @@ class StoreBase(BaseModel):
     planned_open_date: date | None = None
     notes: str | None = Field(None, max_length=1000)
     is_active: bool = True
+    # CAG / NEC Jewel POS integration. ``nec_tenant_code`` overrides the
+    # global tenant folder when this store belongs to a different legal
+    # entity. ``nec_store_id`` is the 5-digit Store ID assigned by NEC and
+    # used for ``SKU_<storeID>_*.txt`` / ``INVDETAILS_<storeID>_*.txt``.
+    # ``nec_taxable`` toggles ``TAX_CODE`` between ``G`` (landside) and
+    # ``N`` (airside) — see ``CAG-Jewel-ISD-Interfaces TXT Formats v1.7.6j``.
+    nec_tenant_code: str | None = Field(None, max_length=20)
+    nec_store_id: str | None = Field(None, max_length=5)
+    nec_taxable: bool = True
 
 
 class StoreCreate(StoreBase):
@@ -74,7 +83,13 @@ class StoreUpdate(BaseModel):
     planned_open_date: date | None = None
     notes: str | None = Field(None, max_length=1000)
     is_active: bool | None = None
+    nec_tenant_code: str | None = Field(None, max_length=20)
+    nec_store_id: str | None = Field(None, max_length=5)
+    nec_taxable: bool | None = None
 
 
 class StoreRead(StoreBase, UUIDMixin, TimestampMixin):
     store_code: str | None = None
+    nec_tenant_code: str | None = None
+    nec_store_id: str | None = None
+    nec_taxable: bool = True

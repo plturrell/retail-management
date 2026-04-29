@@ -28,6 +28,7 @@ sealed class StaffTab(val route: String, val label: String, val icon: ImageVecto
     object Schedule : StaffTab("schedule", "Schedule", Icons.Default.CalendarMonth)
     object Timesheet : StaffTab("timesheet", "Timesheet", Icons.Default.Timer)
     object Pay : StaffTab("pay", "Pay", Icons.Default.Payments)
+    object Commission : StaffTab("commission", "Commission", Icons.Default.Percent)
     object Performance : StaffTab("performance", "Performance", Icons.AutoMirrored.Filled.TrendingUp)
     object Inventory : StaffTab("inventory", "Inventory", Icons.Default.Inventory2)
     object MasterData : StaffTab("master-data", "Master Data", Icons.AutoMirrored.Filled.ListAlt)
@@ -39,7 +40,7 @@ sealed class StaffTab(val route: String, val label: String, val icon: ImageVecto
     object Profile : StaffTab("profile", "Profile", Icons.Default.Person)
 }
 
-private val staffTabs = listOf(StaffTab.Schedule, StaffTab.Timesheet, StaffTab.Pay, StaffTab.Performance, StaffTab.Profile)
+private val staffTabs = listOf(StaffTab.Schedule, StaffTab.Timesheet, StaffTab.Pay, StaffTab.Commission, StaffTab.Performance, StaffTab.Profile)
 
 // Mirrors backend allowlist (settings.MASTER_DATA_PUBLISHER_EMAILS in
 // backend/app/config.py). Server is the source of truth — non-allowlisted
@@ -58,6 +59,11 @@ class StaffAppViewModel : ViewModel() {
     val role = _role.asStateFlow()
     private val _isLoggedIn = MutableStateFlow(FirebaseAuth.getInstance().currentUser != null)
     val isLoggedIn = _isLoggedIn.asStateFlow()
+    // Mirrors the staff-portal web behaviour: every gated screen redirects to
+    // ForceChangePasswordScreen until the user rotates their password and the
+    // backend clears the must_change_password custom claim.
+    private val _mustChangePassword = MutableStateFlow(false)
+    val mustChangePassword = _mustChangePassword.asStateFlow()
 
     fun onLoginSuccess() {
         _isLoggedIn.value = true
@@ -69,10 +75,12 @@ class StaffAppViewModel : ViewModel() {
         _userId.value = null
         _storeId.value = null
         _role.value = "staff"
+        _mustChangePassword.value = false
     }
 
     fun loadUserContext() {
         viewModelScope.launch {
+            refreshClaims()
             try {
                 val me = RetrofitClient.api.getMe().data
                 _userId.value = me.id
@@ -80,6 +88,18 @@ class StaffAppViewModel : ViewModel() {
                 _storeId.value = firstRole?.storeId
                 _role.value = firstRole?.role ?: "staff"
             } catch (_: Exception) { /* will retry on screen load */ }
+        }
+    }
+
+    fun refreshClaims() {
+        val user = FirebaseAuth.getInstance().currentUser ?: run {
+            _mustChangePassword.value = false
+            return
+        }
+        user.getIdToken(true).addOnSuccessListener { result ->
+            _mustChangePassword.value = (result.claims["must_change_password"] as? Boolean) == true
+        }.addOnFailureListener {
+            _mustChangePassword.value = false
         }
     }
 
@@ -98,6 +118,18 @@ fun StaffApp(vm: StaffAppViewModel = viewModel()) {
 
     if (!isLoggedIn) {
         LoginScreen(onLoginSuccess = { vm.onLoginSuccess() })
+        return
+    }
+
+    val mustChangePassword by vm.mustChangePassword.collectAsState()
+    if (mustChangePassword) {
+        ForceChangePasswordScreen(
+            onPasswordChanged = { vm.refreshClaims() },
+            onSignOut = {
+                FirebaseAuth.getInstance().signOut()
+                vm.onLogout()
+            }
+        )
         return
     }
 
@@ -177,6 +209,7 @@ fun StaffApp(vm: StaffAppViewModel = viewModel()) {
             composable(StaffTab.Schedule.route) { ScheduleScreen(storeId = sid) }
             composable(StaffTab.Timesheet.route) { TimesheetScreen(storeId = sid, userId = uid) }
             composable(StaffTab.Pay.route) { PayScreen(storeId = sid, userId = uid) }
+            composable(StaffTab.Commission.route) { CommissionScreen(storeId = sid, userId = uid) }
             composable(StaffTab.Performance.route) { PerformanceScreen(storeId = sid, userId = uid) }
             composable(StaffTab.Inventory.route) { InventoryScreen(storeId = sid) }
             composable(StaffTab.MasterData.route) {
@@ -187,7 +220,18 @@ fun StaffApp(vm: StaffAppViewModel = viewModel()) {
             composable(StaffTab.TimesheetApprovals.route) { com.retailmanagement.ui.ManagerTimesheetsScreen(storeId = sid) }
             composable(StaffTab.Orders.route) { com.retailmanagement.ui.ManagerOrdersScreen(storeId = sid) }
             composable(StaffTab.Financials.route) { com.retailmanagement.ui.FinancialsScreen(storeId = sid) }
-            composable(StaffTab.Profile.route) { ProfileScreen(userId = uid, onLogout = { vm.onLogout() }) }
+            composable(StaffTab.Profile.route) {
+                ProfileScreen(
+                    userId = uid,
+                    onLogout = { vm.onLogout() },
+                    onOpenCagSettings = if (role == "owner") {
+                        { navController.navigate("cag-settings") }
+                    } else null
+                )
+            }
+            composable("cag-settings") {
+                CagSettingsScreen(onBack = { navController.popBackStack() })
+            }
         }
     }
 }

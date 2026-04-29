@@ -4,9 +4,12 @@ from enum import Enum
 from typing import Any, List
 from uuid import UUID
 
-from fastapi import Depends, HTTPException, Request, status
+from fastapi import Depends, Header, HTTPException, Request, status
+from google.auth.transport import requests as g_requests
 from google.cloud.firestore_v1.client import Client as FirestoreClient
+from google.oauth2 import id_token
 
+from app.config import settings
 from app.firestore import get_firestore_db
 from app.firestore_helpers import query_collection
 from app.auth.firebase import verify_firebase_token
@@ -262,6 +265,52 @@ def require_any_store_role(min_role: RoleEnum):
         return ensure_any_store_role(user, min_role)
 
     return dependency
+
+
+# ---------------------------------------------------------------------------
+# Cloud Scheduler OIDC dependency
+# ---------------------------------------------------------------------------
+
+# Cached cert fetcher for Google's OIDC verification keys. ``id_token`` reuses
+# the JWKS for the process lifetime, so cold-call cost is amortised after the
+# first request.
+_GOOGLE_REQ = g_requests.Request()
+
+
+def require_scheduler_oidc(authorization: str | None = Header(default=None)) -> dict:
+    """Validate a Google-issued OIDC token from Cloud Scheduler.
+
+    Used to gate ``POST /api/cag/export/push/scheduled`` so only the
+    scheduler's service account can trigger the unattended push. Audience must
+    match ``settings.CAG_SCHEDULER_AUDIENCE``; email must match
+    ``settings.CAG_SCHEDULER_SA_EMAIL`` and be verified.
+    """
+    if not authorization or not authorization.lower().startswith("bearer "):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="missing bearer token",
+        )
+    token = authorization.split(" ", 1)[1].strip()
+    try:
+        claims = id_token.verify_oauth2_token(
+            token, _GOOGLE_REQ, audience=settings.CAG_SCHEDULER_AUDIENCE
+        )
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail=f"invalid oidc: {exc}",
+        ) from exc
+    if not claims.get("email_verified"):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="email not verified",
+        )
+    if claims.get("email") != settings.CAG_SCHEDULER_SA_EMAIL:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="wrong service account",
+        )
+    return {"email": claims["email"], "sub": claims.get("sub")}
 
 
 async def require_self_or_store_manager(

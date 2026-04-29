@@ -19,6 +19,7 @@ from pydantic import BaseModel, Field
 
 from app.auth.dependencies import RoleEnum, require_any_store_role
 from app.firestore import get_firestore_db
+from app.services import plu_bulk_assign
 from app.services.nec_jewel_export import (
     BRAND_NAME,
     DEFAULT_INV_STORE_CODE,
@@ -520,3 +521,45 @@ async def export_nec_jewel(
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         headers={"Content-Disposition": f'attachment; filename="{filename}"'},
     )
+
+
+# ---------------------------------------------------------------------------
+# PLU bulk-assign / repair (NEC EAN-13 alignment)
+# ---------------------------------------------------------------------------
+
+class PluPlanRow(BaseModel):
+    sku_id: str
+    sku_code: str
+    description: str
+    old_plu: str | None
+    new_plu: str
+    reason: str
+
+
+class PluBulkResponse(BaseModel):
+    applied: bool
+    summary: dict[str, int]
+    plan: list[PluPlanRow]
+    plan_total: int
+
+
+@router.get("/plus/bulk-preview", response_model=PluBulkResponse)
+async def plus_bulk_preview(
+    fs_db: FirestoreClient = Depends(get_firestore_db),
+    _: dict = Depends(require_any_store_role(RoleEnum.owner)),
+) -> PluBulkResponse:
+    """Dry-run: report SKUs that need a new or repaired PLU."""
+    result = plu_bulk_assign.run(fs_db, apply=False)
+    return PluBulkResponse(**result.to_dict())
+
+
+@router.post("/plus/bulk-apply", response_model=PluBulkResponse)
+async def plus_bulk_apply(
+    fs_db: FirestoreClient = Depends(get_firestore_db),
+    user: dict = Depends(require_any_store_role(RoleEnum.owner)),
+) -> PluBulkResponse:
+    """Generate aligned EAN-13 PLUs for every SKU that lacks one and rewrite
+    invalid / misaligned PLUs to their canonical form. Idempotent."""
+    updated_by = (user or {}).get("email", "") if isinstance(user, dict) else ""
+    result = plu_bulk_assign.run(fs_db, apply=True, updated_by=updated_by)
+    return PluBulkResponse(**result.to_dict())

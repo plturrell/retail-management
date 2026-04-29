@@ -72,4 +72,24 @@ final class AuthService: @unchecked Sendable {
     func getIdToken() async throws -> String? {
         return try await Auth.auth().currentUser?.getIDToken()
     }
+
+    /// Returns the Firebase custom claims on the current ID token. Pass
+    /// ``forceRefresh: true`` to bypass the cached token and pick up claims
+    /// the backend just set (e.g. ``must_change_password``).
+    func customClaims(forceRefresh: Bool = false) async throws -> [String: Any] {
+        guard let result = try await Auth.auth().currentUser?.getIDTokenResult(forcingRefresh: forceRefresh) else {
+            return [:]
+        }
+        return result.claims
+    }
+
+    /// Re-authenticate the current user with their existing password. Required
+    /// by Firebase before sensitive operations like password changes.
+    func reauthenticate(currentPassword: String) async throws {
+        guard let user = Auth.auth().currentUser, let email = user.email else {
+            throw NetworkError.unauthorized
+        }
+        let credential = EmailAuthProvider.credential(withEmail: email, password: currentPassword)
+        _ = try await user.reauthenticate(with: credential)
+    }
 }

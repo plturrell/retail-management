@@ -51,7 +51,14 @@ async def record_movement(
     if not tidb.is_enabled():
         return None
 
-    engine = tidb.get_engine()
+    try:
+        engine = tidb.get_engine()
+    except Exception as exc:  # noqa: BLE001 — dual-write must not break callers
+        logger.warning(
+            "TiDB stock-movement write failed (store=%s sku=%s delta=%s source=%s): %s",
+            store_id, sku_id, delta_qty, source, exc,
+        )
+        return None
     if engine is None:
         return None
 

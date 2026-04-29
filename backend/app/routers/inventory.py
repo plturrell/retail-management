@@ -326,7 +326,6 @@ async def import_inventory_csv(
     file: UploadFile = File(...),
     _=Depends(require_store_role(RoleEnum.manager)),
     user: dict = Depends(get_current_user),
-    db: FirestoreClient = Depends(get_firestore_db),
 ):
     """Import / update inventory rows from a CSV file.
 

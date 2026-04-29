@@ -39,6 +39,8 @@ from app.routers import (
     webauthn as webauthn_router,
     barcode,
     brands,
+    cag_config as cag_config_router,
+    cag_export,
     cag_xml,
     categories,
     finance,
@@ -109,6 +111,8 @@ app.include_router(promotions.router)
 app.include_router(plus.router)
 app.include_router(barcode.router)
 app.include_router(cag_xml.router)
+app.include_router(cag_export.router)
+app.include_router(cag_config_router.router)
 app.include_router(nec_import.router)
 app.include_router(sales.router)
 app.include_router(schedules.router)

@@ -338,7 +338,8 @@ def build_invdetails_sheet(wb: openpyxl.Workbook, products: list[dict[str, Any]]
             continue
         if qty_int <= 0:
             continue
-        ws.append([None, sku_code[:16], "A", qty_int])
+        # Spec section 4.5: ACTION must be "Add", "Subtract" or "Update".
+        ws.append([None, sku_code[:16], "Update", qty_int])
         count += 1
     _style_header(ws)
     for col in range(1, 5):

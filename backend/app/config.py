@@ -62,6 +62,30 @@ class Settings(BaseSettings):
     SNOWFLAKE_ROLE: str = "RETAILSG_ROLE"
     SNOWFLAKE_ETL_SCHEMA: str = "ETL"   # staging schema used by ETL jobs
 
+    # CAG / NEC Jewel POS SFTP integration. Tenant folder defaults to the
+    # tenant code (the 6/7-digit Customer No. assigned by CAG). Authenticate
+    # with either a private key (preferred) or a password.
+    CAG_SFTP_HOST: str = ""
+    CAG_SFTP_PORT: int = 22
+    CAG_SFTP_USER: str = ""
+    CAG_SFTP_PASSWORD: str = ""
+    CAG_SFTP_KEY_PATH: str = ""
+    CAG_SFTP_KEY_PASSPHRASE: str = ""
+    CAG_SFTP_TENANT_FOLDER: str = ""
+    # Stages: tenant uses Inbound/Working for uploads, Inbound/Error for
+    # error log retrieval, Inbound/Archive for processed files.
+    CAG_SFTP_INBOUND_WORKING: str = "Inbound/Working"
+    CAG_SFTP_INBOUND_ERROR: str = "Inbound/Error"
+    CAG_SFTP_INBOUND_ARCHIVE: str = "Inbound/Archive"
+
+    # Cloud Scheduler → Cloud Run OIDC push (NEC CAG every 3h). The audience
+    # must match the Cloud Run service URL; the SA email is the only identity
+    # accepted on POST /api/cag/export/push/scheduled.
+    CAG_SCHEDULER_SA_EMAIL: str = ""
+    CAG_SCHEDULER_AUDIENCE: str = ""
+    CAG_SCHEDULED_PUSH_DEFAULT_TENANT: str = ""
+    CAG_SCHEDULED_PUSH_DEFAULT_STORE_ID: str = ""
+
     model_config = {"env_file": ".env", "env_file_encoding": "utf-8"}
 
     @model_validator(mode="after")

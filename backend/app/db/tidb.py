@@ -102,9 +102,10 @@ async def healthcheck() -> dict:
     """Probe the TiDB connection. Returns a structured dict, never raises."""
     if not is_enabled():
         return {"status": "disabled", "detail": "TIDB_DATABASE_URL is empty"}
-    engine = get_engine()
-    assert engine is not None
     try:
+        engine = get_engine()
+        if engine is None:
+            return {"status": "error", "detail": "TiDB engine was not initialised"}
         async with engine.connect() as conn:
             from sqlalchemy import text
 

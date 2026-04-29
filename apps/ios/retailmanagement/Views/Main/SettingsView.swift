@@ -15,6 +15,12 @@ struct SettingsView: View {
     @AppStorage("menuBarExtraEnabled") private var menuBarExtraEnabled: Bool = true
     #endif
 
+    private var isOwner: Bool {
+        guard let user = authViewModel.currentUser else { return false }
+        if let store = storeViewModel.selectedStore, user.role(for: store.id) == .owner { return true }
+        return user.highestRole == .owner
+    }
+
     var body: some View {
         NavigationStack {
             List {
@@ -90,6 +96,16 @@ struct SettingsView: View {
                     }
                 }
                 #endif
+
+                if isOwner {
+                    Section("Integrations") {
+                        NavigationLink {
+                            CagSettingsView()
+                        } label: {
+                            Label("NEC CAG Integration", systemImage: "antenna.radiowaves.left.and.right")
+                        }
+                    }
+                }
 
                 // Account section
                 Section {

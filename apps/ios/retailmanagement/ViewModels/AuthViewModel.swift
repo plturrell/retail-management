@@ -15,6 +15,11 @@ final class AuthViewModel {
     var currentUser: AppUser?
     var errorMessage: String?
     var isLoading = false
+    /// True when the Firebase token carries ``must_change_password=true``.
+    /// Mirrors the staff-portal web behaviour: every gated screen redirects to
+    /// ``ForceChangePasswordView`` until the user rotates their password and
+    /// the backend clears the claim.
+    var mustChangePassword: Bool = false
 
     private let authService = AuthService.shared
 
@@ -32,6 +37,7 @@ final class AuthViewModel {
 
         if hasExistingSession {
             do {
+                mustChangePassword = await readForceChangeClaim(forceRefresh: true)
                 let user = try await fetchUserProfile()
                 currentUser = user
                 authState = .authenticated
@@ -39,6 +45,7 @@ final class AuthViewModel {
                 authState = .unauthenticated
             }
         } else {
+            mustChangePassword = false
             authState = .unauthenticated
         }
     }
@@ -55,6 +62,7 @@ final class AuthViewModel {
 
         do {
             try await authService.signIn(username: username, password: password)
+            mustChangePassword = await readForceChangeClaim(forceRefresh: true)
             let user = try await fetchUserProfile()
             currentUser = user
             authState = .authenticated
@@ -63,6 +71,22 @@ final class AuthViewModel {
         }
 
         isLoading = false
+    }
+
+    /// Re-read the Firebase custom claims and update ``mustChangePassword``.
+    /// Call this after the user successfully rotates their password so the
+    /// gate releases without requiring a sign-out/sign-in cycle.
+    func refreshTokenClaims() async {
+        mustChangePassword = await readForceChangeClaim(forceRefresh: true)
+    }
+
+    private func readForceChangeClaim(forceRefresh: Bool) async -> Bool {
+        do {
+            let claims = try await authService.customClaims(forceRefresh: forceRefresh)
+            return (claims["must_change_password"] as? Bool) == true
+        } catch {
+            return false
+        }
     }
 
     /// Register a new account.
@@ -112,6 +136,7 @@ final class AuthViewModel {
     func signOut() {
         authService.signOut()
         currentUser = nil
+        mustChangePassword = false
         authState = .unauthenticated
     }
 

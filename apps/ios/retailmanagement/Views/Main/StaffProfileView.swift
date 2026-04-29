@@ -10,6 +10,17 @@ struct StaffProfileView: View {
     @Environment(StoreViewModel.self) var storeViewModel
     @State private var employeeProfile: EmployeeProfile?
     @State private var isLoading = false
+    @State private var sessions: [SessionRead] = []
+    @State private var sessionsBusy = false
+    @State private var sessionsMessage: String?
+    @State private var sessionsError: String?
+    @State private var confirmSignOutOthers = false
+
+    private var isOwner: Bool {
+        guard let user = authViewModel.currentUser else { return false }
+        if let store = storeViewModel.selectedStore, user.role(for: store.id) == .owner { return true }
+        return user.highestRole == .owner
+    }
 
     var body: some View {
         NavigationStack {
@@ -89,6 +100,18 @@ struct StaffProfileView: View {
                     }
                 }
 
+                sessionsSection
+
+                if isOwner {
+                    Section("Owner Tools") {
+                        NavigationLink {
+                            CagSettingsView()
+                        } label: {
+                            Label("NEC CAG Integration", systemImage: "antenna.radiowaves.left.and.right")
+                        }
+                    }
+                }
+
                 // Sign Out
                 Section {
                     Button(role: .destructive) {
@@ -100,9 +123,100 @@ struct StaffProfileView: View {
             }
             .insetGroupedListStyleCompat()
             .navigationTitle("Profile")
-            .task { await loadProfile() }
-            .refreshable { await loadProfile() }
+            .task {
+                await loadProfile()
+                await loadSessions()
+            }
+            .refreshable {
+                await loadProfile()
+                await loadSessions()
+            }
+            .alert("Sign out other devices?", isPresented: $confirmSignOutOthers) {
+                Button("Sign out", role: .destructive) { Task { await signOutOthers() } }
+                Button("Cancel", role: .cancel) {}
+            } message: {
+                Text("This revokes refresh tokens on every device. You may also need to sign in again within the hour.")
+            }
         }
+    }
+
+    @ViewBuilder
+    private var sessionsSection: some View {
+        Section("Active devices") {
+            if let msg = sessionsMessage {
+                Text(msg).font(.caption).foregroundStyle(.green)
+            }
+            if let err = sessionsError {
+                Text(err).font(.caption).foregroundStyle(.red)
+            }
+            if sessions.isEmpty {
+                Text("No recorded sessions yet.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            } else {
+                ForEach(sessions) { s in
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(prettyUserAgent(s.userAgent))
+                            .font(.subheadline.bold())
+                        Text("\(s.ip ?? "unknown network") · seen \(s.count)\u00d7")
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                        Text("Last \(s.lastSeen ?? "—")")
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                    }
+                    .padding(.vertical, 2)
+                }
+            }
+            Button(role: .destructive) {
+                confirmSignOutOthers = true
+            } label: {
+                if sessionsBusy {
+                    ProgressView()
+                } else {
+                    Label("Sign out other devices", systemImage: "iphone.slash")
+                }
+            }
+            .disabled(sessionsBusy)
+        }
+    }
+
+    private func loadSessions() async {
+        do {
+            let resp: DataResponse<[SessionRead]> = try await NetworkService.shared.get(
+                endpoint: "/api/users/me/sessions"
+            )
+            await MainActor.run { sessions = resp.data; sessionsError = nil }
+        } catch {
+            await MainActor.run { sessionsError = error.localizedDescription }
+        }
+    }
+
+    private func signOutOthers() async {
+        sessionsBusy = true
+        sessionsMessage = nil
+        sessionsError = nil
+        defer { sessionsBusy = false }
+        do {
+            let resp: SignOutResponse = try await NetworkService.shared.post(
+                endpoint: "/api/users/me/sign-out-other-devices",
+                body: EmptyBody()
+            )
+            sessionsMessage = resp.message ?? "Other devices signed out."
+        } catch {
+            sessionsError = error.localizedDescription
+        }
+    }
+
+    private func prettyUserAgent(_ ua: String?) -> String {
+        guard let ua, !ua.isEmpty else { return "Unknown device" }
+        if ua.contains("iPhone") { return "iPhone" }
+        if ua.contains("iPad") { return "iPad" }
+        if ua.contains("Macintosh") { return "Mac" }
+        if ua.contains("Android") { return "Android" }
+        if ua.contains("Chrome") { return "Chrome browser" }
+        if ua.contains("Safari") { return "Safari browser" }
+        return String(ua.prefix(40))
     }
 
     private func loadProfile() async {

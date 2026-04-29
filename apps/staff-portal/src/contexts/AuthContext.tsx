@@ -5,7 +5,7 @@ import {
   signOut,
   type User,
 } from "firebase/auth";
-import { auth } from "../lib/firebase";
+import { auth, firebaseConfigError, missingFirebaseConfig } from "../lib/firebase";
 import { api } from "../lib/api";
 
 const SELECTED_STORE_KEY = "retailsg.selectedStoreId";
@@ -128,6 +128,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   };
 
   useEffect(() => {
+    if (firebaseConfigError) {
+      setLoading(false);
+      return;
+    }
     const unsub = onAuthStateChanged(auth, async (u) => {
       setUser(u);
       if (!u) {
@@ -196,6 +200,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const canViewSensitiveOperations = isOwner;
   const roleLabel = getRoleLabel(selectedStoreRole?.role);
 
+  if (firebaseConfigError) {
+    return <FirebaseConfigurationError />;
+  }
+
   return (
     <AuthContext.Provider
       value={{
@@ -219,6 +227,37 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     >
       {children}
     </AuthContext.Provider>
+  );
+}
+
+function FirebaseConfigurationError() {
+  return (
+    <div className="min-h-screen bg-gray-50 px-4 py-8 text-gray-800">
+      <div className="mx-auto max-w-2xl rounded-xl border border-red-200 bg-white p-6 shadow-sm">
+        <div className="rounded-full bg-red-100 px-3 py-1 text-xs font-semibold uppercase tracking-wide text-red-700">
+          Startup blocked
+        </div>
+        <h1 className="mt-4 text-xl font-bold">Firebase configuration is missing or invalid</h1>
+        <p className="mt-2 text-sm text-gray-600">
+          The staff portal cannot start authentication until the Firebase web SDK
+          values are present in the deployed environment.
+        </p>
+        {missingFirebaseConfig.length > 0 && (
+          <div className="mt-4 rounded-lg border border-red-100 bg-red-50 p-3 text-sm text-red-800">
+            Missing: <span className="font-mono">{missingFirebaseConfig.join(", ")}</span>
+          </div>
+        )}
+        {!missingFirebaseConfig.length && (
+          <div className="mt-4 rounded-lg border border-red-100 bg-red-50 p-3 text-sm text-red-800">
+            {firebaseConfigError}
+          </div>
+        )}
+        <div className="mt-4 rounded-lg border border-gray-200 bg-gray-50 p-3 text-xs text-gray-600">
+          Run the Firebase app config sync before launch, then rebuild and redeploy
+          the staff portal. Keep API keys out of screenshots and support threads.
+        </div>
+      </div>
+    </div>
   );
 }
 

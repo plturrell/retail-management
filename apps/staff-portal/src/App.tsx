@@ -23,13 +23,18 @@ import AdminUsersPage from "./pages/AdminUsersPage";
 import ForceChangePasswordPage from "./pages/ForceChangePasswordPage";
 import AuditLogPage from "./pages/AuditLogPage";
 import MasterDataPage from "./pages/MasterDataPage";
+import CagSettingsPage from "./pages/CagSettingsPage";
+import PosReadinessPage from "./pages/PosReadinessPage";
 import HomePage from "./pages/HomePage";
+import PublishPage from "./pages/PublishPage";
+import { ToastProvider } from "./components/ui/Toast";
 
 export default function App() {
   return (
     <AuthProvider>
-      <BrowserRouter>
-        <Routes>
+      <ToastProvider>
+        <BrowserRouter>
+          <Routes>
           <Route path="/login" element={<LoginPage />} />
           <Route
             path="/force-change-password"
@@ -119,6 +124,14 @@ export default function App() {
               }
             />
             <Route
+              path="publish"
+              element={
+                <OwnerOnlyRoute>
+                  <PublishPage />
+                </OwnerOnlyRoute>
+              }
+            />
+            <Route
               path="data-quality"
               element={
                 <OwnerOnlyRoute>
@@ -135,6 +148,22 @@ export default function App() {
               }
             />
             <Route
+              path="settings/cag-nec"
+              element={
+                <OwnerOnlyRoute>
+                  <CagSettingsPage />
+                </OwnerOnlyRoute>
+              }
+            />
+            <Route
+              path="pos-readiness"
+              element={
+                <OwnerOnlyRoute>
+                  <PosReadinessPage />
+                </OwnerOnlyRoute>
+              }
+            />
+            <Route
               path="admin/audit"
               element={
                 <OwnerOnlyRoute>
@@ -144,8 +173,9 @@ export default function App() {
             />
           </Route>
           <Route path="*" element={<Navigate to="/schedule" replace />} />
-        </Routes>
-      </BrowserRouter>
+          </Routes>
+        </BrowserRouter>
+      </ToastProvider>
     </AuthProvider>
   );
 }

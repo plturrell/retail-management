@@ -10,6 +10,7 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.ViewModel
@@ -125,6 +126,41 @@ class EmployeesViewModel : ViewModel() {
                 loadEmployees(storeId)
             } catch (e: Exception) {
                 _actionError.value = e.message
+            } finally {
+                _isActionLoading.value = false
+            }
+        }
+    }
+
+    /// Generate a one-time password reset link. Owners only on the backend.
+    fun resetPassword(userId: String, onResult: (com.retailmanagement.data.model.AdminResetResult?, String?) -> Unit) {
+        viewModelScope.launch {
+            _isActionLoading.value = true
+            _actionError.value = null
+            try {
+                val result = RetrofitClient.api.adminResetPassword(userId)
+                onResult(result, null)
+            } catch (e: Exception) {
+                _actionError.value = e.message
+                onResult(null, e.message ?: "Reset failed.")
+            } finally {
+                _isActionLoading.value = false
+            }
+        }
+    }
+
+    /// Disable or re-enable an account.
+    fun setDisabled(userId: String, disabled: Boolean, onResult: (String?) -> Unit) {
+        viewModelScope.launch {
+            _isActionLoading.value = true
+            _actionError.value = null
+            try {
+                val res = if (disabled) RetrofitClient.api.adminDisableUser(userId)
+                          else RetrofitClient.api.adminEnableUser(userId)
+                onResult(res.message ?: if (disabled) "Account disabled." else "Account re-enabled.")
+            } catch (e: Exception) {
+                _actionError.value = e.message
+                onResult(e.message ?: "Action failed.")
             } finally {
                 _isActionLoading.value = false
             }
@@ -382,9 +418,63 @@ fun EmployeeDetailDialog(employee: StoreEmployeeRead, storeId: String, vm: Emplo
             }
             
             Spacer(Modifier.height(8.dp))
-            
+
+            // Reset password (owner action). Surfaces the one-time link inline
+            // because we don't have a clipboard helper here yet — owner can
+            // long-press to copy, matching staff-portal behaviour.
+            var lastResetLink by remember { mutableStateOf<String?>(null) }
+            var lastResetMessage by remember { mutableStateOf<String?>(null) }
+            var lastDisableMessage by remember { mutableStateOf<String?>(null) }
+
             OutlinedButton(
-                onClick = { 
+                onClick = {
+                    vm.resetPassword(employee.id) { result, _ ->
+                        lastResetLink = result?.resetLink
+                        lastResetMessage = result?.message
+                    }
+                },
+                modifier = Modifier.fillMaxWidth(),
+                enabled = !isActionLoading
+            ) {
+                Icon(Icons.Default.VpnKey, null)
+                Spacer(Modifier.width(8.dp))
+                Text("Reset password")
+            }
+            lastResetLink?.let {
+                Spacer(Modifier.height(8.dp))
+                Card(Modifier.fillMaxWidth()) {
+                    Column(Modifier.padding(12.dp)) {
+                        Text("One-time reset link", style = MaterialTheme.typography.labelMedium)
+                        Text(it, style = MaterialTheme.typography.bodySmall)
+                        lastResetMessage?.let { m -> Text(m, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
+                    }
+                }
+            }
+
+            Spacer(Modifier.height(8.dp))
+
+            OutlinedButton(
+                onClick = {
+                    vm.setDisabled(employee.id, disabled = true) { msg ->
+                        lastDisableMessage = msg
+                    }
+                },
+                modifier = Modifier.fillMaxWidth(),
+                colors = ButtonDefaults.outlinedButtonColors(contentColor = MaterialTheme.colorScheme.error),
+                enabled = !isActionLoading
+            ) {
+                Icon(Icons.Default.Block, null)
+                Spacer(Modifier.width(8.dp))
+                Text("Disable account")
+            }
+            lastDisableMessage?.let {
+                Text(it, style = MaterialTheme.typography.labelSmall, color = Color(0xFF1E8A44), modifier = Modifier.padding(top = 4.dp))
+            }
+
+            Spacer(Modifier.height(8.dp))
+
+            OutlinedButton(
+                onClick = {
                     vm.removeEmployee(storeId, employee.roleId)
                     onDismiss()
                 },

@@ -63,6 +63,9 @@ def _store_to_read(data: dict) -> StoreRead:
         planned_open_date=_parse_date(data.get("planned_open_date")),
         notes=data.get("notes"),
         is_active=data.get("is_active", True),
+        nec_tenant_code=data.get("nec_tenant_code"),
+        nec_store_id=data.get("nec_store_id"),
+        nec_taxable=data.get("nec_taxable", True),
         created_at=data.get("created_at", datetime.now(timezone.utc)),
         updated_at=data.get("updated_at"),
     )

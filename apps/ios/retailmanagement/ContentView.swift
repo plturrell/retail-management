@@ -18,10 +18,15 @@ struct ContentView: View {
             case .unauthenticated:
                 LoginView()
             case .authenticated:
-                MainTabView()
+                if authViewModel.mustChangePassword {
+                    ForceChangePasswordView()
+                } else {
+                    MainTabView()
+                }
             }
         }
         .animation(.easeInOut, value: authViewModel.authState)
+        .animation(.easeInOut, value: authViewModel.mustChangePassword)
     }
 }
 

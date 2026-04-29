@@ -28,7 +28,8 @@ type IconName =
   | "calendar-days"
   | "check-circle"
   | "document-text"
-  | "plus";
+  | "plus"
+  | "bell";
 
 const paths: Record<IconName, string[]> = {
   alert: ["M12 9v4", "M12 17h.01", "M10.3 3.7 2.4 17.2A2 2 0 0 0 4.1 20h15.8a2 2 0 0 0 1.7-2.8L13.7 3.7a2 2 0 0 0-3.4 0Z"],
@@ -61,6 +62,7 @@ const paths: Record<IconName, string[]> = {
   "check-circle": ["M22 11.08V12a10 10 0 1 1-5.93-9.14", "M22 4L12 14.01l-3-3"],
   "document-text": ["M7 3h7l5 5v13H7V3Z", "M14 3v6h5", "M9 13h6", "M9 17h6"],
   plus: ["M12 5v14", "M5 12h14"],
+  bell: ["M6 8a6 6 0 1 1 12 0c0 4 1.5 5 1.5 5h-15S6 12 6 8Z", "M10 19a2 2 0 0 0 4 0"],
 };
 
 export function Icon({ name, className = "h-4 w-4" }: { name: IconName; className?: string }) {

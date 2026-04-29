@@ -8,10 +8,15 @@ import {
   type PosStatusResponse,
   type PriceRecommendationsResponse,
   type ProductRow,
+  type SourcingOption,
   type Stats,
+  type SupplierCatalogProduct,
+  type SupplierSummary,
 } from "../lib/master-data-api";
 import { auth } from "../lib/firebase";
 import { useAuth } from "../contexts/AuthContext";
+import { API_BASE_URL } from "../lib/api";
+import { BarcodeScannerButton } from "../components/BarcodeScannerButton";
 
 type SaveState = "idle" | "saving" | "saved" | "error";
 type PublishState = "idle" | "publishing" | "published" | "error";
@@ -47,6 +52,83 @@ function marginPct(cost: number | null | undefined, retail: number | null | unde
 function suggestedRetail(cost: number | null | undefined): string {
   if (!cost) return "";
   return (Math.round(cost * 3 / 5) * 5).toFixed(0);
+}
+
+/**
+ * Returns `value` after `delayMs` of stability — used to debounce search
+ * inputs so we don't fire one fetch per keystroke. Standard pattern; kept
+ * inline (rather than in a shared hooks/ file) until a second consumer
+ * appears.
+ */
+function useDebouncedValue<T>(value: T, delayMs: number): T {
+  const [debounced, setDebounced] = useState(value);
+  useEffect(() => {
+    const id = window.setTimeout(() => setDebounced(value), delayMs);
+    return () => window.clearTimeout(id);
+  }, [value, delayMs]);
+  return debounced;
+}
+
+/**
+ * localStorage key for the create-inventory modal draft. Schema-versioned so
+ * future field changes can invalidate stale drafts cleanly. Bump the version
+ * when CreateProductModal's `form` shape changes incompatibly.
+ */
+const CREATE_DRAFT_KEY = "masterdata.create_draft.v1";
+
+interface CreateDraftEnvelope {
+  saved_at: number;
+  form: Record<string, unknown>;
+}
+
+function loadCreateDraft(): CreateDraftEnvelope | null {
+  try {
+    const raw = window.localStorage.getItem(CREATE_DRAFT_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as CreateDraftEnvelope;
+    if (typeof parsed.saved_at !== "number" || typeof parsed.form !== "object") {
+      return null;
+    }
+    return parsed;
+  } catch {
+    return null;
+  }
+}
+
+function saveCreateDraft(form: Record<string, unknown>): void {
+  try {
+    const env: CreateDraftEnvelope = { saved_at: Date.now(), form };
+    window.localStorage.setItem(CREATE_DRAFT_KEY, JSON.stringify(env));
+  } catch {
+    // Quota / private mode — silently drop.
+  }
+}
+
+function clearCreateDraft(): void {
+  try {
+    window.localStorage.removeItem(CREATE_DRAFT_KEY);
+  } catch {
+    // ignore
+  }
+}
+
+function relativeTime(ms: number): string {
+  const diff = Date.now() - ms;
+  if (diff < 60_000) return "just now";
+  if (diff < 3_600_000) return `${Math.floor(diff / 60_000)} min ago`;
+  if (diff < 86_400_000) return `${Math.floor(diff / 3_600_000)} h ago`;
+  return `${Math.floor(diff / 86_400_000)} d ago`;
+}
+
+function masterDataAssetUrl(url: string | null | undefined): string | undefined {
+  if (!url) return undefined;
+  if (url.startsWith("http://") || url.startsWith("https://") || url.startsWith("data:")) return url;
+  if (url.startsWith("gs://")) return undefined;
+  if (url.startsWith("/api/")) {
+    const base = API_BASE_URL.replace(/\/api$/, "");
+    return `${base}${url}`;
+  }
+  return url;
 }
 
 // Mirrors the backend allowlist (settings.MASTER_DATA_PUBLISHER_EMAILS in
@@ -98,10 +180,12 @@ export default function MasterDataPage() {
   >({ kind: "idle" });
   const [createState, setCreateState] = useState<
     | { kind: "idle" }
-    | { kind: "open" }
+    | { kind: "open"; variantMode?: boolean }
     | { kind: "submitting" }
     | { kind: "error"; message: string }
   >({ kind: "idle" });
+  const [expandedVariants, setExpandedVariants] = useState<Set<string>>(new Set());
+  const [lightboxImage, setLightboxImage] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   const loadAll = useCallback(async () => {
@@ -115,6 +199,7 @@ export default function MasterDataPage() {
           needs_price: needsPriceOnly,
           purchased_only: purchasedOnly,
           sourcing_strategy: sourcingFilter !== "all" ? sourcingFilter : undefined,
+          group_variants: true,
         }),
         masterDataApi.posStatus().catch(() => null),
       ]);
@@ -439,18 +524,22 @@ export default function MasterDataPage() {
 
   const cancelAi = () => setAiState({ kind: "idle" });
 
-  const submitCreate = async (req: CreateProductRequest) => {
+  const submitCreate = async (req: CreateProductRequest, images: File[] = []) => {
     if (!isOwner) return;
     setCreateState({ kind: "submitting" });
     try {
       const result = await masterDataApi.createProduct(req);
+      for (const image of images) {
+        await masterDataApi.uploadProductImage(result.product.sku_code, image);
+      }
+      clearCreateDraft();
       setCreateState({ kind: "idle" });
       await loadAll();
       const newSku = result.product.sku_code;
       const published = result.publish_result?.ok;
       alert(
         published
-          ? `Added ${newSku} and published S$${result.publish_result?.retail_price.toFixed(2)} to POS.`
+          ? `Added ${newSku}${images.length ? ` with ${images.length} image(s)` : ""} and published S$${result.publish_result?.retail_price.toFixed(2)} to POS.`
           : `Added ${newSku}. Set a price and click Publish to POS to make it sellable.`,
       );
     } catch (err) {
@@ -580,9 +669,16 @@ export default function MasterDataPage() {
               <button
                 onClick={() => setCreateState({ kind: "open" })}
                 className="rounded-md border border-emerald-300 bg-emerald-50 px-4 py-2 text-sm font-semibold text-emerald-800 shadow-sm hover:bg-emerald-100"
-                title="Hand-enter a one-off product without a supplier invoice"
+                title="Create a new inventory item — supplier or in-house — with optional inline price"
               >
-                + Add SKU manually
+                + Create inventory
+              </button>
+              <button
+                onClick={() => setCreateState({ kind: "open", variantMode: true })}
+                className="rounded-md border border-teal-300 bg-white px-4 py-2 text-sm font-semibold text-teal-800 shadow-sm hover:bg-teal-50"
+                title="Create a new SKU as a variant of an existing product family"
+              >
+                + Add variant
               </button>
               <button
                 onClick={onPickInvoice}
@@ -732,6 +828,7 @@ export default function MasterDataPage() {
                   />
                 </th>
                 <th className="sticky left-0 z-20 bg-gray-100 px-3 py-2">SKU</th>
+                <th className="px-3 py-2">Image</th>
                 <th className="px-3 py-2">Barcode (PLU)</th>
                 <th className="px-3 py-2">Live POS</th>
                 <th className="px-3 py-2">Sourcing</th>
@@ -752,14 +849,14 @@ export default function MasterDataPage() {
             <tbody className="divide-y divide-gray-100">
               {loading && (
                 <tr>
-                  <td colSpan={17} className="px-3 py-8 text-center text-gray-400">
+                  <td colSpan={18} className="px-3 py-8 text-center text-gray-400">
                     Loading…
                   </td>
                 </tr>
               )}
               {!loading && filteredRows.length === 0 && !globalError && (
                 <tr>
-                  <td colSpan={17} className="px-3 py-8 text-center text-gray-400">
+                  <td colSpan={18} className="px-3 py-8 text-center text-gray-400">
                     Nothing to show with these filters.
                   </td>
                 </tr>
@@ -770,7 +867,11 @@ export default function MasterDataPage() {
                 const margin = marginPct(p.cost_price, Number.isFinite(priceNum) ? priceNum : null);
                 const posState = posLookup(p.nec_plu);
                 const isSelected = selected.has(p.sku_code);
+                const imageSrc = masterDataAssetUrl(p.thumbnail_url || p.image_urls?.[0]);
+                const siblings = p.variant_siblings || [];
+                const isExpanded = expandedVariants.has(p.sku_code);
                 return (
+                  <>
                   <tr key={p.sku_code} className={isSelected ? "bg-blue-50/40" : "hover:bg-blue-50/30"}>
                     <td className="px-2 py-2">
                       <input
@@ -782,6 +883,15 @@ export default function MasterDataPage() {
                       />
                     </td>
                     <td className={`sticky left-0 z-10 px-3 py-2 font-mono text-xs text-gray-700 ${isSelected ? "bg-blue-50" : "bg-white hover:bg-blue-50/30"}`}>{p.sku_code}</td>
+                    <td className="px-3 py-2">
+                      {imageSrc ? (
+                        <button type="button" onClick={() => setLightboxImage(imageSrc)} className="block">
+                          <img src={imageSrc} loading="lazy" alt="" className="h-10 w-10 rounded object-cover" />
+                        </button>
+                      ) : (
+                        <span className="text-gray-300">—</span>
+                      )}
+                    </td>
                     <td className="px-3 py-2 font-mono text-xs text-gray-700">{p.nec_plu || "—"}</td>
                     <td className="px-3 py-2 text-xs">
                       {posState === "live" && <span className="rounded bg-green-100 px-1.5 py-0.5 text-green-800">Live</span>}
@@ -797,6 +907,24 @@ export default function MasterDataPage() {
                     </td>
                     <td className="px-3 py-2 font-mono text-xs text-gray-500">{p.internal_code || "—"}</td>
                     <td className="px-3 py-2 max-w-md truncate text-gray-700" title={p.description ?? ""}>
+                      {siblings.length > 0 && (
+                        <button
+                          type="button"
+                          onClick={() =>
+                            setExpandedVariants((prev) => {
+                              const next = new Set(prev);
+                              if (next.has(p.sku_code)) next.delete(p.sku_code);
+                              else next.add(p.sku_code);
+                              return next;
+                            })
+                          }
+                          className="mr-2 rounded border border-gray-300 px-1.5 py-0.5 text-[11px] text-gray-700 hover:bg-gray-50"
+                          title="Show variant SKUs"
+                        >
+                          {isExpanded ? "▾" : "▸"} {siblings.length + 1} variants
+                        </button>
+                      )}
+                      {p.variant_label && <span className="mr-2 rounded bg-teal-50 px-1.5 py-0.5 text-[11px] text-teal-800">{p.variant_label}</span>}
                       {p.description}
                     </td>
                     <td className="px-3 py-2 text-gray-600">{p.product_type}</td>
@@ -895,6 +1023,41 @@ export default function MasterDataPage() {
                       </div>
                     </td>
                   </tr>
+                  {isExpanded && siblings.map((sib) => {
+                    const sibImage = masterDataAssetUrl(sib.thumbnail_url || sib.image_urls?.[0]);
+                    return (
+                      <tr key={sib.sku_code} className="bg-teal-50/30 text-xs">
+                        <td className="px-2 py-2" />
+                        <td className="sticky left-0 z-10 bg-teal-50 px-3 py-2 font-mono text-gray-700">{sib.sku_code}</td>
+                        <td className="px-3 py-2">
+                          {sibImage ? (
+                            <button type="button" onClick={() => setLightboxImage(sibImage)} className="block">
+                              <img src={sibImage} loading="lazy" alt="" className="h-10 w-10 rounded object-cover" />
+                            </button>
+                          ) : <span className="text-gray-300">—</span>}
+                        </td>
+                        <td className="px-3 py-2 font-mono text-gray-700">{sib.nec_plu || "—"}</td>
+                        <td className="px-3 py-2 text-gray-400">—</td>
+                        <td className="px-3 py-2 text-gray-600">{sib.sourcing_strategy || "—"}</td>
+                        <td className="px-3 py-2 font-mono text-gray-500">{sib.internal_code || "—"}</td>
+                        <td className="px-3 py-2 max-w-md truncate text-gray-700" title={sib.description ?? ""}>
+                          {sib.variant_label && <span className="mr-2 rounded bg-teal-100 px-1.5 py-0.5 text-[11px] text-teal-800">{sib.variant_label}</span>}
+                          {sib.description}
+                        </td>
+                        <td className="px-3 py-2 text-gray-600">{sib.product_type}</td>
+                        <td className="px-3 py-2 text-gray-600">{sib.material}</td>
+                        <td className="px-3 py-2 text-gray-500">{sib.size}</td>
+                        <td className="px-3 py-2 text-right text-gray-700">S${fmtMoney(sib.cost_price)}</td>
+                        <td className="px-3 py-2 text-right text-gray-700">S${fmtMoney(sib.retail_price)}</td>
+                        <td className="px-3 py-2 text-right text-gray-600">{marginPct(sib.cost_price, sib.retail_price)}</td>
+                        <td className="px-3 py-2 text-right text-gray-600">{sib.qty_on_hand ?? "—"}</td>
+                        <td className="px-3 py-2 text-gray-600">{sib.sale_ready ? "Yes" : "No"}</td>
+                        <td className="px-3 py-2 text-gray-500">{sib.retail_price_note || "—"}</td>
+                        <td className="px-3 py-2 text-gray-400">Variant</td>
+                      </tr>
+                    );
+                  })}
+                  </>
                 );
               })}
             </tbody>
@@ -1040,10 +1203,18 @@ export default function MasterDataPage() {
         />
       )}
 
+      {lightboxImage && (
+        <div className="fixed inset-0 z-40 flex items-center justify-center bg-black/75 p-4" onClick={() => setLightboxImage(null)}>
+          <img src={lightboxImage} alt="" className="max-h-[90vh] max-w-[90vw] rounded-md bg-white object-contain" />
+        </div>
+      )}
+
       {isOwner && (createState.kind === "open" || createState.kind === "submitting" || createState.kind === "error") && (
         <CreateProductModal
           submitting={createState.kind === "submitting"}
           errorMessage={createState.kind === "error" ? createState.message : null}
+          variantMode={createState.kind === "open" ? createState.variantMode === true : false}
+          variantParents={rows.map((r) => r.product)}
           onCancel={() => setCreateState({ kind: "idle" })}
           onSubmit={submitCreate}
         />
@@ -1052,6 +1223,9 @@ export default function MasterDataPage() {
   );
 }
 
+// Product types the OCR ingest understands — mirrored client-side as a
+// dropdown convenience. The backend rejects anything not on this list, so
+// keep it in sync with tools/server/master_data_api.py::_OCR_TYPE_TO_ABBR.
 const PRODUCT_TYPE_OPTIONS = [
   "Bookend",
   "Napkin Holder",
@@ -1070,6 +1244,9 @@ const PRODUCT_TYPE_OPTIONS = [
   "Charm",
 ];
 
+// Material labels detect_material() recognises. Free-text is also accepted —
+// the backend falls back to "Mixed Materials" — but offering canonical labels
+// keeps the SKU-code material slug stable for the catalogues we ship today.
 const MATERIAL_OPTIONS = [
   "Crystal",
   "Malachite",
@@ -1080,41 +1257,241 @@ const MATERIAL_OPTIONS = [
   "Mixed Materials",
 ];
 
+/**
+ * Inventory-creation wizard.
+ *
+ * Two-pane layout: left is the always-visible form, right slides in when the
+ * user picks a supplier-sourced origin and lets them browse / add to that
+ * supplier's catalog snapshot. SKU code + NEC PLU are not exposed — they are
+ * auto-allocated server-side to keep the SKU/PLU pair aligned.
+ *
+ * The DeepSeek V3 "Draft with AI" button calls /ai/describe_product to fill
+ * description + long_description from the structured fields; the user is
+ * always free to edit before saving.
+ */
 function CreateProductModal({
   submitting,
   errorMessage,
+  variantMode = false,
+  variantParents,
   onCancel,
   onSubmit,
 }: {
   submitting: boolean;
   errorMessage: string | null;
+  variantMode?: boolean;
+  variantParents: ProductRow[];
   onCancel: () => void;
-  onSubmit: (req: CreateProductRequest) => void;
+  onSubmit: (req: CreateProductRequest, images: File[]) => void;
 }) {
+  // ── Server-driven taxonomy ───────────────────────────────────────────────
+  const [sourcingOptions, setSourcingOptions] = useState<SourcingOption[]>([]);
+  const [suppliers, setSuppliers] = useState<SupplierSummary[]>([]);
+  const [taxonomyError, setTaxonomyError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    Promise.all([
+      masterDataApi.getSourcingOptions(),
+      masterDataApi.listSuppliers(),
+    ])
+      .then(([opts, sups]) => {
+        if (cancelled) return;
+        setSourcingOptions(opts.options);
+        setSuppliers(sups.suppliers);
+      })
+      .catch((err: unknown) => {
+        if (cancelled) return;
+        setTaxonomyError(err instanceof Error ? err.message : String(err));
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  // ── Form state ───────────────────────────────────────────────────────────
   const [form, setForm] = useState({
+    sourcing_strategy: "",
+    supplier_slug: "",
+    supplier_id: "",
+    supplier_name: "",
+    supplier_item_code: "",
     description: "",
+    long_description: "",
     product_type: PRODUCT_TYPE_OPTIONS[0],
     material: MATERIAL_OPTIONS[0],
     size: "",
-    supplier_id: "CN-001",
-    supplier_name: "Hengwei Craft",
-    internal_code: "",
-    cost_price: "",
     qty_on_hand: "",
+    cost_price: "",
+    cost_currency: "SGD",
     notes: "",
     retail_price: "",
     publish_now: false,
+    variant_of_sku: "",
+    variant_label: "",
   });
+  const [images, setImages] = useState<File[]>([]);
   const [localError, setLocalError] = useState<string | null>(null);
+  const [aiBusy, setAiBusy] = useState(false);
+  const [aiNote, setAiNote] = useState<string | null>(null);
+
+  // Draft persist — restore on first mount, prompt user to keep or discard.
+  // Tracked in state so we can render the banner; null once they decide.
+  const [draftBanner, setDraftBanner] = useState<{ saved_at: number } | null>(() => {
+    const draft = loadCreateDraft();
+    return draft ? { saved_at: draft.saved_at } : null;
+  });
+
+  // Persist every form change. Skip the very first render to avoid clobbering
+  // the existing draft with an empty form before the user has decided whether
+  // to resume it.
+  const initialRenderRef = useRef(true);
+  useEffect(() => {
+    if (initialRenderRef.current) {
+      initialRenderRef.current = false;
+      return;
+    }
+    saveCreateDraft(form as unknown as Record<string, unknown>);
+  }, [form]);
+
+  const resumeDraft = () => {
+    const draft = loadCreateDraft();
+    if (draft) {
+      setForm((f) => ({ ...f, ...(draft.form as typeof f) }));
+    }
+    setDraftBanner(null);
+  };
+  const discardDraft = () => {
+    clearCreateDraft();
+    setDraftBanner(null);
+  };
+
+  const sourcingMeta = useMemo(
+    () => sourcingOptions.find((o) => o.value === form.sourcing_strategy) ?? null,
+    [sourcingOptions, form.sourcing_strategy],
+  );
+  const requiresSupplier = sourcingMeta?.requires_supplier ?? false;
+  const selectedVariantParent = variantParents.find((p) => p.sku_code === form.variant_of_sku) || null;
+
+  // Default to the first sourcing option once the taxonomy loads, so the
+  // wizard never sits with an empty origin (which would block submit).
+  useEffect(() => {
+    if (!form.sourcing_strategy && sourcingOptions.length > 0) {
+      setForm((f) => ({ ...f, sourcing_strategy: sourcingOptions[0].value }));
+    }
+  }, [sourcingOptions, form.sourcing_strategy]);
+
+  useEffect(() => {
+    if (!variantMode || !selectedVariantParent) return;
+    setForm((f) => ({
+      ...f,
+      product_type: selectedVariantParent.product_type || f.product_type,
+      material: selectedVariantParent.material || f.material,
+      sourcing_strategy: selectedVariantParent.sourcing_strategy || f.sourcing_strategy,
+      supplier_id: selectedVariantParent.supplier_id || f.supplier_id,
+      supplier_name: selectedVariantParent.supplier_name || f.supplier_name,
+      description: selectedVariantParent.description || f.description,
+      long_description: selectedVariantParent.long_description || f.long_description,
+    }));
+  }, [variantMode, selectedVariantParent]);
 
   const update = <K extends keyof typeof form>(key: K, value: (typeof form)[K]) =>
     setForm((f) => ({ ...f, [key]: value }));
 
+  const pickSupplier = (slug: string) => {
+    const sup = suppliers.find((s) => s.slug === slug);
+    if (!sup) {
+      setForm((f) => ({ ...f, supplier_slug: "", supplier_id: "", supplier_name: "" }));
+      return;
+    }
+    setForm((f) => ({
+      ...f,
+      supplier_slug: slug,
+      supplier_id: sup.supplier_id || sup.slug.toUpperCase(),
+      supplier_name: sup.supplier_name,
+    }));
+  };
+
+  // When the user picks a row from the supplier catalog, autofill the
+  // structured fields so they don't retype what we already have.
+  const applyCatalogPick = (item: SupplierCatalogProduct, supplier: SupplierSummary) => {
+    setForm((f) => ({
+      ...f,
+      supplier_slug: supplier.slug,
+      supplier_id: supplier.supplier_id || supplier.slug.toUpperCase(),
+      supplier_name: supplier.supplier_name,
+      supplier_item_code: item.primary_supplier_item_code || item.raw_model || "",
+      material: f.material || (item.materials || "Mixed Materials"),
+      size: f.size || (item.size || ""),
+      // Heuristic cost: take the first listed CNY price as a starting point;
+      // user converts to SGD or overrides as needed.
+      cost_price:
+        f.cost_price ||
+        (item.price_options_cny && item.price_options_cny.length > 0
+          ? String(item.price_options_cny[0])
+          : ""),
+      cost_currency:
+        f.cost_price
+          ? f.cost_currency
+          : item.price_options_cny && item.price_options_cny.length > 0
+            ? "CNY"
+            : f.cost_currency,
+    }));
+  };
+
+  const draftDescriptionWithAi = async () => {
+    setAiNote(null);
+    setLocalError(null);
+    setAiBusy(true);
+    try {
+      const resp = await masterDataApi.aiDescribeProduct({
+        product_type: form.product_type,
+        material: form.material,
+        size: form.size.trim() || null,
+        supplier_name: form.supplier_name.trim() || null,
+        supplier_item_code: form.supplier_item_code.trim() || null,
+        sourcing_strategy: form.sourcing_strategy || null,
+      });
+      setForm((f) => ({
+        ...f,
+        description: resp.description,
+        long_description: resp.long_description,
+      }));
+      setAiNote(
+        resp.is_fallback
+          ? "AI unavailable — used a deterministic template. Edit before saving."
+          : `Drafted with ${resp.model || "DeepSeek V3"} — please review.`,
+      );
+    } catch (err) {
+      setAiNote(`AI assist failed: ${err instanceof Error ? err.message : String(err)}`);
+    } finally {
+      setAiBusy(false);
+    }
+  };
+
   const submit = () => {
     setLocalError(null);
-    if (!form.description.trim()) {
-      setLocalError("Description is required.");
+    if (!form.sourcing_strategy) {
+      setLocalError("Pick where this inventory came from.");
       return;
+    }
+    if (requiresSupplier && !form.supplier_slug) {
+      setLocalError("Pick a supplier (left panel) before saving.");
+      return;
+    }
+    if (!form.description.trim()) {
+      setLocalError("Description is required (or click 'Draft with AI').");
+      return;
+    }
+    if (variantMode) {
+      if (!form.variant_of_sku) {
+        setLocalError("Pick the existing SKU this variant belongs to.");
+        return;
+      }
+      if (!form.variant_label.trim()) {
+        setLocalError("Variant label is required.");
+        return;
+      }
     }
     const cost = form.cost_price.trim() ? Number.parseFloat(form.cost_price) : null;
     if (cost !== null && (!Number.isFinite(cost) || cost < 0)) {
@@ -1138,176 +1515,403 @@ function CreateProductModal({
 
     const req: CreateProductRequest = {
       description: form.description.trim(),
+      long_description: form.long_description.trim() || null,
       product_type: form.product_type,
       material: form.material,
       size: form.size.trim() || null,
-      supplier_id: form.supplier_id.trim() || "CN-001",
-      supplier_name: form.supplier_name.trim() || null,
-      internal_code: form.internal_code.trim() || null,
+      supplier_id: requiresSupplier ? form.supplier_id || null : null,
+      supplier_name: requiresSupplier ? form.supplier_name.trim() || null : null,
+      supplier_item_code: requiresSupplier ? form.supplier_item_code.trim() || null : null,
       cost_price: cost,
-      cost_currency: cost !== null ? "SGD" : null,
+      cost_currency: cost !== null ? form.cost_currency || "SGD" : null,
       qty_on_hand: qty,
+      sourcing_strategy: form.sourcing_strategy,
+      // inventory_type derives from sourcing_strategy server-side, so don't send it.
       notes: form.notes.trim() || null,
       retail_price: retail,
+      variant_of_sku: variantMode ? form.variant_of_sku : null,
+      variant_label: variantMode ? form.variant_label.trim() : null,
     };
-    onSubmit(req);
+    onSubmit(req, images);
   };
+
+  const selectedSupplier = suppliers.find((s) => s.slug === form.supplier_slug) || null;
 
   return (
     <div className="fixed inset-0 z-30 flex items-center justify-center bg-black/50 p-4">
-      <div className="flex max-h-[90vh] w-full max-w-2xl flex-col rounded-md bg-white shadow-xl">
+      <div className="flex max-h-[92vh] w-full max-w-5xl flex-col rounded-md bg-white shadow-xl">
         <header className="flex items-center justify-between border-b border-gray-200 px-5 py-3">
           <div>
-            <div className="text-base font-semibold text-gray-900">Add SKU manually</div>
+            <div className="text-base font-semibold text-gray-900">Create inventory item</div>
             <div className="text-xs text-gray-500">
-              Hand-entered products. SKU code and barcode (PLU) are auto-allocated. Optionally set a
-              retail price to publish to POS in one step.
+              Pick where it came from, link it to the supplier catalog when relevant, and
+              optionally publish a retail price to POS in one step. SKU and barcode (PLU)
+              are auto-allocated.
             </div>
           </div>
           <button onClick={onCancel} className="text-sm text-gray-500 hover:underline" disabled={submitting}>
             Cancel
           </button>
         </header>
-        <div className="flex-1 overflow-auto px-5 py-4 text-sm">
-          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-            <Field label="Description *" hint="Short label shown on labels and the POS screen.">
-              <input
-                type="text"
-                value={form.description}
-                onChange={(e) => update("description", e.target.value)}
-                maxLength={120}
-                disabled={submitting}
-                className="w-full rounded border border-gray-300 px-2 py-1 text-sm focus:border-blue-500 focus:outline-none disabled:bg-gray-100"
-              />
-            </Field>
-            <Field label="Product type *">
-              <select
-                value={form.product_type}
-                onChange={(e) => update("product_type", e.target.value)}
-                disabled={submitting}
-                className="w-full rounded border border-gray-300 px-2 py-1 text-sm focus:border-blue-500 focus:outline-none disabled:bg-gray-100"
-              >
-                {PRODUCT_TYPE_OPTIONS.map((t) => (
-                  <option key={t} value={t}>{t}</option>
-                ))}
-              </select>
-            </Field>
-            <Field label="Material *">
-              <select
-                value={form.material}
-                onChange={(e) => update("material", e.target.value)}
-                disabled={submitting}
-                className="w-full rounded border border-gray-300 px-2 py-1 text-sm focus:border-blue-500 focus:outline-none disabled:bg-gray-100"
-              >
-                {MATERIAL_OPTIONS.map((m) => (
-                  <option key={m} value={m}>{m}</option>
-                ))}
-              </select>
-            </Field>
-            <Field label="Size" hint="e.g. 10x10x30 cm">
-              <input
-                type="text"
-                value={form.size}
-                onChange={(e) => update("size", e.target.value)}
-                disabled={submitting}
-                className="w-full rounded border border-gray-300 px-2 py-1 text-sm focus:border-blue-500 focus:outline-none disabled:bg-gray-100"
-              />
-            </Field>
-            <Field label="Supplier ID">
-              <input
-                type="text"
-                value={form.supplier_id}
-                onChange={(e) => update("supplier_id", e.target.value)}
-                disabled={submitting}
-                className="w-full rounded border border-gray-300 px-2 py-1 text-sm font-mono focus:border-blue-500 focus:outline-none disabled:bg-gray-100"
-              />
-            </Field>
-            <Field label="Supplier name">
-              <input
-                type="text"
-                value={form.supplier_name}
-                onChange={(e) => update("supplier_name", e.target.value)}
-                disabled={submitting}
-                className="w-full rounded border border-gray-300 px-2 py-1 text-sm focus:border-blue-500 focus:outline-none disabled:bg-gray-100"
-              />
-            </Field>
-            <Field label="Supplier item code" hint="Optional. Their SKU on the invoice/box.">
-              <input
-                type="text"
-                value={form.internal_code}
-                onChange={(e) => update("internal_code", e.target.value)}
-                disabled={submitting}
-                className="w-full rounded border border-gray-300 px-2 py-1 text-sm font-mono focus:border-blue-500 focus:outline-none disabled:bg-gray-100"
-              />
-            </Field>
-            <Field label="Qty on hand">
-              <input
-                type="number"
-                min={0}
-                step={1}
-                value={form.qty_on_hand}
-                onChange={(e) => update("qty_on_hand", e.target.value)}
-                disabled={submitting}
-                className="w-full rounded border border-gray-300 px-2 py-1 text-sm focus:border-blue-500 focus:outline-none disabled:bg-gray-100"
-              />
-            </Field>
-            <Field label="Cost price (SGD)">
-              <input
-                type="number"
-                min={0}
-                step="0.01"
-                value={form.cost_price}
-                onChange={(e) => update("cost_price", e.target.value)}
-                disabled={submitting}
-                className="w-full rounded border border-gray-300 px-2 py-1 text-sm focus:border-blue-500 focus:outline-none disabled:bg-gray-100"
-              />
-            </Field>
-            <Field label="Notes">
-              <input
-                type="text"
-                value={form.notes}
-                onChange={(e) => update("notes", e.target.value)}
-                disabled={submitting}
-                className="w-full rounded border border-gray-300 px-2 py-1 text-sm focus:border-blue-500 focus:outline-none disabled:bg-gray-100"
-              />
-            </Field>
-          </div>
 
-          <div className="mt-5 rounded-md border border-amber-200 bg-amber-50 p-3">
-            <label className="flex items-center gap-2 text-sm font-semibold text-amber-900">
-              <input
-                type="checkbox"
-                checked={form.publish_now}
-                onChange={(e) => update("publish_now", e.target.checked)}
-                disabled={submitting}
-              />
-              Publish a retail price to POS in the same step
-            </label>
-            {form.publish_now && (
-              <div className="mt-2 flex items-center gap-2 text-sm">
-                <span className="text-gray-700">Retail (S$, GST-inclusive):</span>
+        <div className="grid flex-1 grid-cols-1 overflow-hidden md:grid-cols-[1fr_360px]">
+          {/* ── Form pane ───────────────────────────────────────────────── */}
+          <div className="flex-1 overflow-auto px-5 py-4 text-sm">
+            {taxonomyError && (
+              <div className="mb-3 rounded-md border border-amber-300 bg-amber-50 p-2 text-xs text-amber-900">
+                Couldn’t load taxonomy from server: {taxonomyError}
+              </div>
+            )}
+
+            {draftBanner && (
+              <div className="mb-3 flex items-center justify-between gap-3 rounded-md border border-blue-300 bg-blue-50 p-2 text-xs text-blue-900">
+                <span>
+                  You have an unfinished draft saved {relativeTime(draftBanner.saved_at)}.
+                </span>
+                <span className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={resumeDraft}
+                    className="rounded border border-blue-400 bg-white px-2 py-1 text-xs font-semibold text-blue-700 hover:bg-blue-100"
+                  >
+                    Resume
+                  </button>
+                  <button
+                    type="button"
+                    onClick={discardDraft}
+                    className="rounded border border-blue-200 bg-white px-2 py-1 text-xs text-blue-700 hover:bg-blue-100"
+                  >
+                    Discard
+                  </button>
+                </span>
+              </div>
+            )}
+
+            {variantMode && (
+              <div className="mb-4 rounded-md border border-teal-200 bg-teal-50 p-3">
+                <div className="mb-2 text-sm font-semibold text-teal-900">Add as variant of existing SKU</div>
+                <div className="grid grid-cols-1 gap-2 sm:grid-cols-[1fr_180px]">
+                  <select
+                    value={form.variant_of_sku}
+                    onChange={(e) => update("variant_of_sku", e.target.value)}
+                    disabled={submitting}
+                    className="w-full rounded border border-teal-300 px-2 py-1 text-sm"
+                  >
+                    <option value="">Pick parent SKU…</option>
+                    {variantParents.map((p) => (
+                      <option key={p.sku_code} value={p.sku_code}>
+                        {p.sku_code} — {p.description || p.product_type || "Product"}
+                      </option>
+                    ))}
+                  </select>
+                  <input
+                    type="text"
+                    placeholder="Variant label *"
+                    value={form.variant_label}
+                    onChange={(e) => update("variant_label", e.target.value)}
+                    disabled={submitting}
+                    className="w-full rounded border border-teal-300 px-2 py-1 text-sm"
+                  />
+                </div>
+              </div>
+            )}
+
+            {/* Origin picker */}
+            <div className="mb-4">
+              <div className="mb-1 text-sm font-semibold text-gray-800">Inventory origin *</div>
+              <div className="grid grid-cols-1 gap-2">
+                {sourcingOptions.map((opt) => (
+                  <label
+                    key={opt.value}
+                    className={`flex cursor-pointer items-start gap-2 rounded-md border p-2 text-sm transition ${
+                      form.sourcing_strategy === opt.value
+                        ? "border-emerald-500 bg-emerald-50"
+                        : "border-gray-200 hover:border-gray-300"
+                    }`}
+                  >
+                    <input
+                      type="radio"
+                      name="sourcing_strategy"
+                      value={opt.value}
+                      checked={form.sourcing_strategy === opt.value}
+                      onChange={() => update("sourcing_strategy", opt.value)}
+                      disabled={submitting}
+                      className="mt-1"
+                    />
+                    <div>
+                      <div className="font-semibold text-gray-900">{opt.label}</div>
+                      <div className="text-xs text-gray-600">{opt.description}</div>
+                    </div>
+                  </label>
+                ))}
+                {sourcingOptions.length === 0 && !taxonomyError && (
+                  <div className="text-xs text-gray-500">Loading origin choices…</div>
+                )}
+              </div>
+            </div>
+
+            {/* Supplier link (only when required) */}
+            {requiresSupplier && (
+              <div className="mb-4 rounded-md border border-blue-200 bg-blue-50 p-3">
+                <div className="mb-2 text-sm font-semibold text-blue-900">Linked supplier</div>
+                {selectedSupplier ? (
+                  <div className="flex items-center justify-between gap-2 text-sm">
+                    <div>
+                      <div className="font-semibold text-gray-900">
+                        {selectedSupplier.supplier_name}
+                      </div>
+                      <div className="text-xs text-gray-600">
+                        {form.supplier_item_code
+                          ? `Item code: ${form.supplier_item_code}`
+                          : "No supplier item code yet — pick from catalog →"}
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => pickSupplier("")}
+                      disabled={submitting}
+                      className="text-xs text-blue-700 hover:underline"
+                    >
+                      Change supplier
+                    </button>
+                  </div>
+                ) : (
+                  <div className="text-xs text-gray-700">
+                    Pick a supplier from the panel on the right →
+                  </div>
+                )}
+                <div className="mt-3">
+                  <Field label="Supplier item code">
+                    <div className="flex gap-1">
+                      <input
+                        type="text"
+                        value={form.supplier_item_code}
+                        onChange={(e) => update("supplier_item_code", e.target.value)}
+                        disabled={submitting}
+                        className="w-full rounded border border-blue-200 px-2 py-1 text-sm focus:border-blue-500 focus:outline-none disabled:bg-gray-100"
+                      />
+                      <BarcodeScannerButton
+                        disabled={submitting}
+                        onDetected={(code) => update("supplier_item_code", code)}
+                      />
+                    </div>
+                  </Field>
+                </div>
+              </div>
+            )}
+
+            {/* Structured fields */}
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+              <Field label="Product type *">
+                <select
+                  value={form.product_type}
+                  onChange={(e) => update("product_type", e.target.value)}
+                  disabled={submitting}
+                  className="w-full rounded border border-gray-300 px-2 py-1 text-sm focus:border-blue-500 focus:outline-none disabled:bg-gray-100"
+                >
+                  {PRODUCT_TYPE_OPTIONS.map((t) => (
+                    <option key={t} value={t}>{t}</option>
+                  ))}
+                </select>
+              </Field>
+              <Field label="Material *">
+                <select
+                  value={form.material}
+                  onChange={(e) => update("material", e.target.value)}
+                  disabled={submitting}
+                  className="w-full rounded border border-gray-300 px-2 py-1 text-sm focus:border-blue-500 focus:outline-none disabled:bg-gray-100"
+                >
+                  {MATERIAL_OPTIONS.map((m) => (
+                    <option key={m} value={m}>{m}</option>
+                  ))}
+                </select>
+              </Field>
+              <Field label="Size" hint="e.g. 10x10x30 cm">
+                <input
+                  type="text"
+                  value={form.size}
+                  onChange={(e) => update("size", e.target.value)}
+                  disabled={submitting}
+                  className="w-full rounded border border-gray-300 px-2 py-1 text-sm focus:border-blue-500 focus:outline-none disabled:bg-gray-100"
+                />
+              </Field>
+              <Field label="Qty on hand">
                 <input
                   type="number"
                   min={0}
-                  step="0.01"
-                  value={form.retail_price}
-                  onChange={(e) => update("retail_price", e.target.value)}
+                  step={1}
+                  value={form.qty_on_hand}
+                  onChange={(e) => update("qty_on_hand", e.target.value)}
                   disabled={submitting}
-                  className="w-28 rounded border border-amber-300 px-2 py-1 text-sm focus:border-amber-500 focus:outline-none disabled:bg-gray-100"
+                  className="w-full rounded border border-gray-300 px-2 py-1 text-sm focus:border-blue-500 focus:outline-none disabled:bg-gray-100"
                 />
-                <span className="text-xs text-gray-500">
-                  Creates a Firestore prices/&#123;id&#125; doc valid from today.
+              </Field>
+              <Field label={`Cost price (${form.cost_currency || "SGD"})`} hint="Auto-converted to SGD downstream when needed.">
+                <div className="flex gap-1">
+                  <input
+                    type="number"
+                    min={0}
+                    step="0.01"
+                    value={form.cost_price}
+                    onChange={(e) => update("cost_price", e.target.value)}
+                    disabled={submitting}
+                    className="w-full rounded border border-gray-300 px-2 py-1 text-sm focus:border-blue-500 focus:outline-none disabled:bg-gray-100"
+                  />
+                  <select
+                    value={form.cost_currency}
+                    onChange={(e) => update("cost_currency", e.target.value)}
+                    disabled={submitting}
+                    className="rounded border border-gray-300 px-1 py-1 text-xs"
+                  >
+                    <option value="SGD">SGD</option>
+                    <option value="CNY">CNY</option>
+                    <option value="USD">USD</option>
+                  </select>
+                </div>
+              </Field>
+              <Field label="Notes">
+                <input
+                  type="text"
+                  value={form.notes}
+                  onChange={(e) => update("notes", e.target.value)}
+                  disabled={submitting}
+                  className="w-full rounded border border-gray-300 px-2 py-1 text-sm focus:border-blue-500 focus:outline-none disabled:bg-gray-100"
+                />
+              </Field>
+            </div>
+
+            {/* Description with AI assist */}
+            <div className="mt-4 rounded-md border border-gray-200 p-3">
+              <div className="mb-1 flex items-center justify-between">
+                <span className="text-sm font-semibold text-gray-800">
+                  Customer-facing copy *
                 </span>
+                <button
+                  type="button"
+                  onClick={draftDescriptionWithAi}
+                  disabled={submitting || aiBusy}
+                  className="rounded-md border border-purple-300 bg-purple-50 px-3 py-1 text-xs font-semibold text-purple-800 hover:bg-purple-100 disabled:opacity-60"
+                >
+                  {aiBusy ? "Drafting…" : "Draft with DeepSeek V3"}
+                </button>
+              </div>
+              <Field label="Short description" hint="Max 120 chars. Shown on labels and POS.">
+                <input
+                  type="text"
+                  value={form.description}
+                  onChange={(e) => update("description", e.target.value)}
+                  maxLength={120}
+                  disabled={submitting}
+                  className="w-full rounded border border-gray-300 px-2 py-1 text-sm focus:border-blue-500 focus:outline-none disabled:bg-gray-100"
+                />
+              </Field>
+              <div className="mt-2">
+                <Field label="Long description" hint="Optional. Used in product detail views.">
+                  <textarea
+                    value={form.long_description}
+                    onChange={(e) => update("long_description", e.target.value)}
+                    rows={3}
+                    disabled={submitting}
+                    className="w-full rounded border border-gray-300 px-2 py-1 text-sm focus:border-blue-500 focus:outline-none disabled:bg-gray-100"
+                  />
+                </Field>
+              </div>
+              {aiNote && (
+                <div className="mt-2 text-xs text-gray-600">{aiNote}</div>
+              )}
+            </div>
+
+            <div className="mt-4 rounded-md border border-gray-200 p-3">
+              <div className="mb-2 text-sm font-semibold text-gray-800">Product photos</div>
+              <label
+                className="flex cursor-pointer flex-col items-center justify-center rounded-md border border-dashed border-gray-300 bg-gray-50 px-3 py-4 text-center text-xs text-gray-600 hover:bg-gray-100"
+                onDragOver={(e) => e.preventDefault()}
+                onDrop={(e) => {
+                  e.preventDefault();
+                  const picked = Array.from(e.dataTransfer.files).filter((f) => f.type.startsWith("image/"));
+                  setImages((prev) => [...prev, ...picked].slice(0, 5));
+                }}
+              >
+                <input
+                  type="file"
+                  accept="image/jpeg,image/png,image/webp"
+                  multiple
+                  className="hidden"
+                  onChange={(e) => {
+                    const picked = Array.from(e.target.files || []).filter((f) => f.type.startsWith("image/"));
+                    setImages((prev) => [...prev, ...picked].slice(0, 5));
+                    e.currentTarget.value = "";
+                  }}
+                />
+                Drop 1-5 photos here, or choose files
+              </label>
+              {images.length > 0 && (
+                <div className="mt-2 flex flex-wrap gap-2">
+                  {images.map((file, idx) => (
+                    <div key={`${file.name}-${idx}`} className="flex items-center gap-2 rounded border border-gray-200 bg-white px-2 py-1 text-xs">
+                      <span className="max-w-[160px] truncate">{file.name}</span>
+                      <button
+                        type="button"
+                        onClick={() => setImages((prev) => prev.filter((_, i) => i !== idx))}
+                        className="text-gray-500 hover:text-red-700"
+                      >
+                        Remove
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            {/* Optional inline publish */}
+            <div className="mt-4 rounded-md border border-amber-200 bg-amber-50 p-3">
+              <label className="flex items-center gap-2 text-sm font-semibold text-amber-900">
+                <input
+                  type="checkbox"
+                  checked={form.publish_now}
+                  onChange={(e) => update("publish_now", e.target.checked)}
+                  disabled={submitting}
+                />
+                Publish a retail price to POS in the same step
+              </label>
+              {form.publish_now && (
+                <div className="mt-2 flex items-center gap-2 text-sm">
+                  <span className="text-gray-700">Retail (S$, GST-inclusive):</span>
+                  <input
+                    type="number"
+                    min={0}
+                    step="0.01"
+                    value={form.retail_price}
+                    onChange={(e) => update("retail_price", e.target.value)}
+                    disabled={submitting}
+                    className="w-28 rounded border border-amber-300 px-2 py-1 text-sm focus:border-amber-500 focus:outline-none disabled:bg-gray-100"
+                  />
+                  <span className="text-xs text-gray-500">
+                    Creates a Firestore prices/&#123;id&#125; doc valid from today.
+                  </span>
+                </div>
+              )}
+            </div>
+
+            {(localError || errorMessage) && (
+              <div className="mt-4 rounded-md border border-red-300 bg-red-50 p-2 text-sm text-red-800">
+                {localError || errorMessage}
               </div>
             )}
           </div>
 
-          {(localError || errorMessage) && (
-            <div className="mt-4 rounded-md border border-red-300 bg-red-50 p-2 text-sm text-red-800">
-              {localError || errorMessage}
-            </div>
+          {/* ── Supplier-catalog pane ──────────────────────────────────── */}
+          {requiresSupplier && (
+            <SupplierCatalogPane
+              suppliers={suppliers}
+              selectedSlug={form.supplier_slug}
+              onPickSupplier={pickSupplier}
+              onPickItem={applyCatalogPick}
+              disabled={submitting}
+            />
           )}
         </div>
+
         <footer className="flex items-center justify-between border-t border-gray-200 px-5 py-3">
           <div className="text-xs text-gray-500">
             SKU code &amp; barcode (PLU) are auto-allocated to keep them aligned.
@@ -1322,15 +1926,332 @@ function CreateProductModal({
             </button>
             <button
               onClick={submit}
-              disabled={submitting || !form.description.trim()}
+              disabled={submitting || !form.description.trim() || !form.sourcing_strategy}
               className="rounded-md bg-emerald-600 px-4 py-1.5 text-sm font-semibold text-white hover:bg-emerald-700 disabled:bg-gray-400"
             >
-              {submitting ? "Adding…" : form.publish_now ? "Add & publish to POS" : "Add SKU"}
+              {submitting ? "Adding…" : form.publish_now ? "Add inventory & publish to POS" : "Add inventory"}
             </button>
           </div>
         </footer>
       </div>
     </div>
+  );
+}
+
+/**
+ * Right-hand pane shown when the chosen sourcing strategy requires a supplier.
+ *
+ * Top: supplier picker (folders that have a `catalog_products.json` snapshot
+ * are clearly flagged "browseable"; the others can still be selected so staff
+ * aren't blocked when adding a SKU from a supplier that doesn't ship a price
+ * list).
+ *
+ * Bottom: catalog browser + inline "add new entry" form for the picked
+ * supplier — so the catalog grows naturally as staff discover new items
+ * during inventory creation.
+ */
+function SupplierCatalogPane({
+  suppliers,
+  selectedSlug,
+  onPickSupplier,
+  onPickItem,
+  disabled,
+}: {
+  suppliers: SupplierSummary[];
+  selectedSlug: string;
+  onPickSupplier: (slug: string) => void;
+  onPickItem: (item: SupplierCatalogProduct, supplier: SupplierSummary) => void;
+  disabled: boolean;
+}) {
+  const [query, setQuery] = useState("");
+  // Debounce keystrokes so we don't fire one /catalog request per character —
+  // typical staff query is 4-8 chars and they type fast.
+  const debouncedQuery = useDebouncedValue(query, 300);
+  const searching = query !== debouncedQuery;
+  const [items, setItems] = useState<SupplierCatalogProduct[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [showAdd, setShowAdd] = useState(false);
+  const [addForm, setAddForm] = useState({
+    supplier_item_code: "",
+    display_name: "",
+    materials: "",
+    size: "",
+    color: "",
+    unit_price_cny: "",
+  });
+  const [addBusy, setAddBusy] = useState(false);
+  const [addError, setAddError] = useState<string | null>(null);
+
+  const supplier = suppliers.find((s) => s.slug === selectedSlug) || null;
+
+  const refreshCatalog = useCallback(
+    async (slug: string, q: string) => {
+      if (!slug) {
+        setItems([]);
+        return;
+      }
+      setLoading(true);
+      setLoadError(null);
+      try {
+        const resp = await masterDataApi.getSupplierCatalog(slug, { query: q || undefined, limit: 50 });
+        setItems(resp.products);
+      } catch (err) {
+        setLoadError(err instanceof Error ? err.message : String(err));
+      } finally {
+        setLoading(false);
+      }
+    },
+    [],
+  );
+
+  useEffect(() => {
+    if (!selectedSlug) {
+      setItems([]);
+      return;
+    }
+    if (!supplier?.has_catalog) {
+      setItems([]);
+      return;
+    }
+    void refreshCatalog(selectedSlug, debouncedQuery);
+    // refreshCatalog identity is stable; debounced query / slug changes drive the call
+  }, [selectedSlug, debouncedQuery, supplier?.has_catalog, refreshCatalog]);
+
+  const submitAdd = async () => {
+    if (!selectedSlug) return;
+    setAddError(null);
+    if (!addForm.supplier_item_code.trim()) {
+      setAddError("Supplier item code is required.");
+      return;
+    }
+    setAddBusy(true);
+    try {
+      const cny = addForm.unit_price_cny.trim()
+        ? Number.parseFloat(addForm.unit_price_cny)
+        : null;
+      const newEntry = await masterDataApi.addSupplierCatalogEntry(selectedSlug, {
+        supplier_item_code: addForm.supplier_item_code.trim(),
+        display_name: addForm.display_name.trim() || null,
+        materials: addForm.materials.trim() || null,
+        size: addForm.size.trim() || null,
+        color: addForm.color.trim() || null,
+        unit_price_cny: cny !== null && Number.isFinite(cny) ? cny : null,
+      });
+      setShowAdd(false);
+      setAddForm({
+        supplier_item_code: "",
+        display_name: "",
+        materials: "",
+        size: "",
+        color: "",
+        unit_price_cny: "",
+      });
+      // Pull the newly added row to the top so the user can pick it
+      // immediately, and refresh the rest in case the listing changed.
+      if (supplier) {
+        onPickItem(newEntry, supplier);
+      }
+      await refreshCatalog(selectedSlug, "");
+      setQuery("");
+    } catch (err) {
+      setAddError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setAddBusy(false);
+    }
+  };
+
+  return (
+    <aside className="flex h-full flex-col border-l border-gray-200 bg-gray-50">
+      <div className="border-b border-gray-200 px-3 py-2">
+        <div className="text-xs font-semibold uppercase tracking-wide text-gray-500">
+          Supplier catalog
+        </div>
+        <select
+          value={selectedSlug}
+          onChange={(e) => onPickSupplier(e.target.value)}
+          disabled={disabled}
+          className="mt-1 w-full rounded border border-gray-300 px-2 py-1 text-sm"
+        >
+          <option value="">— Pick supplier —</option>
+          {suppliers.map((s) => (
+            <option key={s.slug} value={s.slug}>
+              {s.supplier_name}
+              {s.has_catalog ? ` (${s.product_count})` : " · no catalog yet"}
+            </option>
+          ))}
+        </select>
+      </div>
+
+      {!selectedSlug ? (
+        <div className="flex flex-1 items-center justify-center px-4 text-center text-xs text-gray-500">
+          Pick a supplier to browse their catalog or add a new entry.
+        </div>
+      ) : (
+        <>
+          <div className="border-b border-gray-200 px-3 py-2">
+            <div className="flex gap-1">
+              <input
+                type="search"
+                value={query}
+                onChange={(e) => setQuery(e.target.value)}
+                placeholder="Search code, model, material…"
+                disabled={disabled || !supplier?.has_catalog}
+                className="w-full rounded border border-gray-300 px-2 py-1 text-sm disabled:bg-gray-100"
+              />
+              <BarcodeScannerButton
+                disabled={disabled || !supplier?.has_catalog}
+                onDetected={(code) => setQuery(code)}
+                title="Scan barcode to search supplier catalog"
+              />
+            </div>
+            {searching && (
+              <div className="mt-1 text-[11px] text-gray-500">Searching…</div>
+            )}
+            {!supplier?.has_catalog && (
+              <div className="mt-1 text-[11px] text-gray-500">
+                No structured catalog yet — add the first entry below.
+              </div>
+            )}
+          </div>
+
+          <div className="flex-1 overflow-auto">
+            {loading && <div className="px-3 py-2 text-xs text-gray-500">Loading…</div>}
+            {loadError && (
+              <div className="m-2 rounded border border-red-300 bg-red-50 p-2 text-xs text-red-800">
+                {loadError}
+              </div>
+            )}
+            {!loading && items.length === 0 && supplier?.has_catalog && (
+              <div className="px-3 py-2 text-xs text-gray-500">
+                No matches. Try a different search or add a new entry.
+              </div>
+            )}
+            <ul className="divide-y divide-gray-200">
+              {items.map((item) => (
+                <li key={item.catalog_product_id || item.primary_supplier_item_code}>
+                  <button
+                    type="button"
+                    onClick={() => supplier && onPickItem(item, supplier)}
+                    disabled={disabled}
+                    className="block w-full px-3 py-2 text-left text-xs hover:bg-blue-50 disabled:opacity-60"
+                  >
+                    <div className="font-mono font-semibold text-gray-900">
+                      {item.primary_supplier_item_code || item.raw_model}
+                    </div>
+                    <div className="text-gray-700">
+                      {item.display_name || item.materials || "—"}
+                    </div>
+                    <div className="text-gray-500">
+                      {item.size || ""}{item.size && item.color ? " · " : ""}{item.color || ""}
+                      {item.price_options_cny && item.price_options_cny.length > 0
+                        ? ` · ¥${item.price_options_cny[0]}`
+                        : ""}
+                    </div>
+                  </button>
+                </li>
+              ))}
+            </ul>
+          </div>
+
+          <div className="border-t border-gray-200 bg-white px-3 py-2">
+            {!showAdd ? (
+              <button
+                type="button"
+                onClick={() => setShowAdd(true)}
+                disabled={disabled}
+                className="w-full rounded-md border border-dashed border-blue-300 px-2 py-1.5 text-xs font-semibold text-blue-700 hover:bg-blue-50 disabled:opacity-60"
+              >
+                + Add this item to {supplier?.supplier_name || "supplier"} catalog
+              </button>
+            ) : (
+              <div className="space-y-1">
+                <div className="text-xs font-semibold text-gray-800">
+                  New catalog entry
+                </div>
+                <input
+                  type="text"
+                  placeholder="Supplier item code *"
+                  value={addForm.supplier_item_code}
+                  onChange={(e) => setAddForm((f) => ({ ...f, supplier_item_code: e.target.value }))}
+                  disabled={addBusy}
+                  className="w-full rounded border border-gray-300 px-2 py-1 text-xs font-mono"
+                />
+                <input
+                  type="text"
+                  placeholder="Display name"
+                  value={addForm.display_name}
+                  onChange={(e) => setAddForm((f) => ({ ...f, display_name: e.target.value }))}
+                  disabled={addBusy}
+                  className="w-full rounded border border-gray-300 px-2 py-1 text-xs"
+                />
+                <div className="flex gap-1">
+                  <input
+                    type="text"
+                    placeholder="Materials"
+                    value={addForm.materials}
+                    onChange={(e) => setAddForm((f) => ({ ...f, materials: e.target.value }))}
+                    disabled={addBusy}
+                    className="w-full rounded border border-gray-300 px-2 py-1 text-xs"
+                  />
+                  <input
+                    type="text"
+                    placeholder="Size"
+                    value={addForm.size}
+                    onChange={(e) => setAddForm((f) => ({ ...f, size: e.target.value }))}
+                    disabled={addBusy}
+                    className="w-full rounded border border-gray-300 px-2 py-1 text-xs"
+                  />
+                </div>
+                <div className="flex gap-1">
+                  <input
+                    type="text"
+                    placeholder="Color"
+                    value={addForm.color}
+                    onChange={(e) => setAddForm((f) => ({ ...f, color: e.target.value }))}
+                    disabled={addBusy}
+                    className="w-full rounded border border-gray-300 px-2 py-1 text-xs"
+                  />
+                  <input
+                    type="number"
+                    min={0}
+                    step="0.01"
+                    placeholder="¥ unit price"
+                    value={addForm.unit_price_cny}
+                    onChange={(e) => setAddForm((f) => ({ ...f, unit_price_cny: e.target.value }))}
+                    disabled={addBusy}
+                    className="w-full rounded border border-gray-300 px-2 py-1 text-xs"
+                  />
+                </div>
+                {addError && (
+                  <div className="rounded border border-red-300 bg-red-50 p-1 text-[11px] text-red-800">
+                    {addError}
+                  </div>
+                )}
+                <div className="flex gap-1">
+                  <button
+                    type="button"
+                    onClick={() => setShowAdd(false)}
+                    disabled={addBusy}
+                    className="flex-1 rounded border border-gray-300 px-2 py-1 text-xs hover:bg-gray-100"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="button"
+                    onClick={submitAdd}
+                    disabled={addBusy}
+                    className="flex-1 rounded bg-blue-600 px-2 py-1 text-xs font-semibold text-white hover:bg-blue-700 disabled:bg-gray-400"
+                  >
+                    {addBusy ? "Saving…" : "Add to catalog"}
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
+        </>
+      )}
+    </aside>
   );
 }
 

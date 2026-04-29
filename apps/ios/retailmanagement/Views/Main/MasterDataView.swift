@@ -35,6 +35,7 @@ struct MasterDataView: View {
         NavigationStack {
             ScrollView {
                 VStack(alignment: .leading, spacing: 16) {
+                    if canEdit { NecStatusCard() }
                     if canEdit { headerActions }
                     if let err = vm.globalError { errorCard(err) }
                     if let stats = vm.stats { statsRow(stats) }
