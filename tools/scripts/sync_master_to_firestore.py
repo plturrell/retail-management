@@ -208,18 +208,15 @@ def build_sku_doc(p: dict[str, Any], *, sku_id: str, store_id: str, brand_id: st
 
 
 
-def placeholder_retail(cost: float | None) -> float | None:
-    """cost x 3, rounded down to .99 — placeholder for POS scan testing only."""
-    if cost is None:
-        return None
-    raw = float(cost) * 3.0
-    return float(int(raw) - 1) + 0.99 if raw >= 2 else 1.99
-
-
 def build_price_doc(p: dict[str, Any], *, sku_id: str, store_id: str) -> dict[str, Any] | None:
+    """Return a price doc only when retail_price is real.
+
+    Synthetic / cost-derived placeholders are NOT written to Firestore — SKUs
+    without a confirmed retail_price are surfaced via the data-quality
+    exceptions queue so staff can correct them manually before they go live
+    at POS.
+    """
     retail = p.get("retail_price")
-    if retail is None:
-        retail = placeholder_retail(p.get("cost_price"))
     if retail is None:
         return None
     now = datetime.now(timezone.utc)
@@ -233,7 +230,7 @@ def build_price_doc(p: dict[str, Any], *, sku_id: str, store_id: str) -> dict[st
         "price_unit": 1,
         "valid_from": today.isoformat(),
         "valid_to": date(today.year + 5, 12, 31).isoformat(),
-        "source": "master_sync_placeholder" if p.get("retail_price") is None else "master_sync",
+        "source": "master_sync",
         "created_at": now,
         "updated_at": now,
     }
@@ -373,6 +370,7 @@ def main() -> None:
 
     print(f"{'plu_code':14s}  {'sku_code':18s}  {'action':8s}  {'price':5s}  description")
     print("-" * 100)
+    exceptions: list[dict[str, Any]] = []
     for p in targets:
         result = sync_one(
             p,
@@ -387,10 +385,52 @@ def main() -> None:
             f"{(p.get('description') or '')[:50]}"
         )
 
+        # Build exception record for SKUs missing data required for go-live.
+        missing = [
+            field for field in ("retail_price", "cost_price", "category", "description")
+            if p.get(field) in (None, "")
+        ]
+        if missing or (args.with_prices and result["wrote_price"] != "yes"):
+            exceptions.append({
+                "plu_code": result["plu_code"],
+                "sku_code": result["sku_code"],
+                "sku_id": result["sku_id"],
+                "missing": missing,
+                "wrote_price": result["wrote_price"],
+                "description": (p.get("description") or "")[:80],
+            })
+
     if not args.apply:
         print("\n(dry-run — no Firestore writes. Re-run with --apply to persist.)")
     else:
         print(f"\nSynced {len(targets)} PLU(s) to Firestore.")
+
+    # ── Manual-exception report ─────────────────────────────────────────────
+    if exceptions:
+        report_path = REPO_ROOT / "data" / "exports" / "master_sync_exceptions.json"
+        report_path.parent.mkdir(parents=True, exist_ok=True)
+        report_path.write_text(json.dumps({
+            "generated_at": datetime.now(timezone.utc).isoformat(),
+            "store_code": args.store_code,
+            "applied": args.apply,
+            "count": len(exceptions),
+            "items": exceptions,
+        }, indent=2))
+        print(
+            f"\nMANUAL EXCEPTIONS: {len(exceptions)} SKU(s) require manual correction "
+            f"before they are sellable. Report → {report_path.relative_to(REPO_ROOT)}"
+        )
+        # Show the first few to make it impossible to miss in CI logs.
+        for ex in exceptions[:10]:
+            print(
+                f"  - {ex['plu_code']}  {ex['sku_code']:18s}  "
+                f"missing={ex['missing'] or ['(price not written)']}  "
+                f"{ex['description']}"
+            )
+        if len(exceptions) > 10:
+            print(f"  … and {len(exceptions) - 10} more (see report).")
+    else:
+        print("\nNo data-quality exceptions detected for the synced subset.")
 
 
 if __name__ == "__main__":

@@ -91,6 +91,17 @@ def _validate_product(p: dict) -> list[dict]:
     if p.get("cost_price") is None:
         issues.append({"field": "cost_price", "severity": "warning", "message": "No cost price"})
 
+    # Retail price is required for any item that's marked sale_ready or is being
+    # synced to POS. Without it, the SKU can't be priced at the till.
+    if p.get("retail_price") is None and (p.get("sale_ready") or p.get("nec_plu")):
+        issues.append({"field": "retail_price", "severity": "error", "message": "No retail price — blocks POS pricing"})
+    elif p.get("retail_price") is None:
+        issues.append({"field": "retail_price", "severity": "warning", "message": "No retail price set"})
+
+    # On-hand quantity required for any stocked item.
+    if p.get("qty_on_hand") is None and p.get("stocking_status") not in ("not_stocked", None, ""):
+        issues.append({"field": "qty_on_hand", "severity": "error", "message": "On-hand quantity unknown — blocks inventory accuracy"})
+
     if not p.get("sku_code"):
         issues.append({"field": "sku_code", "severity": "error", "message": "Missing SKU code"})
 
@@ -210,6 +221,78 @@ async def get_quality_summary(
         "by_stocking_status": dict(Counter(p.get("stocking_status", "") for p in products).most_common()),
         "by_product_type": dict(Counter(p.get("product_type", "") for p in products).most_common()),
         "sale_ready_count": sum(1 for p in products if p.get("sale_ready")),
+    }
+
+
+@router.get("/exceptions")
+async def get_exceptions_queue(
+    severity: str | None = Query(None, description="Filter by severity: error|warning"),
+    field: str | None = Query(None, description="Filter to a single field (e.g. retail_price)"),
+    _: dict = Depends(require_any_store_role(RoleEnum.manager)),
+) -> dict[str, Any]:
+    """Manual-correction queue.
+
+    Flattens the master product list into one row per (SKU, issue) pair so the
+    staff portal can present a single actionable worklist of every product that
+    needs human attention before it is sellable. This is the canonical "perfect
+    quality" gate before going live: nothing reaches POS until its row leaves
+    this queue.
+    """
+    if not _MASTER_LIST_PATH.exists():
+        raise HTTPException(status_code=404, detail="Master product list not found.")
+
+    data = json.loads(_MASTER_LIST_PATH.read_text())
+    products = data.get("products", [])
+
+    rows: list[dict[str, Any]] = []
+    by_field: Counter[str] = Counter()
+    by_severity: Counter[str] = Counter()
+    affected_skus: set[str] = set()
+
+    for p in products:
+        issues = _validate_product(p)
+        if not issues:
+            continue
+        for iss in issues:
+            if severity and iss["severity"] != severity:
+                continue
+            if field and iss["field"] != field:
+                continue
+            by_field[iss["field"]] += 1
+            by_severity[iss["severity"]] += 1
+            affected_skus.add(p.get("id") or p.get("sku_code") or "")
+            rows.append({
+                "product_id": p.get("id"),
+                "sku_code": p.get("sku_code"),
+                "nec_plu": p.get("nec_plu"),
+                "description": (p.get("description") or "")[:120],
+                "product_type": p.get("product_type"),
+                "inventory_category": p.get("inventory_category"),
+                "stocking_status": p.get("stocking_status"),
+                "stocking_location": p.get("stocking_location"),
+                "retail_price": p.get("retail_price"),
+                "cost_price": p.get("cost_price"),
+                "qty_on_hand": p.get("qty_on_hand"),
+                "sale_ready": bool(p.get("sale_ready")),
+                "block_sales": bool(p.get("block_sales")),
+                # Issue specifics
+                "field": iss["field"],
+                "severity": iss["severity"],
+                "message": iss["message"],
+            })
+
+    # Sort: errors before warnings, then by field (so retail_price clusters together)
+    rows.sort(key=lambda r: (0 if r["severity"] == "error" else 1, r["field"], r["sku_code"] or ""))
+
+    return {
+        "generated_at": data.get("generated_at"),
+        "total_products": len(products),
+        "exception_count": len(rows),
+        "affected_sku_count": len(affected_skus),
+        "by_field": dict(by_field.most_common()),
+        "by_severity": dict(by_severity),
+        "filters_applied": {"severity": severity, "field": field},
+        "rows": rows,
     }
 
 
