@@ -1,0 +1,133 @@
+{
+  "generated_at": "2026-04-24T18:31:01",
+  "location": {
+    "name": "Warehouse / Back-of-House",
+    "store_id_hint": "warehouse-01",
+    "description": "Warehouse storage for unallocated, incoming, and material stock"
+  },
+  "total_skus": 6,
+  "summary": {
+    "sale_ready": 1,
+    "blocked": 5,
+    "in_stock": 0,
+    "to_order": 6,
+    "by_inventory_category": {
+      "material": 5,
+      "catalog_to_stock": 1
+    },
+    "by_type": {
+      "Gemstone Bead": 5,
+      "Loose Gemstone": 1
+    }
+  },
+  "skus": [
+    {
+      "sku_code": "VELGMRATT0000060",
+      "nec_plu": "2000000000602",
+      "description": "sculptural form made of rattan ",
+      "material": "Rattan",
+      "product_type": "Loose Gemstone",
+      "inventory_type": "purchased",
+      "sourcing_strategy": "supplier_premade",
+      "inventory_category": "catalog_to_stock",
+      "sale_ready": true,
+      "block_sales": false,
+      "use_stock": true,
+      "cost_price": null,
+      "qty_on_hand": null,
+      "internal_code": "A392",
+      "amazon_sku": "VE-RATTAN-LOOS-A392",
+      "google_product_id": "online:en:SG:VELGMRATT0000060"
+    },
+    {
+      "sku_code": "VEGBDJADE0000356",
+      "nec_plu": "2000000003566",
+      "description": "(H) Jade Beads Only",
+      "material": "Jade",
+      "product_type": "Gemstone Bead",
+      "inventory_type": "material",
+      "sourcing_strategy": "supplier_premade",
+      "inventory_category": "material",
+      "sale_ready": false,
+      "block_sales": true,
+      "use_stock": true,
+      "cost_price": 50.0,
+      "qty_on_hand": null,
+      "internal_code": "",
+      "amazon_sku": "VE-JADE-GEMS-29E3AB",
+      "google_product_id": "online:en:SG:VEGBDJADE0000356"
+    },
+    {
+      "sku_code": "VEGBDXXXX0000248",
+      "nec_plu": "2000000002484",
+      "description": "6. Beads",
+      "material": "",
+      "product_type": "Gemstone Bead",
+      "inventory_type": "material",
+      "sourcing_strategy": "supplier_premade",
+      "inventory_category": "material",
+      "sale_ready": false,
+      "block_sales": true,
+      "use_stock": true,
+      "cost_price": 53.2,
+      "qty_on_hand": null,
+      "internal_code": "",
+      "amazon_sku": "VE--GEMS-1E2692",
+      "google_product_id": "online:en:SG:VEGBDXXXX0000248"
+    },
+    {
+      "sku_code": "VEGBDXXXX0000302",
+      "nec_plu": "2000000003023",
+      "description": "Black Tourmuhe Beads of",
+      "material": "",
+      "product_type": "Gemstone Bead",
+      "inventory_type": "material",
+      "sourcing_strategy": "supplier_premade",
+      "inventory_category": "material",
+      "sale_ready": false,
+      "block_sales": true,
+      "use_stock": true,
+      "cost_price": 20.0,
+      "qty_on_hand": null,
+      "internal_code": "",
+      "amazon_sku": "VE--GEMS-FE2611",
+      "google_product_id": "online:en:SG:VEGBDXXXX0000302"
+    },
+    {
+      "sku_code": "VEGBDXXXX0000436",
+      "nec_plu": "2000000004365",
+      "description": "Restry & Beads",
+      "material": "",
+      "product_type": "Gemstone Bead",
+      "inventory_type": "material",
+      "sourcing_strategy": "supplier_premade",
+      "inventory_category": "material",
+      "sale_ready": false,
+      "block_sales": true,
+      "use_stock": true,
+      "cost_price": 80.0,
+      "qty_on_hand": null,
+      "internal_code": "",
+      "amazon_sku": "VE--GEMS-20DE5A",
+      "google_product_id": "online:en:SG:VEGBDXXXX0000436"
+    },
+    {
+      "sku_code": "VEGBDTURQ0000485",
+      "nec_plu": "2000000004853",
+      "description": "Turquoise bead",
+      "material": "Turquoise",
+      "product_type": "Gemstone Bead",
+      "inventory_type": "material",
+      "sourcing_strategy": "supplier_premade",
+      "inventory_category": "material",
+      "sale_ready": false,
+      "block_sales": true,
+      "use_stock": true,
+      "cost_price": 454.0,
+      "qty_on_hand": null,
+      "internal_code": "",
+      "amazon_sku": "VE-TURQUOISE-GEMS-6A436F",
+      "google_product_id": "online:en:SG:VEGBDTURQ0000485"
+    }
+  ]
+}

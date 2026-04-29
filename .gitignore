@@ -78,3 +78,6 @@ firebase-debug.log
 victoriaenso/
 .gradle/
 google-services.json
+
+# ─── Brand assets too large for github (>100MB; keep in cloud storage) ──
+Iriana-Revised/High Res/Irina Jewellery - 200.jpg

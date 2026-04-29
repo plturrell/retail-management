@@ -1,0 +1,150 @@
+{
+  "meta": {
+    "created_at": "2026-04-16T10:51:26",
+    "updated_at": "2026-04-26T12:32:06",
+    "total_records": 5,
+    "total_processed": 5
+  },
+  "records": [
+    {
+      "id": "c94b7215e2fc5394",
+      "source_path": "docs/suppliers/china_suppliers/Adobe Scan 15 Apr 2026 (1).pdf",
+      "source_path_absolute": "/Users/victoriaenso/Documents/GitHub/retailmanagement/docs/suppliers/china_suppliers/Adobe Scan 15 Apr 2026 (1).pdf",
+      "filename": "Adobe Scan 15 Apr 2026 (1).pdf",
+      "file_size_bytes": 618592,
+      "sha256": "376aa906fd9740c699954e884b4c482565ff69f24bd0dfe71ff39e93cd28f62a",
+      "pipeline": "supplier_ocr",
+      "supplier": "China Suppliers",
+      "document_type": "supplier_document",
+      "status": "processed",
+      "started_at": "2026-04-16T10:51:26",
+      "finished_at": "2026-04-26T12:28:23",
+      "attempt_count": 3,
+      "pages_processed": 1,
+      "items_extracted": 13,
+      "output_paths": [
+        "data/ocr_outputs/supplier_docs/Adobe_Scan_15_Apr_2026_1.json"
+      ],
+      "notes": "type=inventory_list, total=5084.0, supplier=None",
+      "errors": [
+        {
+          "time": "2026-04-26T12:25:34",
+          "message": "Error code: 400 - {'error': {'message': 'Failed to deserialize the JSON body into the target type: messages[0]: unknown variant `image_url`, expected `text` at line 1 column 874551', 'type': 'invalid_request_error', 'param': None, 'code': 'invalid_request_error'}}"
+        }
+      ],
+      "last_attempt_at": "2026-04-26T12:26:55"
+    },
+    {
+      "id": "bcd96e5cc10bac11",
+      "source_path": "docs/suppliers/china_suppliers/Adobe Scan 15 Apr 2026 (2).pdf",
+      "source_path_absolute": "/Users/victoriaenso/Documents/GitHub/retailmanagement/docs/suppliers/china_suppliers/Adobe Scan 15 Apr 2026 (2).pdf",
+      "filename": "Adobe Scan 15 Apr 2026 (2).pdf",
+      "file_size_bytes": 248882,
+      "sha256": "8d690fba03cf47dd2ba43ed93f7ff0ccb82eb0756e470252f041aa4125f2ba06",
+      "pipeline": "supplier_ocr",
+      "supplier": "China Suppliers",
+      "document_type": "supplier_document",
+      "status": "processed",
+      "started_at": "2026-04-16T10:51:56",
+      "finished_at": "2026-04-26T12:30:09",
+      "attempt_count": 3,
+      "pages_processed": 1,
+      "items_extracted": 2,
+      "output_paths": [
+        "data/ocr_outputs/supplier_docs/Adobe_Scan_15_Apr_2026_2.json"
+      ],
+      "notes": "type=invoice, total=1200.0, supplier=Donghai County Baofeng Crystal Products Co., Ltd.",
+      "errors": [
+        {
+          "time": "2026-04-26T12:25:52",
+          "message": "Error code: 400 - {'error': {'message': 'Failed to deserialize the JSON body into the target type: messages[0]: unknown variant `image_url`, expected `text` at line 1 column 390045', 'type': 'invalid_request_error', 'param': None, 'code': 'invalid_request_error'}}"
+        }
+      ],
+      "last_attempt_at": "2026-04-26T12:28:25"
+    },
+    {
+      "id": "a509fa6b9dd5fe71",
+      "source_path": "docs/suppliers/china_suppliers/Adobe Scan 15 Apr 2026.pdf",
+      "source_path_absolute": "/Users/victoriaenso/Documents/GitHub/retailmanagement/docs/suppliers/china_suppliers/Adobe Scan 15 Apr 2026.pdf",
+      "filename": "Adobe Scan 15 Apr 2026.pdf",
+      "file_size_bytes": 276082,
+      "sha256": "e49405b7f4cefce0dcbc778699ecde7a2e09fefe2c8bdfa0a22a3ad8a9b1ae17",
+      "pipeline": "supplier_ocr",
+      "supplier": "China Suppliers",
+      "document_type": "supplier_document",
+      "status": "processed",
+      "started_at": "2026-04-16T10:52:14",
+      "finished_at": "2026-04-26T12:32:04",
+      "attempt_count": 3,
+      "pages_processed": 1,
+      "items_extracted": 2,
+      "output_paths": [
+        "data/ocr_outputs/supplier_docs/Adobe_Scan_15_Apr_2026.json"
+      ],
+      "notes": "type=invoice, total=1200.0, supplier=Donghai County Baofeng Crystal Products Co., Ltd.",
+      "errors": [
+        {
+          "time": "2026-04-26T12:26:09",
+          "message": "Error code: 400 - {'error': {'message': 'Failed to deserialize the JSON body into the target type: messages[0]: unknown variant `image_url`, expected `text` at line 1 column 533113', 'type': 'invalid_request_error', 'param': None, 'code': 'invalid_request_error'}}"
+        }
+      ],
+      "last_attempt_at": "2026-04-26T12:30:11"
+    },
+    {
+      "id": "24d4480a0687eb72",
+      "source_path": "docs/suppliers/china_suppliers/PHOTO-2026-04-16-10-34-54.jpg",
+      "source_path_absolute": "/Users/victoriaenso/Documents/GitHub/retailmanagement/docs/suppliers/china_suppliers/PHOTO-2026-04-16-10-34-54.jpg",
+      "filename": "PHOTO-2026-04-16-10-34-54.jpg",
+      "file_size_bytes": 142531,
+      "sha256": "0b80fbc879c4289ca05bc496b5c10b8077c506c99e4bcd1b763c4762cba4d22c",
+      "pipeline": "supplier_ocr",
+      "supplier": "China Suppliers",
+      "document_type": "supplier_document",
+      "status": "processed",
+      "started_at": "2026-04-16T10:52:40",
+      "finished_at": "2026-04-26T12:32:06",
+      "attempt_count": 3,
+      "pages_processed": 1,
+      "items_extracted": 0,
+      "output_paths": [
+        "data/ocr_outputs/supplier_docs/PHOTO-2026-04-16-10-34-54.json"
+      ],
+      "notes": "type=unknown, total=None, supplier=",
+      "errors": [
+        {
+          "time": "2026-04-26T12:26:26",
+          "message": "Error code: 400 - {'error': {'message': 'Failed to deserialize the JSON body into the target type: messages[0]: unknown variant `image_url`, expected `text` at line 1 column 292344', 'type': 'invalid_request_error', 'param': None, 'code': 'invalid_request_error'}}"
+        }
+      ],
+      "last_attempt_at": "2026-04-26T12:32:06"
+    },
+    {
+      "id": "0ad7b55f1e8c3c34",
+      "source_path": "docs/suppliers/china_suppliers/121.JPG",
+      "source_path_absolute": "/Users/victoriaenso/Documents/GitHub/retailmanagement/docs/suppliers/china_suppliers/121.JPG",
+      "filename": "121.JPG",
+      "file_size_bytes": 223601,
+      "sha256": "094ee5443e2897acf74709928ce52a06bdcab0ccaea17fa32d9b76096d9332f9",
+      "pipeline": "supplier_ocr",
+      "supplier": "China Suppliers",
+      "document_type": "supplier_document",
+      "status": "processed",
+      "started_at": "2026-04-16T11:02:50",
+      "finished_at": "2026-04-26T12:26:53",
+      "attempt_count": 4,
+      "pages_processed": 1,
+      "items_extracted": 0,
+      "output_paths": [
+        "data/ocr_outputs/supplier_docs/121.json"
+      ],
+      "notes": "type=unknown, total=None, supplier=",
+      "errors": [
+        {
+          "time": "2026-04-26T12:25:15",
+          "message": "Error code: 400 - {'error': {'message': 'Failed to deserialize the JSON body into the target type: messages[0]: unknown variant `image_url`, expected `text` at line 1 column 395890', 'type': 'invalid_request_error', 'param': None, 'code': 'invalid_request_error'}}"
+        }
+      ],
+      "last_attempt_at": "2026-04-26T12:26:53"
+    }
+  ]
+}
