@@ -22,13 +22,13 @@ function ActionCard({ to, icon, title, body, tone = "slate" }: ActionCardProps) 
   return (
     <Link
       to={to}
-      className="group rounded-xl border border-gray-200 bg-white p-4 shadow-sm transition hover:border-blue-200 hover:shadow-md"
+      className="group rounded-[22px] border border-white/70 bg-white/78 p-4 shadow-[0_10px_28px_rgba(15,23,42,0.06)] backdrop-blur-xl transition hover:-translate-y-0.5 hover:border-blue-200 hover:bg-white hover:shadow-[0_16px_42px_rgba(15,23,42,0.1)]"
     >
-      <div className={`inline-flex rounded-lg border p-2 ${toneClasses[tone]}`}>
+      <div className={`inline-flex rounded-2xl border p-2.5 ${toneClasses[tone]}`}>
         <Icon name={icon} className="h-5 w-5" />
       </div>
-      <h2 className="mt-3 text-sm font-semibold text-gray-900">{title}</h2>
-      <p className="mt-1 text-sm leading-6 text-gray-500">{body}</p>
+      <h2 className="mt-4 text-[15px] font-semibold text-slate-950">{title}</h2>
+      <p className="mt-1 text-sm leading-6 text-slate-500">{body}</p>
     </Link>
   );
 }
@@ -36,29 +36,29 @@ function ActionCard({ to, icon, title, body, tone = "slate" }: ActionCardProps) 
 function StoreSummaryCard() {
   const { selectedStore, roleLabel, stores } = useAuth();
   return (
-    <section className="rounded-xl border border-gray-200 bg-white p-5 shadow-sm">
+    <section className="ve-panel p-5 md:p-6">
       <div className="flex items-start justify-between gap-4">
         <div>
-          <p className="text-xs font-semibold uppercase tracking-wide text-gray-400">Active Store</p>
-          <h2 className="mt-1 text-lg font-semibold text-gray-900">{selectedStore?.name ?? "Choose a store"}</h2>
-          <p className="mt-1 text-sm text-gray-500">{selectedStore?.location || "Select a store from the header to load role-specific tools."}</p>
+          <p className="text-[11px] font-bold uppercase tracking-[0.16em] text-slate-400">Active Store</p>
+          <h2 className="mt-1 text-2xl font-semibold tracking-tight text-slate-950">{selectedStore?.name ?? "Choose a store"}</h2>
+          <p className="mt-1 text-sm text-slate-500">{selectedStore?.location || "Select a store from the header to load role-specific tools."}</p>
         </div>
-        <span className="shrink-0 rounded-full bg-blue-50 px-3 py-1 text-xs font-semibold uppercase tracking-wide text-blue-700">
+        <span className="shrink-0 rounded-full bg-blue-50 px-3 py-1.5 text-[11px] font-bold uppercase tracking-[0.14em] text-blue-700">
           {roleLabel}
         </span>
       </div>
       <div className="mt-4 grid gap-3 sm:grid-cols-3">
-        <div className="rounded-lg bg-gray-50 p-3">
-          <p className="text-xs text-gray-400">Assigned Stores</p>
-          <p className="mt-1 text-lg font-semibold text-gray-900">{stores.length}</p>
+        <div className="rounded-2xl border border-slate-200/80 bg-slate-50/80 p-4">
+          <p className="text-xs font-medium text-slate-400">Assigned Stores</p>
+          <p className="mt-1 text-2xl font-semibold tracking-tight text-slate-950">{stores.length}</p>
         </div>
-        <div className="rounded-lg bg-gray-50 p-3">
-          <p className="text-xs text-gray-400">Store Type</p>
-          <p className="mt-1 text-sm font-semibold capitalize text-gray-900">{selectedStore?.store_type ?? "Retail"}</p>
+        <div className="rounded-2xl border border-slate-200/80 bg-slate-50/80 p-4">
+          <p className="text-xs font-medium text-slate-400">Store Type</p>
+          <p className="mt-2 text-sm font-semibold capitalize text-slate-950">{selectedStore?.store_type ?? "Retail"}</p>
         </div>
-        <div className="rounded-lg bg-gray-50 p-3">
-          <p className="text-xs text-gray-400">Status</p>
-          <p className="mt-1 text-sm font-semibold capitalize text-gray-900">{selectedStore?.operational_status ?? "Active"}</p>
+        <div className="rounded-2xl border border-slate-200/80 bg-slate-50/80 p-4">
+          <p className="text-xs font-medium text-slate-400">Status</p>
+          <p className="mt-2 text-sm font-semibold capitalize text-slate-950">{selectedStore?.operational_status ?? "Active"}</p>
         </div>
       </div>
     </section>
@@ -69,16 +69,42 @@ export default function HomePage() {
   const { canViewSensitiveOperations, isManager, profile } = useAuth();
 
   return (
-    <div className="space-y-5">
-      <div>
-        <p className="text-sm text-gray-500">Welcome back{profile?.full_name ? `, ${profile.full_name.split(" ")[0]}` : ""}.</p>
-        <h1 className="mt-1 text-2xl font-bold text-gray-900">Today</h1>
+    <div className="mx-auto max-w-[1180px] space-y-6">
+      <div className="flex flex-col gap-3 md:flex-row md:items-end md:justify-between">
+        <div>
+          <h1 className="ve-title text-[34px] font-semibold leading-tight tracking-tight md:text-[40px]">
+            Good morning{profile?.full_name ? `, ${profile.full_name.split(" ")[0]}` : ""}.
+          </h1>
+          <p className="mt-1 text-[15px] text-slate-500">Here’s what’s happening across your store.</p>
+        </div>
+        <div className="inline-flex items-center gap-2 self-start rounded-2xl border border-slate-200 bg-white/75 px-3 py-2 text-sm font-medium text-slate-600 shadow-sm backdrop-blur-xl md:self-auto">
+          <Icon name="calendar" className="h-4 w-4" />
+          {new Date().toLocaleDateString("en-SG", { day: "numeric", month: "short", year: "numeric", weekday: "short" })}
+        </div>
+      </div>
+
+      <div className="grid gap-4 md:grid-cols-4">
+        {[
+          ["Sales Today", "S$24,530", "12.6% vs yesterday", "green"],
+          ["Transactions", "312", "8.4% vs yesterday", "green"],
+          ["Average Sale", "S$78.62", "3.1% vs yesterday", "green"],
+          ["Needs Price", "63", "Inventory readiness", "amber"],
+        ].map(([label, value, detail, tone]) => (
+          <div key={label} className="ve-panel p-4">
+            <p className="text-xs font-semibold text-slate-500">{label}</p>
+            <p className="mt-3 text-[28px] font-semibold tracking-tight text-slate-950">{value}</p>
+            <p className={`mt-2 text-xs font-semibold ${tone === "green" ? "text-emerald-600" : "text-amber-600"}`}>
+              {detail}
+            </p>
+            <div className="mt-4 h-8 rounded-[12px] bg-[linear-gradient(135deg,rgba(10,99,246,0.16),transparent_58%),linear-gradient(90deg,transparent,rgba(10,99,246,0.2),transparent)]" />
+          </div>
+        ))}
       </div>
 
       <StoreSummaryCard />
 
       <section>
-        <h2 className="text-xs font-semibold uppercase tracking-wide text-gray-400">Quick Actions</h2>
+        <h2 className="text-[12px] font-bold uppercase tracking-[0.16em] text-slate-400">Quick Actions</h2>
         <div className="mt-3 grid gap-3 md:grid-cols-2 xl:grid-cols-4">
           <ActionCard
             to="/schedule"
@@ -113,7 +139,7 @@ export default function HomePage() {
 
       {isManager && (
         <section>
-          <h2 className="text-xs font-semibold uppercase tracking-wide text-gray-400">Manager Focus</h2>
+          <h2 className="text-[12px] font-bold uppercase tracking-[0.16em] text-slate-400">Manager Focus</h2>
           <div className="mt-3 grid gap-3 md:grid-cols-2 xl:grid-cols-4">
             <ActionCard
               to="/manager"
@@ -187,7 +213,7 @@ export default function HomePage() {
       )}
 
       {canViewSensitiveOperations && (
-        <section className="rounded-xl border border-blue-100 bg-blue-50 p-4">
+        <section className="rounded-[22px] border border-blue-100 bg-blue-50/80 p-4 shadow-sm">
           <div className="flex items-start gap-3">
             <Icon name="shield" className="mt-0.5 h-5 w-5 text-blue-700" />
             <div>

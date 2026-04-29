@@ -21,9 +21,9 @@ struct CommissionView: View {
         NavigationStack {
             Group {
                 if vm.isLoading {
-                    ProgressView("Loading commission\u2026")
+                    ProgressView("Loading commission\u{2026}")
                 } else if let err = vm.errorMessage {
-                    ContentUnavailableView("Couldn\u2019t load commission",
+                    ContentUnavailableView("Couldn\u{2019}t load commission",
                                            systemImage: "exclamationmark.triangle",
                                            description: Text(err))
                 } else if vm.months.isEmpty && vm.rules.isEmpty {
@@ -31,7 +31,7 @@ struct CommissionView: View {
                                            systemImage: "percent",
                                            description: Text("Once your store posts a payroll run, your sales and commission appear here."))
                 } else {
-                    body(.padding)
+                    commissionContent
                 }
             }
             .navigationTitle("Commission")
@@ -40,7 +40,7 @@ struct CommissionView: View {
         }
     }
 
-    private func body(_ pad: Edge.Set) -> some View {
+    private var commissionContent: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 20) {
                 summaryCard
@@ -123,7 +123,7 @@ struct CommissionView: View {
 
     private func tierBoundary(_ tier: CommissionTier) -> String {
         if let max = tier.max {
-            return "\(currency(tier.min)) \u2013 \(currency(max))"
+            return "\(currency(tier.min)) \u{2013} \(currency(max))"
         }
         return "\(currency(tier.min)) +"
     }

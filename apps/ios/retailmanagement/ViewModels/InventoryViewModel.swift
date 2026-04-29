@@ -657,8 +657,6 @@ private struct SimpleNoteBody: Encodable {
     let note: String
 }
 
-private struct EmptyBody: Encodable {}
-
 private struct SupplierBody: Encodable {
     let name: String
     let contactName: String?

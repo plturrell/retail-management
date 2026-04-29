@@ -53,6 +53,12 @@ final class AuthService: @unchecked Sendable {
         return result.user
     }
 
+    /// Send a password reset email to the backing Firebase email for a username.
+    func sendPasswordReset(username: String) async throws {
+        let email = Self.authEmail(forUsername: username)
+        try await Auth.auth().sendPasswordReset(withEmail: email)
+    }
+
     /// Register a new account.
     @discardableResult
     func register(email: String, password: String, fullName: String) async throws -> FirebaseAuth.User {

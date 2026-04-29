@@ -20,6 +20,21 @@ data class PaginatedResponse<T>(
     @SerializedName("page_size") val pageSize: Int
 )
 
+data class AuthReport(
+    val email: String
+)
+
+data class LockoutReport(
+    val locked: Boolean,
+    val remaining: Int,
+    val threshold: Int,
+    @SerializedName("window_minutes") val windowMinutes: Int
+)
+
+data class AuthSuccessReport(
+    val ok: Boolean
+)
+
 // ── Schedule / Shift ──
 
 data class ShiftRead(

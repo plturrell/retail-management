@@ -11,6 +11,16 @@ interface ApiService {
     @GET("api/users/me")
     suspend fun getMe(): DataResponse<UserRead>
 
+    @POST("api/auth/report-failed-login")
+    suspend fun reportFailedLogin(
+        @Body request: AuthReport
+    ): LockoutReport
+
+    @POST("api/auth/report-successful-login")
+    suspend fun reportSuccessfulLogin(
+        @Body request: AuthReport
+    ): AuthSuccessReport
+
     @GET("api/employees/{userId}/profile")
     suspend fun getEmployeeProfile(
         @Path("userId") userId: String

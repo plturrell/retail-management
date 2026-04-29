@@ -14,7 +14,9 @@ final class AuthViewModel {
     var authState: AuthState = .loading
     var currentUser: AppUser?
     var errorMessage: String?
+    var infoMessage: String?
     var isLoading = false
+    var isResettingPassword = false
     /// True when the Firebase token carries ``must_change_password=true``.
     /// Mirrors the staff-portal web behaviour: every gated screen redirects to
     /// ``ForceChangePasswordView`` until the user rotates their password and
@@ -59,18 +61,48 @@ final class AuthViewModel {
 
         isLoading = true
         errorMessage = nil
+        infoMessage = nil
+        let email = AuthService.authEmail(forUsername: username)
 
         do {
             try await authService.signIn(username: username, password: password)
+            await reportSuccessfulLogin(email: email)
             mustChangePassword = await readForceChangeClaim(forceRefresh: true)
             let user = try await fetchUserProfile()
             currentUser = user
             authState = .authenticated
         } catch {
-            errorMessage = error.localizedDescription
+            let report = await reportFailedLogin(email: email)
+            errorMessage = loginErrorMessage(error, report: report)
         }
 
         isLoading = false
+    }
+
+    func resetPassword(username: String) async {
+        let email = AuthService.authEmail(forUsername: username)
+        guard !email.isEmpty else {
+            errorMessage = "Enter your username above first, then tap Forgot password."
+            infoMessage = nil
+            return
+        }
+
+        isResettingPassword = true
+        errorMessage = nil
+        infoMessage = nil
+
+        do {
+            try await authService.sendPasswordReset(username: username)
+            infoMessage = "If that username has an account, a reset link has been sent. Check your inbox and spam."
+        } catch {
+            if error.localizedDescription.lowercased().contains("invalid") {
+                errorMessage = "That doesn't look like a valid username."
+            } else {
+                errorMessage = "Could not send reset email. Try again in a minute."
+            }
+        }
+
+        isResettingPassword = false
     }
 
     /// Re-read the Firebase custom claims and update ``mustChangePassword``.
@@ -149,9 +181,62 @@ final class AuthViewModel {
         )
         return response.data
     }
+
+    private func reportFailedLogin(email: String) async -> LockoutReport? {
+        guard !email.isEmpty else { return nil }
+        return try? await NetworkService.shared.post(
+            endpoint: "/api/auth/report-failed-login",
+            body: AuthReport(email: email)
+        )
+    }
+
+    private func reportSuccessfulLogin(email: String) async {
+        guard !email.isEmpty else { return }
+        let _: AuthSuccessReport? = try? await NetworkService.shared.post(
+            endpoint: "/api/auth/report-successful-login",
+            body: AuthReport(email: email)
+        )
+    }
+
+    private func loginErrorMessage(_ error: Error, report: LockoutReport?) -> String {
+        if report?.locked == true {
+            return "This account has been locked after too many failed sign-ins. Ask an owner or manager to re-enable it, or use Forgot password to reset."
+        }
+        if let report, report.remaining > 0, report.remaining <= 2 {
+            let plural = report.remaining == 1 ? "" : "s"
+            return "Incorrect username or password. \(report.remaining) attempt\(plural) left before this account is temporarily locked."
+        }
+
+        let message = error.localizedDescription.lowercased()
+        if message.contains("disabled") {
+            return "This account is disabled. Contact an owner to re-enable it."
+        }
+        if message.contains("too many") {
+            return "Too many sign-in attempts from this device. Wait a few minutes and try again."
+        }
+        if message.contains("password") || message.contains("credential") || message.contains("user") {
+            return "Incorrect username or password."
+        }
+        return error.localizedDescription
+    }
 }
 
 // MARK: - Request Bodies
+
+private struct AuthReport: Encodable {
+    let email: String
+}
+
+private struct LockoutReport: Decodable {
+    let locked: Bool
+    let remaining: Int
+    let threshold: Int
+    let windowMinutes: Int
+}
+
+private struct AuthSuccessReport: Decodable {
+    let ok: Bool
+}
 
 private struct CreateUserBody: Encodable {
     let firebaseUid: String

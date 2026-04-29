@@ -96,7 +96,7 @@ struct CagSettingsView: View {
         Section("Effective scheduled payload") {
             LabeledContent("Tenant", value: vm.effectiveTenant.isEmpty ? "—" : vm.effectiveTenant)
             LabeledContent("Store ID", value: vm.effectiveStoreId.isEmpty ? "—" : vm.effectiveStoreId)
-                .foregroundStyle(vm.effectiveStoreIdValid ? .primary : .red)
+                .foregroundStyle(vm.effectiveStoreIdValid ? Color.primary : Color.red)
             LabeledContent("Tax mode", value: vm.schedulerDefaultTaxable ? "G — Landside (taxable)" : "N — Airside (non-taxable)")
             LabeledContent("Cron", value: vm.config?.schedulerCron ?? "—")
             if let aud = vm.config?.schedulerAudience, !aud.isEmpty {

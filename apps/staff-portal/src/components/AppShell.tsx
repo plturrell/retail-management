@@ -26,10 +26,10 @@ function NavItem({ to, label, icon, onClick }: NavItemConfig & { onClick?: () =>
       to={to}
       onClick={onClick}
       className={({ isActive }) =>
-        `flex flex-col items-center gap-0.5 px-2 py-1.5 text-xs transition-colors md:flex-row md:gap-3 md:rounded-lg md:px-4 md:py-2.5 md:text-sm ${
+        `group flex min-h-12 flex-col items-center justify-center gap-0.5 px-2 py-1.5 text-[11px] font-medium transition-all md:min-h-0 md:flex-row md:justify-start md:gap-3 md:rounded-2xl md:px-4 md:py-3 md:text-[14px] ${
           isActive
-            ? "text-blue-600 md:bg-blue-50 md:font-semibold"
-            : "text-gray-500 hover:text-gray-700 md:hover:bg-gray-50"
+            ? "text-blue-600 md:bg-blue-50 md:font-semibold md:shadow-[inset_0_1px_0_rgba(255,255,255,0.9)]"
+            : "text-slate-500 hover:text-slate-900 md:hover:bg-white/70"
         }`
       }
     >
@@ -119,95 +119,109 @@ export default function AppShell() {
   );
 
   return (
-    <div className="flex h-screen flex-col md:flex-row">
+    <div className="flex h-screen flex-col bg-[var(--ve-bg)] text-slate-950 md:flex-row">
       {/* Sidebar — desktop only */}
-      <aside className="hidden w-56 shrink-0 flex-col border-r border-gray-200 bg-white md:flex">
-        <div className="border-b border-gray-200 px-5 py-4">
-          <h1 className="text-lg font-bold text-blue-700">VictoriaEnso</h1>
-          <p className="text-xs text-gray-400">
-            {canViewSensitiveOperations
-              ? "Owner Console"
-              : isManager
-                ? "Sales Manager Console"
-                : "Sales Promoter Portal"}
-          </p>
+      <aside className="hidden w-[258px] shrink-0 flex-col border-r border-slate-200/70 bg-white/72 shadow-[inset_-1px_0_0_rgba(255,255,255,0.75)] backdrop-blur-2xl md:flex">
+        <div className="px-6 py-6">
+          <div className="flex items-center gap-3">
+            <img src="/ve-logo.avif" alt="" className="h-9 w-16 rounded-lg bg-white object-contain shadow-sm" />
+            <div>
+              <h1 className="text-[20px] font-semibold leading-none tracking-tight text-slate-950">VictoriaEnso</h1>
+              <p className="mt-1 text-[11px] font-medium text-slate-400">
+                {canViewSensitiveOperations
+                  ? "Owner Console"
+                  : isManager
+                    ? "Manager Console"
+                    : "Staff Portal"}
+              </p>
+            </div>
+          </div>
+          <div className="mt-6 h-px bg-slate-200/80" />
         </div>
-        <nav className="flex flex-1 flex-col gap-1 p-3">
+        <nav className="flex flex-1 flex-col gap-1.5 px-4 pb-4">
           {navItems.map((item) => (
             <NavItem key={item.to} {...item} />
           ))}
         </nav>
+        <div className="p-4">
+          <button className="flex w-full items-center gap-3 rounded-2xl border border-slate-200 bg-white/70 px-3 py-3 text-sm font-medium text-slate-500 shadow-sm transition hover:bg-white">
+            <Icon name="chevron-left" className="h-4 w-4" />
+            Collapse
+          </button>
+        </div>
       </aside>
 
       {/* Main area */}
-      <div className="flex flex-1 flex-col overflow-hidden">
+      <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
         {/* Header */}
-        <header className="flex flex-col gap-3 border-b border-gray-200 bg-white px-4 py-3 md:flex-row md:items-center md:justify-between">
-          <div>
-            <h2 className="text-sm font-semibold text-gray-700 md:hidden">VictoriaEnso</h2>
-            <p className="text-xs text-gray-500">
-              {selectedStore?.name ?? "Choose a store"}
-              {selectedStoreRole ? ` • ${roleLabel}` : ""}
-            </p>
-            {selectedStore && storeDescriptor(selectedStore) && (
-              <p className="text-[11px] text-gray-400">{storeDescriptor(selectedStore)}</p>
-            )}
-          </div>
-          <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
-            <div className="flex min-w-[220px] flex-col gap-1">
-              <label htmlFor="store-select" className="text-[11px] font-semibold uppercase tracking-wide text-gray-400">
-                Active Store
-              </label>
-              <select
-                id="store-select"
-                value={selectedStore?.id ?? ""}
-                onChange={(event) => setSelectedStoreId(event.target.value)}
-                className="rounded-md border border-gray-200 bg-white px-3 py-2 text-sm text-gray-700"
-              >
-                {stores.map((store) => (
-                  <option key={store.id} value={store.id}>
-                    {storeDescriptor(store) ? `${store.name} — ${storeDescriptor(store)}` : store.name}
-                  </option>
-                ))}
-              </select>
-            </div>
-            <div className="flex items-center gap-3">
-              <Bell />
-              <div className="text-right">
-                <div className="text-sm font-medium text-gray-700">{profile?.full_name ?? user?.email}</div>
-                <div className="text-xs text-gray-500">{user?.email}</div>
-              </div>
-              {selectedStoreRole && (
-                <span className="rounded-full bg-blue-50 px-2.5 py-1 text-xs font-semibold uppercase tracking-wide text-blue-700">
-                  {roleLabel}
-                </span>
+        <header className="z-20 border-b border-slate-200/80 bg-white/74 px-4 py-3 shadow-[0_1px_0_rgba(255,255,255,0.8)] backdrop-blur-2xl md:px-6">
+          <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+            <div>
+              <h2 className="text-[15px] font-semibold text-slate-900 md:hidden">VictoriaEnso</h2>
+              <p className="text-[12px] font-medium text-slate-500">
+                {selectedStore?.name ?? "Choose a store"}
+                {selectedStoreRole ? ` • ${roleLabel}` : ""}
+              </p>
+              {selectedStore && storeDescriptor(selectedStore) && (
+                <p className="text-[11px] text-slate-400">{storeDescriptor(selectedStore)}</p>
               )}
-              <button
-                onClick={logout}
-                className="inline-flex items-center gap-1.5 rounded-md bg-gray-100 px-3 py-1.5 text-xs font-medium text-gray-600 hover:bg-gray-200"
-              >
-                <Icon name="log-out" className="h-3.5 w-3.5" />
-                Logout
-              </button>
+            </div>
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
+              <div className="flex min-w-[230px] flex-col gap-1">
+                <label htmlFor="store-select" className="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-400">
+                  Active Store
+                </label>
+                <select
+                  id="store-select"
+                  value={selectedStore?.id ?? ""}
+                  onChange={(event) => setSelectedStoreId(event.target.value)}
+                  className="min-h-11 rounded-2xl border border-slate-200 bg-white/80 px-4 py-2 text-[14px] font-medium text-slate-800 shadow-sm"
+                >
+                  {stores.map((store) => (
+                    <option key={store.id} value={store.id}>
+                      {storeDescriptor(store) ? `${store.name} — ${storeDescriptor(store)}` : store.name}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div className="flex items-center gap-3">
+                <Bell />
+                <div className="rounded-2xl border border-slate-200 bg-white/72 px-3 py-2 text-right shadow-sm">
+                  <div className="text-sm font-semibold text-slate-800">{profile?.full_name ?? user?.email}</div>
+                  <div className="max-w-[190px] truncate text-xs text-slate-500">{user?.email}</div>
+                </div>
+                {selectedStoreRole && (
+                  <span className="rounded-full bg-blue-50 px-3 py-1.5 text-[11px] font-bold uppercase tracking-[0.14em] text-blue-700">
+                    {roleLabel}
+                  </span>
+                )}
+                <button
+                  onClick={logout}
+                  className="inline-flex min-h-10 items-center gap-2 rounded-2xl bg-slate-100 px-3 py-2 text-xs font-semibold text-slate-600 transition hover:bg-slate-200"
+                >
+                  <Icon name="log-out" className="h-3.5 w-3.5" />
+                  Logout
+                </button>
+              </div>
             </div>
           </div>
         </header>
 
         {/* Page content */}
-        <main className="flex-1 overflow-y-auto bg-gray-50 p-4 pb-20 md:p-6 md:pb-6">
+        <main className="flex-1 overflow-y-auto bg-[radial-gradient(circle_at_10%_0%,rgba(10,99,246,0.08),transparent_30rem),linear-gradient(135deg,#f8fafc_0%,#eef3f8_100%)] p-4 pb-24 md:p-6 md:pb-6">
           <Outlet />
         </main>
       </div>
 
       {/* Bottom nav — mobile only */}
-      <nav className="fixed inset-x-0 bottom-0 z-40 flex items-center justify-around border-t border-gray-200 bg-white py-1 safe-bottom md:hidden">
+      <nav className="safe-bottom fixed inset-x-0 bottom-0 z-40 flex items-center justify-around border-t border-slate-200/80 bg-white/84 py-1 shadow-[0_-12px_32px_rgba(15,23,42,0.08)] backdrop-blur-2xl md:hidden">
         {mobilePrimaryItems.map((item) => (
           <NavItem key={item.to} {...item} onClick={() => setMobileMenuOpen(false)} />
         ))}
         <button
           type="button"
           onClick={() => setMobileMenuOpen(true)}
-          className="flex flex-col items-center gap-0.5 px-2 py-1.5 text-xs text-gray-500"
+          className="flex min-h-12 flex-col items-center justify-center gap-0.5 px-2 py-1.5 text-[11px] font-medium text-slate-500"
           aria-label="Open navigation menu"
         >
           <Icon name="menu" className="h-5 w-5" />
@@ -215,20 +229,20 @@ export default function AppShell() {
         </button>
       </nav>
       <div
-        className={`fixed inset-0 z-50 bg-black/30 md:hidden ${mobileMenuOpen ? "" : "hidden"}`}
+        className={`fixed inset-0 z-50 bg-slate-950/35 backdrop-blur-sm md:hidden ${mobileMenuOpen ? "" : "hidden"}`}
         aria-hidden={!mobileMenuOpen}
         onClick={() => setMobileMenuOpen(false)}
       >
         <div
-          className="absolute inset-x-0 bottom-0 max-h-[78vh] overflow-y-auto rounded-t-2xl bg-white p-4 pb-8 shadow-2xl"
+          className="absolute inset-x-0 bottom-0 max-h-[78vh] overflow-y-auto rounded-t-[28px] border border-white/60 bg-white/92 p-4 pb-8 shadow-2xl backdrop-blur-2xl"
           onClick={(event) => event.stopPropagation()}
         >
           <div className="mb-3 flex items-center justify-between">
-            <h2 className="text-sm font-semibold text-gray-900">Navigation</h2>
+            <h2 className="text-sm font-semibold text-slate-900">Navigation</h2>
             <button
               type="button"
               onClick={() => setMobileMenuOpen(false)}
-              className="rounded-md p-2 text-gray-500 hover:bg-gray-100"
+              className="rounded-2xl p-2 text-slate-500 hover:bg-slate-100"
               aria-label="Close navigation menu"
             >
               <Icon name="x" className="h-5 w-5" />
@@ -241,10 +255,10 @@ export default function AppShell() {
                 to={item.to}
                 onClick={() => setMobileMenuOpen(false)}
                 className={({ isActive }) =>
-                  `flex items-center gap-3 rounded-xl border px-3 py-3 text-sm ${
+                  `flex min-h-14 items-center gap-3 rounded-2xl border px-3 py-3 text-sm ${
                     isActive
                       ? "border-blue-200 bg-blue-50 font-semibold text-blue-700"
-                      : "border-gray-200 text-gray-700"
+                      : "border-slate-200 bg-white/70 text-slate-700"
                   }`
                 }
               >

@@ -150,26 +150,34 @@ export default function LoginPage() {
   };
 
   return (
-    <div className="flex min-h-screen items-center justify-center bg-gray-50 text-gray-900 transition-colors duration-300 dark:bg-black dark:text-gray-100">
-      <div className="w-full max-w-sm px-6">
-        <div className="flex flex-col items-center justify-center space-y-3 mb-10 mt-[-5vh]">
-          {/* Authentic Brand Logo matching iOS */}
-          <img 
-            src="/ve-logo.avif" 
-            alt="Brand Logo" 
-            className="h-16 w-auto object-contain drop-shadow-md rounded-[10px]"
-          />
-          <div className="text-center">
-            <h1 className="text-[28px] font-bold font-serif tracking-tight mt-3">VictoriaEnso</h1>
-            <p className="mt-1 text-sm text-gray-500 uppercase tracking-widest font-medium">Retail Management</p>
+    <div className="relative flex min-h-screen items-center justify-center overflow-hidden bg-[#f7f9fc] px-6 py-10 text-slate-950">
+      <div className="pointer-events-none absolute inset-0">
+        <div className="absolute inset-0 bg-[linear-gradient(180deg,#fbfdff_0%,#f6f9fc_52%,#eef6f4_100%)]" />
+        <div className="absolute inset-x-[-28%] top-[23%] h-[31rem] rounded-[100%] border border-white/70 bg-white/12 shadow-[0_18px_70px_rgba(15,23,42,0.035)]" />
+        <div className="absolute inset-x-0 bottom-0 h-40 bg-[linear-gradient(0deg,rgba(216,231,227,0.24),transparent)]" />
+      </div>
+
+      <div className="relative w-full max-w-[350px] -translate-y-8 sm:-translate-y-4">
+        <div className="mb-9 flex flex-col items-center justify-center">
+          <div className="rounded-[16px] border border-white/90 bg-white/80 p-1.5 shadow-[0_10px_36px_rgba(15,23,42,0.09)] backdrop-blur-2xl">
+            <img
+              src="/ve-logo.avif"
+              alt="VictoriaEnso"
+              className="h-11 w-auto rounded-[12px] object-contain"
+            />
+          </div>
+          <div className="mt-5 text-center">
+            <p className="text-[12px] font-semibold uppercase tracking-[0.16em] text-slate-500">
+              Retail Management
+            </p>
           </div>
         </div>
 
         <form onSubmit={handleSubmit} className="flex flex-col space-y-5">
           <div className="flex flex-col space-y-4">
             <div
-               className={`relative rounded-xl bg-white/50 dark:bg-zinc-900/50 backdrop-blur-md transition-all duration-300 shadow-sm border
-                 ${focusedField === "username" ? "border-blue-500 shadow-[0_4px_12px_rgba(59,130,246,0.2)]" : "border-gray-200 dark:border-white/10"}`}
+               className={`relative rounded-[17px] border bg-white/76 shadow-[inset_0_1px_0_rgba(255,255,255,0.92),0_8px_26px_rgba(15,23,42,0.045)] backdrop-blur-xl transition-all duration-300
+                 ${focusedField === "username" ? "border-blue-400/70 shadow-[0_0_0_4px_rgba(10,99,246,0.12),0_10px_30px_rgba(15,23,42,0.06)]" : "border-slate-200/75"}`}
             >
               <input
                 id="username"
@@ -181,14 +189,14 @@ export default function LoginPage() {
                 onChange={(e) => setUsername(e.target.value)}
                 onFocus={() => setFocusedField("username")}
                 onBlur={() => setFocusedField(null)}
-                className="w-full bg-transparent px-4 py-3.5 text-base outline-none autofill:bg-transparent placeholder-gray-400 dark:placeholder-gray-500"
+                className="min-h-[52px] w-full bg-transparent px-4 py-3.5 text-[16px] text-slate-950 outline-none placeholder-slate-400"
                 placeholder="Username"
               />
             </div>
 
             <div
-               className={`relative rounded-xl bg-white/50 dark:bg-zinc-900/50 backdrop-blur-md transition-all duration-300 shadow-sm border
-                 ${focusedField === "password" ? "border-blue-500 shadow-[0_4px_12px_rgba(59,130,246,0.2)]" : "border-gray-200 dark:border-white/10"}`}
+               className={`relative rounded-[17px] border bg-white/76 shadow-[inset_0_1px_0_rgba(255,255,255,0.92),0_8px_26px_rgba(15,23,42,0.045)] backdrop-blur-xl transition-all duration-300
+                 ${focusedField === "password" ? "border-blue-400/70 shadow-[0_0_0_4px_rgba(10,99,246,0.12),0_10px_30px_rgba(15,23,42,0.06)]" : "border-slate-200/75"}`}
             >
               <input
                 id="password"
@@ -198,19 +206,19 @@ export default function LoginPage() {
                 onChange={(e) => setPassword(e.target.value)}
                 onFocus={() => setFocusedField("password")}
                 onBlur={() => setFocusedField(null)}
-                className="w-full bg-transparent px-4 py-3.5 text-base outline-none autofill:bg-transparent placeholder-gray-400 dark:placeholder-gray-500"
+                className="min-h-[52px] w-full bg-transparent px-4 py-3.5 text-[16px] text-slate-950 outline-none placeholder-slate-400"
                 placeholder="Password"
               />
             </div>
           </div>
 
           {error && (
-            <div className="text-center text-sm font-medium text-red-500 -mt-2 animate-pulse">
+            <div className="-mt-2 rounded-2xl border border-red-200 bg-red-50/90 px-3 py-2 text-center text-sm font-medium text-red-700">
               {error}
             </div>
           )}
           {info && (
-            <div className="text-center text-sm font-medium text-green-600 dark:text-green-400 -mt-2">
+            <div className="-mt-2 rounded-2xl border border-emerald-200 bg-emerald-50/90 px-3 py-2 text-center text-sm font-medium text-emerald-700">
               {info}
             </div>
           )}
@@ -219,7 +227,7 @@ export default function LoginPage() {
             <button
               type="submit"
               disabled={loading}
-              className="w-full rounded-xl bg-gray-900 dark:bg-white text-white dark:text-black py-3.5 text-[15px] font-semibold transition-all hover:opacity-90 hover:shadow-lg disabled:opacity-50 active:scale-[0.98]"
+              className="min-h-[52px] w-full rounded-[17px] bg-[#0a63f6] py-3.5 text-[15px] font-semibold text-white shadow-[0_12px_30px_rgba(10,99,246,0.24)] transition-all hover:bg-[#0758dc] disabled:opacity-50 active:scale-[0.985]"
             >
               {loading ? (
                 <span className="flex items-center justify-center space-x-2">
@@ -230,11 +238,17 @@ export default function LoginPage() {
             </button>
 
             {bioSupported && (
+              <>
+                <div className="flex w-full items-center gap-4 text-[12px] text-slate-400">
+                  <span className="h-px flex-1 bg-slate-200" />
+                  <span>or</span>
+                  <span className="h-px flex-1 bg-slate-200" />
+                </div>
               <button
                 type="button"
                 disabled={bioLoading || loading}
                 onClick={handleBiometric}
-                className="flex w-full items-center justify-center space-x-2 rounded-xl border border-gray-300 bg-white dark:bg-zinc-900 dark:border-white/10 text-gray-800 dark:text-gray-100 py-3 text-[14px] font-semibold transition-all hover:border-blue-400 hover:text-blue-600 disabled:opacity-50 active:scale-[0.98]"
+                className="flex min-h-[52px] w-full items-center justify-center space-x-2 rounded-[17px] border border-slate-200/75 bg-white/70 py-3 text-[14px] font-semibold text-slate-800 shadow-[inset_0_1px_0_rgba(255,255,255,0.92),0_8px_24px_rgba(15,23,42,0.04)] backdrop-blur-xl transition-all hover:border-blue-200 hover:bg-white/88 disabled:opacity-50 active:scale-[0.985]"
                 title="Use Face ID, Touch ID, Windows Hello, or your device's fingerprint sensor"
               >
                 {bioLoading ? (
@@ -254,13 +268,14 @@ export default function LoginPage() {
                   </>
                 )}
               </button>
+              </>
             )}
 
             <button
               type="button"
               disabled={resetting}
               onClick={handleForgotPassword}
-              className="text-sm font-medium text-gray-700 dark:text-gray-300 hover:text-gray-900 dark:hover:text-white transition-colors disabled:opacity-50"
+              className="min-h-11 px-3 text-sm font-medium text-blue-600 transition-colors hover:text-blue-800 disabled:opacity-50"
             >
               {resetting ? "Sending reset email\u2026" : "Forgot password?"}
             </button>

@@ -18,7 +18,7 @@ struct NecStatusCard: View {
     var body: some View {
         Group {
             if isLoading {
-                placeholder("Checking NEC scheduler\u2026", system: "clock.arrow.circlepath")
+                placeholder("Checking NEC scheduler\u{2026}", system: "clock.arrow.circlepath")
             } else if let cfg = config {
                 content(cfg)
             } else if let err = errorMessage {

@@ -3,107 +3,63 @@
 //  retailmanagement
 //
 
-import Combine
 import SwiftUI
 
 struct AuthLayout<Content: View>: View {
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
     let content: Content
 
-    // MARK: - Carousel State
-    @State private var currentImageIndex = 1
-    // The timer publishes every 6 seconds on the main loop
-    let timer = Timer.publish(every: 6.0, on: .main, in: .common).autoconnect()
-
     init(@ViewBuilder content: () -> Content) {
         self.content = content()
     }
 
     var body: some View {
-        #if os(macOS)
-        macOSLayout
-            .onReceive(timer) { _ in cycleImage() }
-        #else
-        if horizontalSizeClass == .regular {
-            macOSLayout // Use split layout on iPad landscape / large screens
-                .onReceive(timer) { _ in cycleImage() }
-        } else {
-            iOSLayout
-                .onReceive(timer) { _ in cycleImage() }
-        }
-        #endif
-    }
-
-    private func cycleImage() {
-        withAnimation(.easeInOut(duration: 2.0)) {
-            currentImageIndex = currentImageIndex >= 5 ? 1 : currentImageIndex + 1
-        }
-    }
-
-    private var macOSLayout: some View {
-        HStack(spacing: 0) {
-            // Left Side: Brand Imagery
-            GeometryReader { geo in
-                ZStack {
-                    Color.black // Base to prevent flashing during crossfades
-                    
-                    Image("Jewelry\(currentImageIndex)")
-                        .resizable()
-                        .scaledToFill()
-                        .frame(width: geo.size.width, height: geo.size.height)
-                        .clipped()
-                        // Ensure smooth crossfades between changing IDs
-                        .id(currentImageIndex)
-                        .transition(.opacity)
-                }
-            }
-            .ignoresSafeArea()
-
-            // Right Side: Form Content
+        GeometryReader { proxy in
             ZStack {
-                Color.systemBackground
-                    .ignoresSafeArea()
+                LinearGradient(
+                    colors: [
+                        Color(red: 0.984, green: 0.992, blue: 1.0),
+                        Color(red: 0.965, green: 0.976, blue: 0.988),
+                        Color(red: 0.933, green: 0.965, blue: 0.957)
+                    ],
+                    startPoint: .top,
+                    endPoint: .bottom
+                )
+                .ignoresSafeArea()
+
+                Ellipse()
+                    .fill(Color.white.opacity(0.12))
+                    .overlay(
+                        Ellipse()
+                            .stroke(Color.white.opacity(0.7), lineWidth: 1)
+                    )
+                    .frame(width: max(proxy.size.width * 1.55, 540), height: 310)
+                    .shadow(color: .black.opacity(0.035), radius: 70, x: 0, y: 18)
+                    .offset(y: proxy.size.height * 0.03)
+
+                LinearGradient(
+                    colors: [Color(red: 0.847, green: 0.906, blue: 0.89).opacity(0.24), .clear],
+                    startPoint: .bottom,
+                    endPoint: .top
+                )
+                .frame(height: 160)
+                .frame(maxHeight: .infinity, alignment: .bottom)
+                .ignoresSafeArea()
 
                 content
-                    .frame(width: 400)
-                    .padding(40)
+                    .frame(maxWidth: formWidth)
+                    .padding(.horizontal, 24)
+                    .padding(.vertical, 40)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
-            .frame(width: 480)
-            .shadow(color: .black.opacity(0.1), radius: 20, x: -10, y: 0)
         }
     }
 
-    private var iOSLayout: some View {
-        ZStack {
-            // Background Image Carousel
-            GeometryReader { geo in
-                ZStack {
-                    Color.black
-                    
-                    Image("Jewelry\(currentImageIndex)")
-                        .resizable()
-                        .scaledToFill()
-                        .frame(width: geo.size.width, height: geo.size.height)
-                        .clipped()
-                        .id(currentImageIndex)
-                        .transition(.opacity)
-                }
-            }
-            .ignoresSafeArea()
-
-            // Blur Gradient Overlay for readability
-            LinearGradient(
-                colors: [.black.opacity(0.4), .clear, .black.opacity(0.6)],
-                startPoint: .top,
-                endPoint: .bottom
-            )
-            .ignoresSafeArea()
-
-            // Center Form Content with Liquid Glass
-            content
-                .padding(32)
-                .modifier(LiquidGlassUI(cornerRadius: 24))
-                .padding()
-        }
+    private var formWidth: CGFloat {
+        #if os(macOS)
+        return 350
+        #else
+        return horizontalSizeClass == .regular ? 400 : 350
+        #endif
     }
 }

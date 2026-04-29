@@ -18,31 +18,31 @@ struct LoginView: View {
     @FocusState private var focusedField: Field?
 
     var body: some View {
-        @Bindable var authVM = authViewModel
-
         NavigationStack {
             AuthLayout {
-                VStack(spacing: 32) {
-                    // App branding
-                    VStack(spacing: 12) {
+                VStack(spacing: 28) {
+                    VStack(spacing: 20) {
                         Image("BrandLogo")
                             .resizable()
                             .scaledToFit()
-                            .frame(height: 60)
-                            .shadow(color: .black.opacity(0.15), radius: 6, x: 0, y: 3)
+                            .frame(height: 44)
+                            .padding(6)
+                            .background(Color.white.opacity(0.8))
+                            .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 16, style: .continuous)
+                                    .stroke(Color.white.opacity(0.9), lineWidth: 1)
+                            )
+                            .shadow(color: .black.opacity(0.09), radius: 36, x: 0, y: 10)
 
-                        Text("Irina Jewellery")
-                            .font(.system(size: 28, weight: .bold, design: .serif))
-                        
                         Text("Retail Management")
-                            .font(.subheadline)
-                            .foregroundStyle(.secondary)
+                            .font(.system(size: 12, weight: .semibold))
                             .textCase(.uppercase)
                             .tracking(2)
+                            .foregroundStyle(.secondary)
                     }
-                    .padding(.bottom, 8)
+                    .padding(.bottom, 4)
 
-                    // Login form with Fluid Glass TextFields
                     VStack(spacing: 16) {
                         TextField("Username", text: $username)
                             .focused($focusedField, equals: .username)
@@ -52,28 +52,12 @@ struct LoginView: View {
                             .textInputAutocapitalization(.never)
                             #endif
                             .autocorrectionDisabled()
-                            .padding()
-                            .background(Color.systemBackground.opacity(0.5))
-                            .clipShape(RoundedRectangle(cornerRadius: 12))
-                            .overlay(
-                                RoundedRectangle(cornerRadius: 12)
-                                    .stroke(focusedField == .username ? Color.blue : Color.primary.opacity(0.1), lineWidth: focusedField == .username ? 2 : 1)
-                            )
-                            .shadow(color: focusedField == .username ? Color.blue.opacity(0.2) : .clear, radius: 8, x: 0, y: 4)
-                            .animation(.easeOut(duration: 0.2), value: focusedField)
+                            .modifier(LoginFieldChrome(isFocused: focusedField == .username))
 
                         SecureField("Password", text: $password)
                             .focused($focusedField, equals: .password)
                             .textContentType(.password)
-                            .padding()
-                            .background(Color.systemBackground.opacity(0.5))
-                            .clipShape(RoundedRectangle(cornerRadius: 12))
-                            .overlay(
-                                RoundedRectangle(cornerRadius: 12)
-                                    .stroke(focusedField == .password ? Color.blue : Color.primary.opacity(0.1), lineWidth: focusedField == .password ? 2 : 1)
-                            )
-                            .shadow(color: focusedField == .password ? Color.blue.opacity(0.2) : .clear, radius: 8, x: 0, y: 4)
-                            .animation(.easeOut(duration: 0.2), value: focusedField)
+                            .modifier(LoginFieldChrome(isFocused: focusedField == .password))
                     }
 
                     if let error = authViewModel.errorMessage {
@@ -85,6 +69,13 @@ struct LoginView: View {
                             .onAppear {
                                 HapticManager.generateFeedback(style: .error)
                             }
+                    }
+                    if let info = authViewModel.infoMessage {
+                        Text(info)
+                            .font(.caption)
+                            .foregroundStyle(.green)
+                            .multilineTextAlignment(.center)
+                            .padding(.top, -8)
                     }
 
                     VStack(spacing: 16) {
@@ -107,23 +98,30 @@ struct LoginView: View {
                                 }
                             }
                             .frame(maxWidth: .infinity)
-                            .padding()
-                            .background(Color.primary)
-                            .foregroundStyle(Color.systemBackground)
-                            .clipShape(RoundedRectangle(cornerRadius: 12))
-                            .shadow(color: .black.opacity(0.2), radius: 10, x: 0, y: 5)
+                            .frame(minHeight: 52)
+                            .background(Color(red: 0.039, green: 0.388, blue: 0.965))
+                            .foregroundStyle(.white)
+                            .clipShape(RoundedRectangle(cornerRadius: 17, style: .continuous))
+                            .shadow(color: Color(red: 0.039, green: 0.388, blue: 0.965).opacity(0.24), radius: 30, x: 0, y: 12)
                         }
                         .disabled(authViewModel.isLoading)
 
-                        Button("Create an Account") {
-                            HapticManager.generateFeedback(style: .light)
-                            showRegister = true
+                        HStack(spacing: 18) {
+                            Button(authViewModel.isResettingPassword ? "Sending reset..." : "Forgot password?") {
+                                HapticManager.generateFeedback(style: .light)
+                                Task { await authViewModel.resetPassword(username: username) }
+                            }
+                            .disabled(authViewModel.isResettingPassword)
+
+                            Button("Create an Account") {
+                                HapticManager.generateFeedback(style: .light)
+                                showRegister = true
+                            }
                         }
                         .font(.footnote.weight(.medium))
                         .foregroundStyle(.primary)
                     }
                 }
-                .macOSFormWidth(520)
             }
             #if canImport(UIKit)
             .navigationBarHidden(true)
@@ -138,4 +136,35 @@ struct LoginView: View {
 #Preview {
     LoginView()
         .environment(AuthViewModel())
+}
+
+private struct LoginFieldChrome: ViewModifier {
+    let isFocused: Bool
+
+    func body(content: Content) -> some View {
+        content
+            .font(.system(size: 16))
+            .padding(.horizontal, 16)
+            .frame(minHeight: 52)
+            .background(Color.white.opacity(0.76))
+            .clipShape(RoundedRectangle(cornerRadius: 17, style: .continuous))
+            .overlay(
+                RoundedRectangle(cornerRadius: 17, style: .continuous)
+                    .stroke(
+                        isFocused
+                            ? Color(red: 0.039, green: 0.388, blue: 0.965).opacity(0.7)
+                            : Color.primary.opacity(0.1),
+                        lineWidth: 1
+                    )
+            )
+            .shadow(
+                color: isFocused
+                    ? Color(red: 0.039, green: 0.388, blue: 0.965).opacity(0.12)
+                    : .black.opacity(0.045),
+                radius: isFocused ? 30 : 26,
+                x: 0,
+                y: isFocused ? 10 : 8
+            )
+            .animation(.easeOut(duration: 0.2), value: isFocused)
+    }
 }

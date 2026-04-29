@@ -158,7 +158,7 @@ struct StaffProfileView: View {
                     VStack(alignment: .leading, spacing: 2) {
                         Text(prettyUserAgent(s.userAgent))
                             .font(.subheadline.bold())
-                        Text("\(s.ip ?? "unknown network") · seen \(s.count)\u00d7")
+                        Text("\(s.ip ?? "unknown network") · seen \(s.count)\u{00d7}")
                             .font(.caption2)
                             .foregroundStyle(.secondary)
                         Text("Last \(s.lastSeen ?? "—")")

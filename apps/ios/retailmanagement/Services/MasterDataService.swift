@@ -112,8 +112,6 @@ final class MasterDataService: @unchecked Sendable {
     }
 }
 
-private struct EmptyBody: Encodable {}
-
 /// Loose-typed JSON value for endpoints whose shape isn't worth a Codable
 /// (e.g. /api/health). Avoids dragging in a third-party JSON-any helper.
 struct AnyCodable: Codable, Sendable {

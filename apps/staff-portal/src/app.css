@@ -1,1 +1,89 @@
 @import "tailwindcss";
+
+:root {
+  color-scheme: light;
+  --ve-bg: #f5f7fb;
+  --ve-bg-2: #edf2f7;
+  --ve-surface: rgba(255, 255, 255, 0.82);
+  --ve-surface-strong: rgba(255, 255, 255, 0.94);
+  --ve-ink: #111827;
+  --ve-muted: #667085;
+  --ve-hairline: rgba(15, 23, 42, 0.1);
+  --ve-blue: #0a63f6;
+  --ve-blue-soft: #e8f1ff;
+  --ve-green: #19a66a;
+  --ve-amber: #c88918;
+  --ve-red: #d63b3b;
+  --ve-shadow: 0 18px 55px rgba(31, 41, 55, 0.12);
+  --ve-shadow-soft: 0 10px 30px rgba(31, 41, 55, 0.08);
+  font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "SF Pro Display", system-ui, sans-serif;
+  background: var(--ve-bg);
+  color: var(--ve-ink);
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+body {
+  margin: 0;
+  min-width: 320px;
+  background:
+    radial-gradient(circle at top left, rgba(10, 99, 246, 0.08), transparent 36rem),
+    linear-gradient(135deg, #f8fafc 0%, #eef3f8 100%);
+}
+
+button,
+input,
+select,
+textarea {
+  font: inherit;
+}
+
+button,
+a,
+select,
+input {
+  -webkit-tap-highlight-color: transparent;
+}
+
+button:focus-visible,
+a:focus-visible,
+input:focus-visible,
+select:focus-visible,
+textarea:focus-visible {
+  outline: 3px solid rgba(10, 99, 246, 0.26);
+  outline-offset: 2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    scroll-behavior: auto !important;
+    transition-duration: 0.001ms !important;
+  }
+}
+
+.ve-glass {
+  background: var(--ve-surface);
+  border: 1px solid var(--ve-hairline);
+  box-shadow: var(--ve-shadow-soft);
+  backdrop-filter: blur(22px) saturate(1.25);
+  -webkit-backdrop-filter: blur(22px) saturate(1.25);
+}
+
+.ve-panel {
+  background: var(--ve-surface-strong);
+  border: 1px solid rgba(15, 23, 42, 0.08);
+  box-shadow: var(--ve-shadow-soft);
+  border-radius: 24px;
+}
+
+.ve-title {
+  letter-spacing: 0;
+}
+
+.safe-bottom {
+  padding-bottom: max(0.25rem, env(safe-area-inset-bottom));
+}
