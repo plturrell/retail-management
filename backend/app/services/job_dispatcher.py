@@ -147,10 +147,10 @@ async def _execute_job(job_type: str, payload: dict) -> dict:
     elif job_type == "bulk_pricing_review":
         return await _job_bulk_pricing(payload)
     else:
-        return {"status": "no_handler"}
+        raise ValueError(f"No handler registered for job_type={job_type!r}")
 
 
-# ── Job implementations (stubs — fill in per pipeline) ───────────
+# ── Job implementations ──────────────────────────────────────────
 
 async def _job_catalog_enrichment(payload: dict) -> dict:
     """Enrich SKU catalog with AI-generated descriptions and tags."""
@@ -192,9 +192,16 @@ async def _job_ocr(job_type: str, payload: dict) -> dict:
 
 
 async def _job_embeddings(payload: dict) -> dict:
-    """Generate embeddings for product search (placeholder)."""
-    logger.info("Embedding generation — integration pending")
-    return {"status": "embeddings_not_yet_implemented"}
+    """Generate embeddings for product search.
+
+    Not yet implemented. Fail loudly so callers can't mistake a no-op for a
+    successful job — the dispatcher records this as a job failure and surfaces
+    it in the artifact log rather than silently returning a stub payload.
+    """
+    raise NotImplementedError(
+        "embedding_generation pipeline is not implemented yet — "
+        "either wire the embedding provider here or remove this dispatch path"
+    )
 
 
 async def _job_bulk_pricing(payload: dict) -> dict:

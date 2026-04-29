@@ -41,13 +41,18 @@ class BankTransaction(Base):
     amount: Mapped[float] = mapped_column(Numeric(12, 2), nullable=False)
     balance: Mapped[Optional[float]] = mapped_column(Numeric(12, 2), nullable=True)
     category: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
-    # TODO: Add FK to accounts table when finance models (Account) are created
+    # Reconciliation links to the finance ledger. NULL until the bank txn is
+    # categorised / posted to a chart-of-accounts entry. ON DELETE SET NULL so
+    # that pruning a journal entry doesn't cascade-delete its bank evidence.
     account_id: Mapped[Optional[uuid.UUID]] = mapped_column(
-        UUID(as_uuid=True), nullable=True
+        UUID(as_uuid=True),
+        ForeignKey("accounts.id", ondelete="SET NULL"),
+        nullable=True,
     )
-    # TODO: Add FK to journal_entries table when finance models (JournalEntry) are created
     journal_entry_id: Mapped[Optional[uuid.UUID]] = mapped_column(
-        UUID(as_uuid=True), nullable=True
+        UUID(as_uuid=True),
+        ForeignKey("journal_entries.id", ondelete="SET NULL"),
+        nullable=True,
     )
     is_reconciled: Mapped[bool] = mapped_column(
         Boolean, default=False, nullable=False

@@ -28,7 +28,7 @@ fun VendorReviewScreen(vm: VendorReviewViewModel = viewModel()) {
     var selectedLineKey by remember { mutableStateOf<String?>("1") }
 
     LaunchedEffect(Unit) {
-        vm.loadMockData()
+        vm.loadOrder()
     }
 
     if (isLoading) {
