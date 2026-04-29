@@ -1,4 +1,14 @@
 {
-  "indexes": [],
+  "indexes": [
+    {
+      "collectionGroup": "prices",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "sku_id", "order": "ASCENDING" },
+        { "fieldPath": "valid_from", "order": "DESCENDING" },
+        { "fieldPath": "valid_to", "order": "DESCENDING" }
+      ]
+    }
+  ],
   "fieldOverrides": []
 }
