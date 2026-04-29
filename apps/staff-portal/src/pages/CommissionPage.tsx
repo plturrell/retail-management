@@ -1,11 +1,7 @@
 import { useEffect, useState } from "react";
+import { useAuth } from "../contexts/AuthContext";
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from "recharts";
 import { api } from "../lib/api";
-
-interface UserMe {
-  id: string;
-  store_roles: { store_id: string; role: string }[];
-}
 
 interface PaySlip {
   user_id: string;
@@ -49,6 +45,7 @@ function fmt(n: number) {
 }
 
 export default function CommissionPage() {
+  const { profile: userProfile, selectedStore, loading: authLoading } = useAuth();
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [currentSales, setCurrentSales] = useState(0);
@@ -58,17 +55,22 @@ export default function CommissionPage() {
   const [flatRate, setFlatRate] = useState<number | null>(null);
 
   useEffect(() => {
+    if (authLoading) return;
+
+    if (!userProfile?.id || !selectedStore?.id) {
+      setError("No assigned store selected");
+      setLoading(false);
+      return;
+    }
+
+    setLoading(true);
+    setError(null);
     (async () => {
       try {
-        const me = await api.get<{ data: UserMe }>("/users/me");
-        const userId = me.data.id;
-        const storeId = me.data.store_roles?.[0]?.store_id;
-        if (!storeId) { setError("No store assigned"); setLoading(false); return; }
-
         const [runsRes, rulesRes, profileRes] = await Promise.allSettled([
-          api.get<{ data: PayrollRun[] }>(`/stores/${storeId}/payroll`),
-          api.get<{ data: CommissionRule[] }>(`/stores/${storeId}/commission-rules`),
-          api.get<{ data: EmployeeProfile }>(`/employees/${userId}/profile`),
+          api.get<{ data: PayrollRun[] }>(`/stores/${selectedStore.id}/payroll`),
+          api.get<{ data: CommissionRule[] }>(`/stores/${selectedStore.id}/commission-rules`),
+          api.get<{ data: EmployeeProfile }>(`/employees/${userProfile.id}/profile`),
         ]);
 
         if (profileRes.status === "fulfilled" && profileRes.value.data.commission_rate) {
@@ -90,7 +92,7 @@ export default function CommissionPage() {
             const d = new Date(run.period_end + "T00:00:00");
             const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
             const label = d.toLocaleDateString("en-SG", { month: "short", year: "2-digit" });
-            const mySlips = (run.payslips || []).filter((s) => s.user_id === userId);
+            const mySlips = (run.payslips || []).filter((s) => s.user_id === userProfile.id);
             const sales = mySlips.reduce((t, s) => t + s.commission_sales, 0);
             const comm = mySlips.reduce((t, s) => t + s.commission_amount, 0);
             const existing = monthMap.get(key) || { month: label, sales: 0, commission: 0 };
@@ -105,7 +107,7 @@ export default function CommissionPage() {
           // Current period = most recent run
           if (runs.length > 0) {
             const latest = runs[0];
-            const mySlips = (latest.payslips || []).filter((s) => s.user_id === userId);
+            const mySlips = (latest.payslips || []).filter((s) => s.user_id === userProfile.id);
             setCurrentSales(mySlips.reduce((t, s) => t + s.commission_sales, 0));
             setCurrentCommission(mySlips.reduce((t, s) => t + s.commission_amount, 0));
           }
@@ -116,9 +118,9 @@ export default function CommissionPage() {
         setLoading(false);
       }
     })();
-  }, []);
+  }, [authLoading, userProfile?.id, selectedStore?.id]);
 
-  if (loading) return <div className="flex items-center justify-center py-20 text-gray-400">Loading commission data…</div>;
+  if (authLoading || loading) return <div className="flex items-center justify-center py-20 text-gray-400">Loading commission data…</div>;
   if (error) return <div className="rounded-lg bg-red-50 p-4 text-sm text-red-600">{error}</div>;
 
   return (

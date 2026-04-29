@@ -24,7 +24,7 @@
         <activity
             android:name=".StaffPortalActivity"
             android:exported="true"
-            android:label="RetailSG Staff"
+            android:label="VictoriaEnso"
             android:theme="@android:style/Theme.Material.Light.NoActionBar">
             <intent-filter>
                 <action android:name="com.retailmanagement.STAFF_PORTAL" />

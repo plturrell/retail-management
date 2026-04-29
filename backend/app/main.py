@@ -3,8 +3,12 @@ import logging.config
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from slowapi import _rate_limit_exceeded_handler
+from slowapi.errors import RateLimitExceeded
 
 from app.config import settings
+from app.rate_limit import limiter
+import app.firestore  # noqa: F401 — initialize Firebase/Firestore on startup
 
 if settings.ENVIRONMENT == "production":
     logging.config.dictConfig({
@@ -30,42 +34,50 @@ else:
 from app.routers import (
     ai_jobs,
     analytics,
+    audit as audit_router,
+    auth_lockout,
     banking,
+    webauthn as webauthn_router,
     barcode,
     brands,
     cag_xml,
     categories,
-    customers,
     finance,
     health,
     hr,
-    intelligence,
     inventory,
-    marketing,
+    manager_copilot,
+    master_data,
     nec_import,
     orders,
     plus,
     prices,
     promotions,
-    purchases,
     reports,
     sales,
     schedules,
+    supply_chain,
     skus,
-    staff_hr,
     stores,
-    suppliers,
     timesheets,
     users,
     pricing_engine,
     payroll,
+    stock_checks,
+    data_quality,
 )
+# Dormant (SQLAlchemy) routers - not yet migrated to Firestore; intentionally not imported:
+# customers, intelligence, marketing, purchases, staff_hr, suppliers
 
 app = FastAPI(
     title="RetailSG API",
     description="Backend API for RetailSG retail management system",
     version="0.1.0",
 )
+
+# Rate limiting (used by auth/password endpoints — see app.rate_limit)
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
 # CORS
 app.add_middleware(
@@ -80,10 +92,16 @@ app.add_middleware(
 app.include_router(health.router)
 app.include_router(stores.router)
 app.include_router(users.router)
+app.include_router(audit_router.router)
+app.include_router(auth_lockout.router)
+app.include_router(webauthn_router.router)
 app.include_router(skus.router)
 app.include_router(categories.router)
 app.include_router(brands.router)
 app.include_router(inventory.router)
+app.include_router(manager_copilot.router)
+app.include_router(master_data.router)
+app.include_router(supply_chain.router)
 app.include_router(orders.router)
 app.include_router(prices.router)
 app.include_router(promotions.router)
@@ -102,9 +120,5 @@ app.include_router(ai_jobs.router)
 app.include_router(banking.router)
 app.include_router(finance.router)
 app.include_router(reports.router)
-app.include_router(customers.router)
-app.include_router(suppliers.router)
-app.include_router(purchases.router)
-app.include_router(marketing.router)
-app.include_router(staff_hr.router)
-app.include_router(intelligence.router)
+app.include_router(stock_checks.router)
+app.include_router(data_quality.router)

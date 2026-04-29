@@ -17,15 +17,27 @@ CREATE IMAGE REPOSITORY IF NOT EXISTS multica_repo;
 SHOW IMAGE REPOSITORIES;
 -- Note: Use the repository URL from the output above to tag and push the `multica/Dockerfile`
 
--- 3. Define the Network Rule (For Egress if Multica needs to call out, though we keep it local for security)
+-- 3. Define the Network Rules (Ingress for API, Egress for DeepSeek)
 -- Expose the API to the public internet temporarily to link with FastAPI backend
 CREATE OR REPLACE NETWORK RULE multica_api_ingress_rule
     MODE = INGRESS
     TYPE = HOST_PORT
     VALUE_LIST = ('0.0.0.0:8000');
     
-CREATE OR REPLACE EXTERNAL ACCESS INTEGRATION multica_ingress_integration
-    ALLOWED_NETWORK_RULES = (multica_api_ingress_rule)
+-- Allow egress to DeepSeek API
+CREATE OR REPLACE NETWORK RULE deepseek_api_egress_rule
+    MODE = EGRESS
+    TYPE = HOST_PORT
+    VALUE_LIST = ('api.deepseek.com:443');
+
+-- Store the DeepSeek API Key as a Snowflake Secret
+CREATE OR REPLACE SECRET deepseek_api_key
+    TYPE = GENERIC_STRING
+    SECRET_STRING = 'sk-c38a121bf7674e9083d8x203dd24c0a51';
+    
+CREATE OR REPLACE EXTERNAL ACCESS INTEGRATION multica_access_integration
+    ALLOWED_NETWORK_RULES = (multica_api_ingress_rule, deepseek_api_egress_rule)
+    ALLOWED_AUTHENTICATION_SECRETS = (deepseek_api_key)
     ENABLED = true;
 
 -- 4. Create the Service (Once the Docker image is pushed to `multica_repo/multica:latest`)
@@ -38,6 +50,10 @@ CREATE SERVICE IF NOT EXISTS multica_service
         image: /retailmanagement/public/multica_repo/multica:latest
         env:
           SNOWFLAKE_WAREHOUSE: COMPUTE_WH
+        secrets:
+        - snowflakeSecret: deepseek_api_key
+          secretKey: secret_string
+          envVarName: DEEPSEEK_API_KEY
         ports:
         - name: api-port
           port: 8000
@@ -47,7 +63,8 @@ CREATE SERVICE IF NOT EXISTS multica_service
         public: true
     $$
     MIN_INSTANCES=1
-    MAX_INSTANCES=2;
+    MAX_INSTANCES=2
+    EXTERNAL_ACCESS_INTEGRATIONS = (multica_access_integration);
 
 -- 5. Monitor Service Status
 CALL SYSTEM$GET_SERVICE_STATUS('multica_service');

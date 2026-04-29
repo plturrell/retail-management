@@ -11,6 +11,10 @@ struct SettingsView: View {
     @State private var showStorePicker = false
     @State private var showProfileEdit = false
 
+    #if os(macOS)
+    @AppStorage("menuBarExtraEnabled") private var menuBarExtraEnabled: Bool = true
+    #endif
+
     var body: some View {
         NavigationStack {
             List {
@@ -24,7 +28,7 @@ struct SettingsView: View {
                             VStack(alignment: .leading, spacing: 4) {
                                 Text(user.fullName)
                                     .font(.headline)
-                                Text(user.email)
+                                Text(user.username)
                                     .font(.subheadline)
                                     .foregroundStyle(.secondary)
                                 if let phone = user.phone, !phone.isEmpty {
@@ -64,11 +68,28 @@ struct SettingsView: View {
 
                     if let store = storeViewModel.selectedStore {
                         LabeledContent("Location", value: store.location)
+                        if !storeDescriptor(for: store).isEmpty {
+                            LabeledContent("Type", value: storeDescriptor(for: store))
+                        }
                         if let start = store.businessHoursStart, let end = store.businessHoursEnd {
                             LabeledContent("Hours", value: "\(start) - \(end)")
                         }
+                        if let notes = store.notes, !notes.isEmpty {
+                            Text(notes)
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
                     }
                 }
+
+                #if os(macOS)
+                // macOS-only preferences.
+                Section("Mac Preferences") {
+                    Toggle(isOn: $menuBarExtraEnabled) {
+                        Label("Show Menu Bar Icon", systemImage: "menubar.rectangle")
+                    }
+                }
+                #endif
 
                 // Account section
                 Section {
@@ -87,6 +108,26 @@ struct SettingsView: View {
                 ProfileEditView()
             }
         }
+    }
+
+    private func storeDescriptor(for store: Store) -> String {
+        var parts: [String] = []
+        if store.storeType != .retail {
+            parts.append(store.storeType.rawValue)
+        }
+        if store.isHomeBase {
+            parts.append("home base")
+        }
+        if store.isTempWarehouse {
+            parts.append("temp warehouse")
+        }
+        if store.operationalStatus != .active {
+            parts.append(store.operationalStatus.rawValue)
+        }
+        if let plannedOpenDate = store.plannedOpenDate, !plannedOpenDate.isEmpty {
+            parts.append("opens \(plannedOpenDate)")
+        }
+        return parts.joined(separator: " • ")
     }
 }
 

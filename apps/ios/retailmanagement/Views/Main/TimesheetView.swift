@@ -136,7 +136,7 @@ struct TimesheetView: View {
             }
             .padding(.vertical, 4)
         }
-        .listStyle(.insetGrouped)
+        .insetGroupedListStyleCompat()
     }
 
     private func statusBadge(_ status: String) -> some View {

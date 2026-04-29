@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import date, datetime
+from enum import Enum
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -55,6 +56,18 @@ class BrandRead(BrandBase, UUIDMixin):
 
 # ---------- SKU ----------
 
+class InventoryType(str, Enum):
+    purchased = "purchased"
+    material = "material"
+    finished = "finished"
+
+
+class SourcingStrategy(str, Enum):
+    supplier_premade = "supplier_premade"
+    manufactured_standard = "manufactured_standard"
+    manufactured_custom = "manufactured_custom"
+
+
 class SKUBase(BaseModel):
     sku_code: str = Field(..., max_length=16)
     description: str = Field(..., max_length=60)
@@ -68,6 +81,16 @@ class SKUBase(BaseModel):
     is_unique_piece: bool = False
     use_stock: bool = True
     block_sales: bool = False
+    inventory_type: InventoryType = InventoryType.finished
+    sourcing_strategy: SourcingStrategy = SourcingStrategy.supplier_premade
+    supplier_name: str | None = Field(None, max_length=255)
+    supplier_sku_code: str | None = Field(None, max_length=64)
+    internal_code: str | None = Field(None, max_length=20, description="Internal/supplier product code (e.g. A008, H1063)")
+    amazon_sku: str | None = Field(None, max_length=64, description="Amazon Seller Central SKU")
+    google_product_id: str | None = Field(None, max_length=128, description="Google Merchant Center product ID")
+    nec_plu: str | None = Field(None, max_length=20, description="NEC POS PLU/barcode")
+    material: str | None = Field(None, max_length=100, description="Primary material/gemstone")
+    product_type: str | None = Field(None, max_length=50, description="Product type (Bracelet, Figurine, etc.)")
 
 
 class SKUCreate(SKUBase):
@@ -86,10 +109,23 @@ class SKUUpdate(BaseModel):
     is_unique_piece: bool | None = None
     use_stock: bool | None = None
     block_sales: bool | None = None
+    inventory_type: InventoryType | None = None
+    sourcing_strategy: SourcingStrategy | None = None
+    supplier_name: str | None = Field(None, max_length=255)
+    supplier_sku_code: str | None = Field(None, max_length=64)
+    internal_code: str | None = Field(None, max_length=20)
+    amazon_sku: str | None = Field(None, max_length=64)
+    google_product_id: str | None = Field(None, max_length=128)
+    nec_plu: str | None = Field(None, max_length=20)
+    material: str | None = Field(None, max_length=100)
+    product_type: str | None = Field(None, max_length=50)
 
 
 class SKURead(SKUBase, UUIDMixin, TimestampMixin):
     store_id: UUID
+    source: str | None = None
+    created_by: UUID | None = None
+    updated_by: UUID | None = None
 
 
 # ---------- PLU ----------
@@ -133,7 +169,9 @@ class PriceUpdate(BaseModel):
 
 
 class PriceRead(PriceBase, UUIDMixin, TimestampMixin):
-    pass
+    source: str | None = None
+    created_by: UUID | None = None
+    updated_by: UUID | None = None
 
 
 # ---------- Promotion ----------
@@ -186,3 +224,61 @@ class InventoryUpdate(BaseModel):
 
 class InventoryRead(InventoryBase, UUIDMixin, TimestampMixin):
     last_updated: datetime
+    source: str | None = None
+    created_by: UUID | None = None
+    updated_by: UUID | None = None
+
+
+# ---------- Stock Check ----------
+
+class StockCheckStatus(str, Enum):
+    in_progress = "in_progress"
+    completed = "completed"
+    cancelled = "cancelled"
+
+
+class StockCheckBase(BaseModel):
+    check_date: date
+    store_location: str | None = Field(None, max_length=255)
+    notes: str | None = Field(None, max_length=1000)
+    status: StockCheckStatus = StockCheckStatus.in_progress
+
+
+class StockCheckCreate(StockCheckBase):
+    store_id: UUID
+
+
+class StockCheckUpdate(BaseModel):
+    check_date: date | None = None
+    store_location: str | None = Field(None, max_length=255)
+    notes: str | None = Field(None, max_length=1000)
+    status: StockCheckStatus | None = None
+
+
+class StockCheckRead(StockCheckBase, UUIDMixin, TimestampMixin):
+    store_id: UUID
+    total_items: int = 0
+    total_quantity: int = 0
+    created_by: UUID | None = None
+
+
+class StockCheckItemBase(BaseModel):
+    sku_id: UUID | None = None
+    product_code: str | None = Field(None, max_length=20)
+    product_name: str = Field(..., max_length=255)
+    checked_qty: int = 0
+    expected_qty: int | None = None
+    unit_price: float | None = None
+    location: str | None = Field(None, max_length=100)
+    condition: str | None = Field(None, max_length=100)
+    notes: str | None = Field(None, max_length=500)
+
+
+class StockCheckItemCreate(StockCheckItemBase):
+    pass
+
+
+class StockCheckItemRead(StockCheckItemBase, UUIDMixin):
+    stock_check_id: UUID
+    variance: int | None = None
+    created_at: datetime

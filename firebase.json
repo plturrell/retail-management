@@ -1,11 +1,15 @@
 {
   "projects": {
-    "default": "project-b41c0c0d-6eea-4e9d-a78"
+    "default": "victoriaensoapp"
   },
   "auth": {
     "providers": [
       "email"
     ]
+  },
+  "firestore": {
+    "rules": "firestore.rules",
+    "indexes": "firestore.indexes.json"
   },
   "hosting": {
     "public": "apps/staff-portal/dist",

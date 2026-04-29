@@ -1,5 +1,5 @@
 # ─── RetailSG Local Development ──────────────────────────────
-# GCP Project: project-b41c0c0d-6eea-4e9d-a78
+# GCP Project: victoriaensoapp
 #
 # Usage:
 #   docker compose up          # local Postgres
@@ -26,7 +26,7 @@ services:
   cloud-sql-proxy:
     image: gcr.io/cloud-sql-connectors/cloud-sql-proxy:2
     command:
-      - "project-b41c0c0d-6eea-4e9d-a78:asia-southeast1:retailsg"
+      - "victoriaensoapp:asia-southeast1:retailsg"
       - "--port=5433"
     ports:
       - "5433:5433"
@@ -48,7 +48,8 @@ services:
       - .env
     environment:
       DATABASE_URL: postgresql+asyncpg://retailsg:retailsg@db:5432/retailsg
-      FIREBASE_PROJECT_ID: project-b41c0c0d-6eea-4e9d-a78
+      FIREBASE_PROJECT_ID: victoriaensoapp
+      AI_GCS_BUCKET: victoriaensoapp-ai-artifacts
     depends_on:
       db:
         condition: service_healthy

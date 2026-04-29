@@ -30,10 +30,22 @@ class ExpenseSection(BaseModel):
     breakdown: list[LineItem]
 
 
+class LaborSection(BaseModel):
+    hours_worked: float
+    sales_order_count: int
+    sales_amount: float
+    payroll_gross: float
+    cpf_employer: float
+    total_labor_cost: float
+    sales_per_labor_hour: float
+    labor_cost_percent_of_sales: float
+
+
 class ProfitLossReport(BaseModel):
     period: ReportPeriod
     revenue: RevenueSection
     expenses: ExpenseSection
+    labor: LaborSection
     net_profit: float
     margin_percent: float
 
@@ -98,14 +110,23 @@ class RevenueByChannelReport(BaseModel):
 class EmployeeCostLine(BaseModel):
     user_id: str
     full_name: str
+    hours_worked: float
+    sales_amount: float
+    sales_order_count: int
+    sales_per_hour: float
     gross_pay: float
     cpf_employer: float
+    labor_cost_percent_of_sales: float
     total_cost: float
 
 
 class EmployeeCostReport(BaseModel):
     period: ReportPeriod
     employees: list[EmployeeCostLine]
+    total_hours_worked: float
+    total_sales_amount: float
+    total_sales_order_count: int
+    sales_per_labor_hour: float
     total_salary: float
     total_cpf_employer: float
     total_cost: float

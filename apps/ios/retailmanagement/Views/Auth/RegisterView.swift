@@ -9,14 +9,14 @@ struct RegisterView: View {
     @Environment(AuthViewModel.self) var authViewModel
     @Environment(\.dismiss) private var dismiss
     @State private var fullName = ""
-    @State private var email = ""
+    @State private var username = ""
     @State private var password = ""
     @State private var confirmPassword = ""
     @State private var localError: String?
 
     // MARK: - Fluid Focus States
     enum Field {
-        case fullName, email, password, confirmPassword
+        case fullName, username, password, confirmPassword
     }
     @FocusState private var focusedField: Field?
 
@@ -44,19 +44,19 @@ struct RegisterView: View {
                             .shadow(color: focusedField == .fullName ? Color.blue.opacity(0.2) : .clear, radius: 8, x: 0, y: 4)
                             .animation(.easeOut(duration: 0.2), value: focusedField)
 
-                        TextField("Email", text: $email)
-                            .focused($focusedField, equals: .email)
-                            .textContentType(.emailAddress)
+                        TextField("Username", text: $username)
+                            .focused($focusedField, equals: .username)
+                            .textContentType(.username)
                             #if canImport(UIKit)
-                            .keyboardType(.emailAddress)
+                            .keyboardType(.asciiCapable)
                             .textInputAutocapitalization(.never)
                             #endif
                             .autocorrectionDisabled()
                             .padding()
                             .background(Color.systemBackground.opacity(0.5))
                             .clipShape(RoundedRectangle(cornerRadius: 12))
-                            .overlay(RoundedRectangle(cornerRadius: 12).stroke(focusedField == .email ? Color.blue : Color.primary.opacity(0.1), lineWidth: focusedField == .email ? 2 : 1))
-                            .shadow(color: focusedField == .email ? Color.blue.opacity(0.2) : .clear, radius: 8, x: 0, y: 4)
+                            .overlay(RoundedRectangle(cornerRadius: 12).stroke(focusedField == .username ? Color.blue : Color.primary.opacity(0.1), lineWidth: focusedField == .username ? 2 : 1))
+                            .shadow(color: focusedField == .username ? Color.blue.opacity(0.2) : .clear, radius: 8, x: 0, y: 4)
                             .animation(.easeOut(duration: 0.2), value: focusedField)
 
                         SecureField("Password", text: $password)
@@ -113,6 +113,7 @@ struct RegisterView: View {
                     }
                     .disabled(authViewModel.isLoading)
                 }
+                .macOSFormWidth(520)
             }
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
@@ -139,7 +140,7 @@ struct RegisterView: View {
         }
 
         Task {
-            await authViewModel.register(email: email, password: password, fullName: fullName)
+            await authViewModel.register(email: AuthService.authEmail(forUsername: username), password: password, fullName: fullName)
             if authViewModel.authState == .authenticated {
                 HapticManager.generateFeedback(style: .success)
                 dismiss()

@@ -1,16 +1,28 @@
+import math
+import uuid as _uuid
 from datetime import datetime, timezone
-from typing import Dict, List, Optional, Set
+from typing import Optional
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile, File
-from sqlalchemy import and_, select, func
-from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import selectinload
+from google.cloud.firestore_v1.client import Client as FirestoreClient
+from google.cloud.firestore_v1 import SERVER_TIMESTAMP
 
-from app.database import get_db
-from app.models.timesheet import TimeEntry, TimeEntryStatus
-from app.models.user import RoleEnum, User, UserStoreRole
-from app.auth.dependencies import get_current_user, require_store_role
+from app.firestore import get_firestore_db
+from app.firestore_helpers import (
+    create_document,
+    doc_to_dict,
+    get_document,
+    query_collection,
+    update_document,
+    delete_document,
+)
+from app.auth.dependencies import (
+    RoleEnum,
+    get_current_user,
+    require_store_role,
+    require_store_access,
+)
 from app.schemas.common import DataResponse, PaginatedResponse
 from app.schemas.timesheet import (
     ClockInRequest,
@@ -28,79 +40,171 @@ from app.services.ve_payroll_import import import_ve_payroll
 router = APIRouter(tags=["timesheets"])
 
 
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+def _col_path(store_id: UUID) -> str:
+    """Return the Firestore collection path for timesheets under a store."""
+    return f"stores/{store_id}/timesheets"
+
+
+def _user_id(user: object) -> str:
+    if isinstance(user, dict):
+        return str(user.get("id", ""))
+    return str(getattr(user, "id", ""))
+
+
+def _user_name(user: object) -> str:
+    if isinstance(user, dict):
+        return str(user.get("full_name", ""))
+    return str(getattr(user, "full_name", ""))
+
+
+def _user_store_roles(user: object) -> list:
+    if isinstance(user, dict):
+        return list(user.get("store_roles", []))
+    return list(getattr(user, "store_roles", []))
+
+
+def _store_role_store_id(store_role: object) -> UUID | None:
+    raw = store_role.get("store_id") if isinstance(store_role, dict) else getattr(store_role, "store_id", None)
+    if raw is None:
+        return None
+    return raw if isinstance(raw, UUID) else UUID(str(raw))
+
+
+def _entry_clock_in(entry: dict) -> datetime | None:
+    value = entry.get("clock_in")
+    if value is None:
+        return None
+    if isinstance(value, datetime):
+        return value if value.tzinfo else value.replace(tzinfo=timezone.utc)
+    if isinstance(value, str):
+        try:
+            parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        except ValueError:
+            return None
+        return parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
+    return None
+
+
+def _open_entries_for_user(entries: list[dict], user_id: str) -> list[dict]:
+    return [
+        entry for entry in entries
+        if entry.get("user_id") == user_id and entry.get("clock_out") is None
+    ]
+
+
+def _entry_to_read(data: dict) -> TimeEntryRead:
+    """Convert a Firestore timesheet dict to a TimeEntryRead schema."""
+    return TimeEntryRead(
+        id=UUID(data["id"]) if isinstance(data.get("id"), str) else data.get("id"),
+        user_id=UUID(data["user_id"]) if isinstance(data.get("user_id"), str) else data.get("user_id"),
+        store_id=UUID(data["store_id"]) if isinstance(data.get("store_id"), str) else data.get("store_id"),
+        clock_in=data.get("clock_in"),
+        clock_out=data.get("clock_out"),
+        break_minutes=data.get("break_minutes", 0),
+        notes=data.get("notes"),
+        status=data.get("status", "pending"),
+        approved_by=(
+            UUID(data["approved_by"]) if isinstance(data.get("approved_by"), str) else data.get("approved_by")
+        ),
+        created_at=data.get("created_at", datetime.now(timezone.utc)),
+        updated_at=data.get("updated_at"),
+    )
+
+
 # ===================== Clock In / Out =====================
 
 
 @router.post("/api/timesheets/clock-in", response_model=DataResponse[TimeEntryRead], status_code=201)
 async def clock_in(
     payload: ClockInRequest,
-    user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
+    user=Depends(get_current_user),
+    db: FirestoreClient = Depends(get_firestore_db),
 ):
-    # Check if already clocked in (has an open entry with no clock_out)
-    result = await db.execute(
-        select(TimeEntry).where(
-            TimeEntry.user_id == user.id,
-            TimeEntry.clock_out.is_(None),
-        )
-    )
-    existing = result.scalar_one_or_none()
-    if existing is not None:
+    # Check if already clocked in (open entry with no clock_out)
+    col = _col_path(payload.store_id)
+    user_id = _user_id(user)
+    open_entries = _open_entries_for_user(query_collection(col, order_by="-clock_in"), user_id)
+    if open_entries:
         raise HTTPException(status_code=400, detail="Already clocked in")
 
-    entry = TimeEntry(
-        user_id=user.id,
-        store_id=payload.store_id,
-        clock_in=datetime.now(timezone.utc),
-        notes=payload.notes,
-        status=TimeEntryStatus.pending,
-    )
-    db.add(entry)
-    await db.flush()
-    await db.refresh(entry)
-    return DataResponse(data=TimeEntryRead.model_validate(entry))
+    now = datetime.now(timezone.utc)
+    doc_id = str(_uuid.uuid4())
+    entry_data = {
+        "user_id": user_id,
+        "store_id": str(payload.store_id),
+        "clock_in": now,
+        "clock_out": None,
+        "break_minutes": 0,
+        "notes": payload.notes,
+        "status": "pending",
+        "approved_by": None,
+        "user_name": _user_name(user),
+        "created_at": now,
+        "updated_at": now,
+    }
+    result = create_document(col, entry_data, doc_id=doc_id)
+    return DataResponse(data=_entry_to_read(result))
 
 
 @router.post("/api/timesheets/clock-out", response_model=DataResponse[TimeEntryRead])
 async def clock_out(
     payload: ClockOutRequest,
-    user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
+    user=Depends(get_current_user),
+    db: FirestoreClient = Depends(get_firestore_db),
 ):
-    result = await db.execute(
-        select(TimeEntry).where(
-            TimeEntry.user_id == user.id,
-            TimeEntry.clock_out.is_(None),
-        )
-    )
-    entry = result.scalar_one_or_none()
-    if entry is None:
+    # Find all stores the user might be clocked into — check each store's timesheets
+    # We need to find the open entry. Query all stores' timesheets for this user.
+    # Since timesheets are per-store, iterate user's store roles.
+    open_entry = None
+    entry_col = None
+    user_id = _user_id(user)
+    for sr in _user_store_roles(user):
+        store_id = _store_role_store_id(sr)
+        if store_id is None:
+            continue
+        col = _col_path(store_id)
+        entries = _open_entries_for_user(query_collection(col, order_by="-clock_in"), user_id)
+        if entries:
+            open_entry = entries[0]
+            entry_col = col
+            break
+
+    if open_entry is None:
         raise HTTPException(status_code=400, detail="Not currently clocked in")
 
-    entry.clock_out = datetime.now(timezone.utc)
-    entry.break_minutes = payload.break_minutes
+    now = datetime.now(timezone.utc)
+    update_data = {
+        "clock_out": now,
+        "break_minutes": payload.break_minutes,
+        "updated_at": now,
+    }
     if payload.notes is not None:
-        entry.notes = payload.notes
+        update_data["notes"] = payload.notes
 
-    await db.flush()
-    await db.refresh(entry)
-    return DataResponse(data=TimeEntryRead.model_validate(entry))
+    updated = update_document(entry_col, open_entry["id"], update_data)
+    return DataResponse(data=_entry_to_read(updated))
 
 
 @router.get("/api/timesheets/status", response_model=DataResponse[Optional[TimeEntryRead]])
 async def clock_status(
-    user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
+    user=Depends(get_current_user),
+    db: FirestoreClient = Depends(get_firestore_db),
 ):
-    result = await db.execute(
-        select(TimeEntry).where(
-            TimeEntry.user_id == user.id,
-            TimeEntry.clock_out.is_(None),
-        )
-    )
-    entry = result.scalar_one_or_none()
-    data = TimeEntryRead.model_validate(entry) if entry else None
-    return DataResponse(data=data)
+    # Search across user's stores for an open entry
+    user_id = _user_id(user)
+    for sr in _user_store_roles(user):
+        store_id = _store_role_store_id(sr)
+        if store_id is None:
+            continue
+        col = _col_path(store_id)
+        entries = _open_entries_for_user(query_collection(col, order_by="-clock_in"), user_id)
+        if entries:
+            return DataResponse(data=_entry_to_read(entries[0]))
+    return DataResponse(data=None)
 
 
 # ===================== Store-scoped Timesheet Management =====================
@@ -115,31 +219,35 @@ async def list_timesheets(
     date_from: Optional[datetime] = None,
     date_to: Optional[datetime] = None,
     status: Optional[str] = None,
-    _: UserStoreRole = Depends(require_store_role(RoleEnum.manager)),
-    db: AsyncSession = Depends(get_db),
+    _=Depends(require_store_role(RoleEnum.manager)),
+    db: FirestoreClient = Depends(get_firestore_db),
 ):
-    base = select(TimeEntry).where(TimeEntry.store_id == store_id)
-
+    col = _col_path(store_id)
+    all_items = query_collection(col, order_by="-clock_in")
     if user_id is not None:
-        base = base.where(TimeEntry.user_id == user_id)
+        all_items = [item for item in all_items if item.get("user_id") == str(user_id)]
     if date_from is not None:
-        base = base.where(TimeEntry.clock_in >= date_from)
+        date_from_utc = date_from if date_from.tzinfo else date_from.replace(tzinfo=timezone.utc)
+        all_items = [
+            item for item in all_items
+            if (clock_in := _entry_clock_in(item)) is not None and clock_in >= date_from_utc
+        ]
     if date_to is not None:
-        base = base.where(TimeEntry.clock_in <= date_to)
+        date_to_utc = date_to if date_to.tzinfo else date_to.replace(tzinfo=timezone.utc)
+        all_items = [
+            item for item in all_items
+            if (clock_in := _entry_clock_in(item)) is not None and clock_in <= date_to_utc
+        ]
     if status is not None:
-        base = base.where(TimeEntry.status == status)
+        all_items = [item for item in all_items if item.get("status") == status]
 
-    count_result = await db.execute(
-        select(func.count()).select_from(base.subquery())
-    )
-    total = count_result.scalar() or 0
+    total = len(all_items)
 
-    query = base.order_by(TimeEntry.clock_in.desc()).offset((page - 1) * page_size).limit(page_size)
-    result = await db.execute(query)
-    items = result.scalars().all()
+    offset = (page - 1) * page_size
+    page_items = all_items[offset : offset + page_size]
 
     return PaginatedResponse(
-        data=[TimeEntryRead.model_validate(i) for i in items],
+        data=[_entry_to_read(i) for i in page_items],
         total=total,
         page=page,
         page_size=page_size,
@@ -151,38 +259,35 @@ async def timesheet_summary(
     store_id: UUID,
     date_from: datetime,
     date_to: datetime,
-    _: UserStoreRole = Depends(require_store_role(RoleEnum.manager)),
-    db: AsyncSession = Depends(get_db),
+    _=Depends(require_store_role(RoleEnum.manager)),
+    db: FirestoreClient = Depends(get_firestore_db),
 ):
-    result = await db.execute(
-        select(TimeEntry)
-        .options(selectinload(TimeEntry.user))
-        .where(
-            TimeEntry.store_id == store_id,
-            TimeEntry.clock_in >= date_from,
-            TimeEntry.clock_in <= date_to,
-        ).order_by(TimeEntry.clock_in)
-    )
-    entries = result.scalars().all()
+    col = _col_path(store_id)
+    date_from_utc = date_from if date_from.tzinfo else date_from.replace(tzinfo=timezone.utc)
+    date_to_utc = date_to if date_to.tzinfo else date_to.replace(tzinfo=timezone.utc)
+    entries_data = [
+        entry for entry in query_collection(col, order_by="clock_in")
+        if (clock_in := _entry_clock_in(entry)) is not None and date_from_utc <= clock_in <= date_to_utc
+    ]
 
     # Group by user
-    user_entries: dict[UUID, list] = {}
-    user_names: dict[UUID, str] = {}
-    for entry in entries:
-        uid = entry.user_id
+    user_entries: dict[str, list] = {}
+    user_names: dict[str, str] = {}
+    for entry in entries_data:
+        uid = entry.get("user_id", "")
         if uid not in user_entries:
             user_entries[uid] = []
-            user_names[uid] = entry.user.full_name if entry.user else "Unknown"
+            user_names[uid] = entry.get("user_name", "Unknown")
         user_entries[uid].append(entry)
 
     summaries = []
     for uid, uentries in user_entries.items():
-        validated = [TimeEntryRead.model_validate(e) for e in uentries]
+        validated = [_entry_to_read(e) for e in uentries]
         total_hours = sum(e.hours_worked or 0 for e in validated)
         unique_days = len(set(e.clock_in.date() for e in validated))
         summaries.append(
             TimesheetSummaryEntry(
-                user_id=uid,
+                user_id=UUID(uid) if isinstance(uid, str) else uid,
                 full_name=user_names[uid],
                 total_hours=round(total_hours, 2),
                 total_days=unique_days,
@@ -204,51 +309,42 @@ async def update_timesheet(
     store_id: UUID,
     entry_id: UUID,
     payload: TimeEntryUpdate,
-    _: UserStoreRole = Depends(require_store_role(RoleEnum.manager)),
-    user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
+    _=Depends(require_store_role(RoleEnum.manager)),
+    user=Depends(get_current_user),
+    db: FirestoreClient = Depends(get_firestore_db),
 ):
-    result = await db.execute(
-        select(TimeEntry).where(
-            TimeEntry.id == entry_id,
-            TimeEntry.store_id == store_id,
-        )
-    )
-    entry = result.scalar_one_or_none()
+    col = _col_path(store_id)
+    entry = get_document(col, str(entry_id))
     if entry is None:
         raise HTTPException(status_code=404, detail="Time entry not found")
 
     update_data = payload.model_dump(exclude_unset=True)
 
+    # Convert UUID values to strings for Firestore
+    for key in ("clock_out",):
+        pass  # datetime is fine as-is
+
     # If status is being changed to approved/rejected, record approver
     if "status" in update_data:
-        entry.approved_by = user.id
+        update_data["approved_by"] = _user_id(user)
 
-    for key, value in update_data.items():
-        setattr(entry, key, value)
-
-    await db.flush()
-    await db.refresh(entry)
-    return DataResponse(data=TimeEntryRead.model_validate(entry))
+    update_data["updated_at"] = datetime.now(timezone.utc)
+    updated = update_document(col, str(entry_id), update_data)
+    return DataResponse(data=_entry_to_read(updated))
 
 
 @router.delete("/api/stores/{store_id}/timesheets/{entry_id}", status_code=204)
 async def delete_timesheet(
     store_id: UUID,
     entry_id: UUID,
-    _: UserStoreRole = Depends(require_store_role(RoleEnum.manager)),
-    db: AsyncSession = Depends(get_db),
+    _=Depends(require_store_role(RoleEnum.manager)),
+    db: FirestoreClient = Depends(get_firestore_db),
 ):
-    result = await db.execute(
-        select(TimeEntry).where(
-            TimeEntry.id == entry_id,
-            TimeEntry.store_id == store_id,
-        )
-    )
-    entry = result.scalar_one_or_none()
+    col = _col_path(store_id)
+    entry = get_document(col, str(entry_id))
     if entry is None:
         raise HTTPException(status_code=404, detail="Time entry not found")
-    await db.delete(entry)
+    delete_document(col, str(entry_id))
 
 
 # ===================== Timesheet Import =====================
@@ -261,16 +357,15 @@ async def delete_timesheet(
 async def import_timesheets(
     store_id: UUID,
     file: UploadFile = File(...),
-    _: UserStoreRole = Depends(require_store_role(RoleEnum.manager)),
-    db: AsyncSession = Depends(get_db),
+    _=Depends(require_store_role(RoleEnum.manager)),
+    db: FirestoreClient = Depends(get_firestore_db),
 ):
     """Import legacy timesheet data from a CSV or Excel file."""
     content = await file.read()
     filename = file.filename or "upload.csv"
-    import_result = await import_timesheet_file(db, store_id, filename, content)
+    import_result = import_timesheet_file(db, store_id, filename, content)
     report = TimesheetImportReport(**import_result.to_dict())
     return DataResponse(data=report)
-
 
 
 @router.post(
@@ -280,8 +375,8 @@ async def import_timesheets(
 async def import_ve_payroll_endpoint(
     store_id: UUID,
     file: UploadFile = File(...),
-    _: UserStoreRole = Depends(require_store_role(RoleEnum.manager)),
-    db: AsyncSession = Depends(get_db),
+    _=Depends(require_store_role(RoleEnum.manager)),
+    db: FirestoreClient = Depends(get_firestore_db),
 ):
     """Import Victoria Enso legacy payroll Excel file.
 
@@ -290,6 +385,6 @@ async def import_ve_payroll_endpoint(
     hours and sales, creates TimeEntry and Order records.
     """
     content = await file.read()
-    import_result = await import_ve_payroll(db, store_id, content)
+    import_result = import_ve_payroll(db, store_id, content)
     report = VEPayrollImportReport(**import_result.to_dict())
     return DataResponse(data=report)

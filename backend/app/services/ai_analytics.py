@@ -16,13 +16,24 @@ from typing import Optional
 from uuid import UUID
 
 from pydantic import BaseModel
-from sqlalchemy import func, select
-from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.inventory import Inventory, Price, SKU, Category
-from app.models.order import Order, OrderItem, OrderStatus
+from app.schemas.inventory import InventoryType
+from app.firestore_helpers import get_document, query_collection
+from app.services.supply_chain import list_stage_inventory
 
 logger = logging.getLogger(__name__)
+
+
+def _sku_collection(store_id: UUID) -> str:
+    return f"stores/{store_id}/inventory"
+
+
+def _price_collection(store_id: UUID) -> str:
+    return f"stores/{store_id}/prices"
+
+
+def _stock_collection(store_id: UUID) -> str:
+    return f"stores/{store_id}/stock"
 
 
 # ──────────────────── Response Models ────────────────────
@@ -82,45 +93,41 @@ class AnalyticsReport(BaseModel):
 
 
 async def compute_margin_analysis(
-    db: AsyncSession,
     store_id: UUID,
     from_date: date,
     to_date: date,
 ) -> list[MarginItem]:
     """Calculate profit margins per SKU from actual sales data."""
-    range_start = datetime.combine(from_date, datetime.min.time())
-    range_end = datetime.combine(to_date, datetime.max.time())
-
-    # Aggregate sales by SKU
-    query = (
-        select(
-            OrderItem.sku_id,
-            func.sum(OrderItem.qty).label("total_qty"),
-            func.sum(OrderItem.line_total).label("total_revenue"),
-        )
-        .select_from(OrderItem)
-        .join(Order, OrderItem.order_id == Order.id)
-        .where(
-            Order.store_id == store_id,
-            Order.status != OrderStatus.voided,
-            Order.order_date >= range_start,
-            Order.order_date <= range_end,
-        )
-        .group_by(OrderItem.sku_id)
+    # Get orders for the period (non-voided)
+    orders = query_collection(
+        f"stores/{store_id}/orders",
+        filters=[
+            ("order_date", ">=", from_date.isoformat()),
+            ("order_date", "<=", to_date.isoformat()),
+        ],
     )
-    result = await db.execute(query)
-    rows = result.all()
+
+    # Aggregate sales by SKU from embedded order items
+    sku_agg: dict[str, dict] = {}
+    for order in orders:
+        if order.get("status") == "voided":
+            continue
+        for item in order.get("items", []):
+            sid = item.get("sku_id", "")
+            if sid not in sku_agg:
+                sku_agg[sid] = {"total_qty": 0, "total_revenue": 0.0}
+            sku_agg[sid]["total_qty"] += int(item.get("qty", 0))
+            sku_agg[sid]["total_revenue"] += float(item.get("line_total", 0))
 
     items: list[MarginItem] = []
-    for sku_id, total_qty, total_revenue in rows:
-        sku_result = await db.execute(select(SKU).where(SKU.id == sku_id))
-        sku = sku_result.scalar_one_or_none()
+    for sku_id, agg in sku_agg.items():
+        sku = get_document(_sku_collection(store_id), sku_id)
         if sku is None:
             continue
 
-        cost = float(sku.cost_price) if sku.cost_price else None
-        revenue = float(total_revenue or 0)
-        qty = int(total_qty or 0)
+        cost = float(sku.get("cost_price", 0)) if sku.get("cost_price") else None
+        revenue = agg["total_revenue"]
+        qty = agg["total_qty"]
 
         if cost and qty > 0:
             total_cost = cost * qty
@@ -133,20 +140,20 @@ async def compute_margin_analysis(
             health = "healthy"
 
         # Get current selling price
-        price_result = await db.execute(
-            select(Price.price_incl_tax)
-            .where(Price.sku_id == sku_id, Price.store_id == store_id)
-            .order_by(Price.valid_from.desc())
-            .limit(1)
+        prices = query_collection(
+            _price_collection(store_id),
+            filters=[("sku_id", "==", sku_id)],
+            order_by="-valid_from",
+            limit=1,
         )
-        selling_price = price_result.scalar_one_or_none()
+        selling_price = float(prices[0].get("price_incl_tax", 0)) if prices else None
 
         items.append(MarginItem(
             sku_id=str(sku_id),
-            sku_code=sku.sku_code,
-            description=sku.description,
+            sku_code=sku.get("sku_code", "UNKNOWN"),
+            description=sku.get("description", ""),
             cost_price=cost,
-            selling_price=float(selling_price) if selling_price else None,
+            selling_price=selling_price,
             margin_pct=margin_pct,
             total_sold=qty,
             total_revenue=round(revenue, 2),
@@ -154,7 +161,6 @@ async def compute_margin_analysis(
             health=health,
         ))
 
-    # Sort by profit descending
     items.sort(key=lambda x: x.total_profit, reverse=True)
     return items
 
@@ -163,31 +169,34 @@ async def compute_margin_analysis(
 
 
 async def compute_sales_trends(
-    db: AsyncSession,
     store_id: UUID,
     from_date: date,
     to_date: date,
     granularity: str = "weekly",
 ) -> list[SalesTrend]:
     """Aggregate sales into weekly or daily buckets for trend analysis."""
-    range_start = datetime.combine(from_date, datetime.min.time())
-    range_end = datetime.combine(to_date, datetime.max.time())
-
-    result = await db.execute(
-        select(Order).where(
-            Order.store_id == store_id,
-            Order.status != OrderStatus.voided,
-            Order.order_date >= range_start,
-            Order.order_date <= range_end,
-        ).order_by(Order.order_date)
+    orders = query_collection(
+        f"stores/{store_id}/orders",
+        filters=[
+            ("order_date", ">=", from_date.isoformat()),
+            ("order_date", "<=", to_date.isoformat()),
+        ],
+        order_by="order_date",
     )
-    orders = result.scalars().all()
+
+    # Filter out voided
+    orders = [o for o in orders if o.get("status") != "voided"]
+
+    def _get_date(o):
+        od = o.get("order_date", "")
+        if isinstance(od, str):
+            return date.fromisoformat(od[:10])
+        return od.date() if hasattr(od, "date") else od
 
     if granularity == "daily":
-        bucket_fn = lambda o: o.order_date.date().isoformat()
+        bucket_fn = lambda o: _get_date(o).isoformat()
     else:
-        # Weekly: group by ISO week start (Monday)
-        bucket_fn = lambda o: (o.order_date.date() - timedelta(days=o.order_date.weekday())).isoformat()
+        bucket_fn = lambda o: (_get_date(o) - timedelta(days=_get_date(o).weekday())).isoformat()
 
     buckets: dict[str, list] = {}
     for o in orders:
@@ -196,7 +205,7 @@ async def compute_sales_trends(
 
     trends = []
     for period, period_orders in sorted(buckets.items()):
-        total = sum(float(o.grand_total) for o in period_orders)
+        total = sum(float(o.get("grand_total", 0)) for o in period_orders)
         count = len(period_orders)
         avg = total / count if count > 0 else 0.0
         trends.append(SalesTrend(
@@ -213,79 +222,55 @@ async def compute_sales_trends(
 
 
 async def compute_demand_forecasts(
-    db: AsyncSession,
     store_id: UUID,
     lookback_days: int = 60,
     top_n: int = 20,
 ) -> list[DemandForecast]:
-    """Simple linear trend-based demand forecast per SKU.
-
-    Compares sales in the recent half vs older half of the lookback window
-    to determine if demand is rising, stable, or declining.
-    """
+    """Simple linear trend-based demand forecast per SKU."""
     now = datetime.now(timezone.utc)
     cutoff = now - timedelta(days=lookback_days)
     midpoint = now - timedelta(days=lookback_days // 2)
 
-    # Top SKUs by volume
-    top_query = (
-        select(
-            OrderItem.sku_id,
-            func.sum(OrderItem.qty).label("total_qty"),
-        )
-        .select_from(OrderItem)
-        .join(Order, OrderItem.order_id == Order.id)
-        .where(
-            Order.store_id == store_id,
-            Order.status != OrderStatus.voided,
-            Order.order_date >= cutoff,
-        )
-        .group_by(OrderItem.sku_id)
-        .order_by(func.sum(OrderItem.qty).desc())
-        .limit(top_n)
+    # Get all orders in lookback window
+    orders = query_collection(
+        f"stores/{store_id}/orders",
+        filters=[("order_date", ">=", cutoff.date().isoformat())],
     )
-    result = await db.execute(top_query)
-    top_skus = result.all()
+    orders = [o for o in orders if o.get("status") != "voided"]
+
+    # Aggregate by SKU
+    sku_totals: dict[str, int] = {}
+    sku_older: dict[str, int] = {}
+    sku_newer: dict[str, int] = {}
+    for order in orders:
+        od = order.get("order_date", "")
+        if isinstance(od, str):
+            order_date = datetime.fromisoformat(od)
+        else:
+            order_date = od
+        for item in order.get("items", []):
+            sid = item.get("sku_id", "")
+            qty = int(item.get("qty", 0))
+            sku_totals[sid] = sku_totals.get(sid, 0) + qty
+            if order_date < midpoint:
+                sku_older[sid] = sku_older.get(sid, 0) + qty
+            else:
+                sku_newer[sid] = sku_newer.get(sid, 0) + qty
+
+    # Sort by total qty, take top_n
+    sorted_skus = sorted(sku_totals.items(), key=lambda x: x[1], reverse=True)[:top_n]
 
     forecasts = []
-    for sku_id, total_qty in top_skus:
-        total_qty = int(total_qty)
+    for sku_id, total_qty in sorted_skus:
         avg_daily = total_qty / lookback_days
 
-        # Split into two halves for trend
-        older_q = (
-            select(func.coalesce(func.sum(OrderItem.qty), 0))
-            .select_from(OrderItem)
-            .join(Order, OrderItem.order_id == Order.id)
-            .where(
-                Order.store_id == store_id,
-                Order.status != OrderStatus.voided,
-                Order.order_date >= cutoff,
-                Order.order_date < midpoint,
-                OrderItem.sku_id == sku_id,
-            )
-        )
-        newer_q = (
-            select(func.coalesce(func.sum(OrderItem.qty), 0))
-            .select_from(OrderItem)
-            .join(Order, OrderItem.order_id == Order.id)
-            .where(
-                Order.store_id == store_id,
-                Order.status != OrderStatus.voided,
-                Order.order_date >= midpoint,
-                OrderItem.sku_id == sku_id,
-            )
-        )
-        older_result = await db.execute(older_q)
-        newer_result = await db.execute(newer_q)
-        older_sales = int(older_result.scalar() or 0)
-        newer_sales = int(newer_result.scalar() or 0)
+        older_sales = sku_older.get(sku_id, 0)
+        newer_sales = sku_newer.get(sku_id, 0)
 
         if older_sales > 0:
             change_pct = (newer_sales - older_sales) / older_sales
             trend = "rising" if change_pct > 0.15 else "declining" if change_pct < -0.15 else "stable"
-            # Adjust forecast based on trend
-            trend_multiplier = 1 + (change_pct * 0.5)  # dampen the trend
+            trend_multiplier = 1 + (change_pct * 0.5)
         else:
             trend = "stable"
             trend_multiplier = 1.0
@@ -294,13 +279,12 @@ async def compute_demand_forecasts(
         forecast_7d = round(forecast_daily * 7, 1)
         forecast_30d = round(forecast_daily * 30, 1)
 
-        sku_result = await db.execute(select(SKU).where(SKU.id == sku_id))
-        sku = sku_result.scalar_one_or_none()
+        sku = get_document(_sku_collection(store_id), sku_id)
 
         forecasts.append(DemandForecast(
             sku_id=str(sku_id),
-            sku_code=sku.sku_code if sku else "UNKNOWN",
-            description=sku.description if sku else "",
+            sku_code=sku.get("sku_code", "UNKNOWN") if sku else "UNKNOWN",
+            description=sku.get("description", "") if sku else "",
             avg_daily_sales=round(avg_daily, 2),
             trend=trend,
             forecast_next_7d=forecast_7d,
@@ -314,13 +298,18 @@ async def compute_demand_forecasts(
 
 
 async def generate_insights(
-    db: AsyncSession,
-    store_id: UUID,
-    margins: list[MarginItem],
-    trends: list[SalesTrend],
-    forecasts: list[DemandForecast],
+    store_id: UUID | None,
+    margins: list[MarginItem] | None = None,
+    trends: list[SalesTrend] | None = None,
+    forecasts: list[DemandForecast] | None = None,
+    legacy_forecasts: list[DemandForecast] | None = None,
 ) -> list[AIInsight]:
     """Generate actionable insights from computed analytics."""
+    if legacy_forecasts is not None:
+        margins, trends, forecasts = trends, forecasts, legacy_forecasts
+    margins = margins or []
+    trends = trends or []
+    forecasts = forecasts or []
     insights: list[AIInsight] = []
 
     # Margin insights
@@ -381,17 +370,22 @@ async def generate_insights(
             action="Consider markdowns or promotional bundles",
         ))
 
-    # Inventory alerts (requires DB session)
-    if db is not None and store_id is not None:
-        inv_result = await db.execute(
-            select(func.count()).select_from(
-                select(Inventory.id).where(
-                    Inventory.store_id == store_id,
-                    Inventory.qty_on_hand <= 0,
-                ).subquery()
-            )
+    # Inventory alerts from Firestore
+    if store_id is not None:
+        finished_positions = list_stage_inventory(
+            store_id,
+            inventory_type=InventoryType.finished,
         )
-        out_of_stock = inv_result.scalar() or 0
+        stock_rows = {
+            str(row.get("sku_id")): row
+            for row in query_collection(_stock_collection(store_id))
+            if row.get("sku_id")
+        }
+        out_of_stock = sum(
+            1
+            for position in finished_positions
+            if str(position.sku_id) in stock_rows and position.quantity_on_hand <= 0
+        )
         if out_of_stock > 0:
             insights.append(AIInsight(
                 category="inventory",

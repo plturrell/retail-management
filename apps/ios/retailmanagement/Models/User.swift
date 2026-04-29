@@ -8,7 +8,13 @@ import Foundation
 nonisolated enum UserRole: String, Codable, CaseIterable, Sendable {
     case owner, manager, staff
 
-    var displayName: String { rawValue.capitalized }
+    var displayName: String {
+        switch self {
+        case .owner: return "Owner Director"
+        case .manager: return "Sales Manager"
+        case .staff: return "Sales Promoter"
+        }
+    }
 
     /// Role hierarchy: owner > manager > staff
     var level: Int {
@@ -27,6 +33,10 @@ nonisolated struct AppUser: Codable, Identifiable, Sendable {
     let fullName: String
     let phone: String?
     let storeRoles: [UserStoreRole]
+
+    var username: String {
+        AuthService.username(fromEmail: email)
+    }
 
     /// Returns the role for a given store, if any.
     func role(for storeId: String) -> UserRole? {

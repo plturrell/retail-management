@@ -7,13 +7,13 @@ import SwiftUI
 
 struct LoginView: View {
     @Environment(AuthViewModel.self) var authViewModel
-    @State private var email = ""
+    @State private var username = ""
     @State private var password = ""
     @State private var showRegister = false
 
     // MARK: - Fluid Focus States
     enum Field {
-        case email, password
+        case username, password
     }
     @FocusState private var focusedField: Field?
 
@@ -44,11 +44,11 @@ struct LoginView: View {
 
                     // Login form with Fluid Glass TextFields
                     VStack(spacing: 16) {
-                        TextField("Email", text: $email)
-                            .focused($focusedField, equals: .email)
-                            .textContentType(.emailAddress)
+                        TextField("Username", text: $username)
+                            .focused($focusedField, equals: .username)
+                            .textContentType(.username)
                             #if canImport(UIKit)
-                            .keyboardType(.emailAddress)
+                            .keyboardType(.asciiCapable)
                             .textInputAutocapitalization(.never)
                             #endif
                             .autocorrectionDisabled()
@@ -57,9 +57,9 @@ struct LoginView: View {
                             .clipShape(RoundedRectangle(cornerRadius: 12))
                             .overlay(
                                 RoundedRectangle(cornerRadius: 12)
-                                    .stroke(focusedField == .email ? Color.blue : Color.primary.opacity(0.1), lineWidth: focusedField == .email ? 2 : 1)
+                                    .stroke(focusedField == .username ? Color.blue : Color.primary.opacity(0.1), lineWidth: focusedField == .username ? 2 : 1)
                             )
-                            .shadow(color: focusedField == .email ? Color.blue.opacity(0.2) : .clear, radius: 8, x: 0, y: 4)
+                            .shadow(color: focusedField == .username ? Color.blue.opacity(0.2) : .clear, radius: 8, x: 0, y: 4)
                             .animation(.easeOut(duration: 0.2), value: focusedField)
 
                         SecureField("Password", text: $password)
@@ -91,7 +91,7 @@ struct LoginView: View {
                         Button {
                             HapticManager.generateFeedback(style: .medium)
                             Task {
-                                await authViewModel.signIn(email: email, password: password)
+                                await authViewModel.signIn(username: username, password: password)
                                 if authViewModel.authState == .authenticated {
                                     HapticManager.generateFeedback(style: .success)
                                 }
@@ -123,6 +123,7 @@ struct LoginView: View {
                         .foregroundStyle(.primary)
                     }
                 }
+                .macOSFormWidth(520)
             }
             #if canImport(UIKit)
             .navigationBarHidden(true)

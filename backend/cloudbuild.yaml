@@ -7,13 +7,13 @@
 # Prerequisites:
 #   - Cloud SQL instance "retailsg" exists
 #   - Secret "retailsg-db-url" stored in Secret Manager
+#   - Secret "retailsg-ai-gcs-bucket" stored in Secret Manager
 #   - Artifact Registry repo "retailsg" exists
 #   - Service account retailsg-api@ has roles/firebase.admin (uses ADC, no key needed)
 
 substitutions:
   _REGION: asia-southeast1
   _SERVICE_NAME: retailsg-api
-  _CLOUD_SQL_INSTANCE: "project-b41c0c0d-6eea-4e9d-a78:asia-southeast1:retailsg"
 
 steps:
   # Build container image
@@ -51,10 +51,11 @@ steps:
       - "--cpu=1"
       - "--min-instances=0"
       - "--max-instances=10"
-      - "--add-cloudsql-instances=${_CLOUD_SQL_INSTANCE}"
+      - "--add-cloudsql-instances=${PROJECT_ID}:${_REGION}:retailsg"
       - "--set-env-vars=ENVIRONMENT=production"
       - "--set-env-vars=GCP_PROJECT_ID=${PROJECT_ID}"
       - "--set-env-vars=FIREBASE_PROJECT_ID=${PROJECT_ID}"
+      - "--set-env-vars=CORS_ORIGINS=[\"http://localhost:5173\",\"https://${PROJECT_ID}.web.app\",\"https://${PROJECT_ID}.firebaseapp.com\"]"
       - "--set-secrets=DATABASE_URL=retailsg-db-url:latest"
       - "--set-secrets=SNOWFLAKE_ACCOUNT=retailsg-snowflake-account:latest"
       - "--set-secrets=SNOWFLAKE_USER=retailsg-snowflake-user:latest"
@@ -64,6 +65,7 @@ steps:
       - "--set-secrets=SNOWFLAKE_WAREHOUSE=retailsg-snowflake-warehouse:latest"
       - "--set-secrets=SNOWFLAKE_ROLE=retailsg-snowflake-role:latest"
       - "--set-secrets=SNOWFLAKE_ETL_SCHEMA=retailsg-snowflake-etl-schema:latest"
+      - "--set-secrets=AI_GCS_BUCKET=retailsg-ai-gcs-bucket:latest"
       - "--service-account=retailsg-api@${PROJECT_ID}.iam.gserviceaccount.com"
 
 images:

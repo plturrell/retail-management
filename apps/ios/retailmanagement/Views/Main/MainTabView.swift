@@ -7,7 +7,7 @@ import SwiftUI
 
 struct MainTabView: View {
     @Environment(AuthViewModel.self) var authViewModel
-    @State private var storeViewModel = StoreViewModel()
+    @Environment(StoreViewModel.self) var storeViewModel
 
     private var currentRole: UserRole {
         guard let user = authViewModel.currentUser,
@@ -20,17 +20,22 @@ struct MainTabView: View {
     var body: some View {
         #if os(macOS)
         macOSSidebar
-            .environment(storeViewModel)
         #else
         iOSTabs
-            .environment(storeViewModel)
         #endif
     }
 
     // MARK: - macOS: Sidebar Navigation
 
     #if os(macOS)
-    @State private var selectedTab: SidebarTab? = .dashboard
+    @SceneStorage("mainSidebarTab") private var selectedTabRaw: String = SidebarTab.dashboard.rawValue
+
+    private var selectedTabBinding: Binding<SidebarTab?> {
+        Binding(
+            get: { SidebarTab(rawValue: selectedTabRaw) ?? .dashboard },
+            set: { selectedTabRaw = ($0 ?? .dashboard).rawValue }
+        )
+    }
 
     private enum SidebarTab: String, CaseIterable, Identifiable {
         case dashboard = "Dashboard"
@@ -39,10 +44,13 @@ struct MainTabView: View {
         case pay = "Pay"
         case performance = "Performance"
         case inventory = "Inventory"
+        case masterData = "Master Data"
         case orders = "Orders"
+        case workflows = "Workflows"
         case employees = "Employees"
         case financials = "Financials"
         case profile = "Profile"
+        case settings = "Settings"
 
         var id: String { rawValue }
 
@@ -54,10 +62,13 @@ struct MainTabView: View {
             case .pay: return "banknote.fill"
             case .performance: return "trophy.fill"
             case .inventory: return "shippingbox.fill"
+            case .masterData: return "list.bullet.rectangle.portrait"
             case .orders: return "cart.fill"
+            case .workflows: return "wand.and.stars"
             case .employees: return "person.3.fill"
             case .financials: return "dollarsign.circle.fill"
             case .profile: return "person.crop.circle.fill"
+            case .settings: return "gearshape.fill"
             }
         }
 
@@ -66,7 +77,8 @@ struct MainTabView: View {
             switch self {
             case .employees: return UserRole.manager.level
             case .financials: return UserRole.owner.level
-            case .inventory, .orders: return UserRole.manager.level
+            case .inventory, .orders, .workflows: return UserRole.manager.level
+            case .masterData: return UserRole.owner.level
             default: return 0
             }
         }
@@ -78,14 +90,15 @@ struct MainTabView: View {
 
     private var macOSSidebar: some View {
         NavigationSplitView {
-            List(visibleTabs, selection: $selectedTab) { tab in
+            List(visibleTabs, selection: selectedTabBinding) { tab in
                 Label(tab.rawValue, systemImage: tab.icon)
                     .tag(tab)
             }
             .navigationTitle("RetailSG")
             .listStyle(.sidebar)
+            .navigationSplitViewColumnWidth(min: 200, ideal: 220, max: 280)
         } detail: {
-            switch selectedTab {
+            switch selectedTabBinding.wrappedValue {
             case .dashboard:
                 DashboardView()
             case .schedule:
@@ -98,14 +111,20 @@ struct MainTabView: View {
                 PerformanceView()
             case .inventory:
                 InventoryTabView()
+            case .masterData:
+                MasterDataView(canEdit: currentRole == .owner)
             case .orders:
                 OrdersTabView()
+            case .workflows:
+                WorkflowsRoute()
             case .employees:
                 EmployeesTabView()
             case .financials:
                 FinancialsTabView()
             case .profile:
                 StaffProfileView()
+            case .settings:
+                SettingsView()
             case .none:
                 Text("Select an item from the sidebar.")
                     .font(.title3)
@@ -140,6 +159,19 @@ struct MainTabView: View {
                     Label("Performance", systemImage: "trophy.fill")
                 }
 
+            if currentRole.level >= UserRole.manager.level {
+                InventoryTabView()
+                    .tabItem {
+                        Label("Inventory", systemImage: "shippingbox.fill")
+                    }
+            }
+            if currentRole == .owner {
+                MasterDataView(canEdit: currentRole == .owner)
+                    .tabItem {
+                        Label("Master Data", systemImage: "list.bullet.rectangle.portrait")
+                    }
+            }
+
             StaffProfileView()
                 .tabItem {
                     Label("Profile", systemImage: "person.crop.circle.fill")
@@ -152,4 +184,55 @@ struct MainTabView: View {
 #Preview {
     MainTabView()
         .environment(AuthViewModel())
+        .environment(StoreViewModel())
 }
+
+// MARK: - macOS Workflows Route
+
+#if os(macOS)
+/// Sidebar route for the Workflow Studio. Owns its own `InventoryViewModel`
+/// (loaded for the currently selected store) so the view can be navigated to
+/// directly from the sidebar without requiring a parent SKU selection.
+private struct WorkflowsRoute: View {
+    @Environment(AuthViewModel.self) var authViewModel
+    @Environment(StoreViewModel.self) var storeViewModel
+    @State private var inventoryVM = InventoryViewModel()
+
+    private var canViewSensitiveOperations: Bool {
+        guard let user = authViewModel.currentUser,
+              let store = storeViewModel.selectedStore else { return false }
+        return (user.role(for: store.id) ?? user.highestRole ?? .staff) == .owner
+    }
+
+    var body: some View {
+        NavigationStack {
+            Group {
+                if let storeId = storeViewModel.selectedStore?.id {
+                    ScrollView {
+                        ManagerWorkflowStudioView(
+                            inventoryVM: inventoryVM,
+                            storeId: storeId,
+                            selectedInsight: inventoryVM.filteredInsights.first
+                        )
+                        .padding()
+                    }
+                    .task(id: storeId) {
+                        await inventoryVM.loadData(
+                            storeId: storeId,
+                            includeOwnerData: canViewSensitiveOperations,
+                            forceRefresh: true
+                        )
+                    }
+                } else {
+                    ContentUnavailableView(
+                        "Choose a Store",
+                        systemImage: "building.2",
+                        description: Text("Pick an active store to use the Workflow Studio.")
+                    )
+                }
+            }
+            .navigationTitle("Workflow Studio")
+        }
+    }
+}
+#endif

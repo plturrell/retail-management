@@ -10,19 +10,16 @@ from __future__ import annotations
 
 import re
 import uuid as _uuid
-from datetime import date, datetime, time, timedelta
+from datetime import date, datetime, time, timedelta, timezone
 from typing import Any, Dict, List, Optional, Tuple
 
 import io
 from openpyxl import load_workbook
 from openpyxl.worksheet.worksheet import Worksheet
-from sqlalchemy import select, and_
-from sqlalchemy.ext.asyncio import AsyncSession
+from google.cloud.firestore_v1.client import Client as FirestoreClient
 
-from app.models.order import Order, OrderStatus, OrderSource
-from app.models.payroll import EmployeeProfile, NationalityEnum
-from app.models.timesheet import TimeEntry, TimeEntryStatus
-from app.models.user import User
+from app.firestore import db as firestore_db
+from app.firestore_helpers import query_collection, create_document, get_document, update_document
 
 
 # ---------------------------------------------------------------------------
@@ -246,34 +243,50 @@ def _parse_month_sheet(ws: Worksheet) -> Tuple[List[MonthlyStaffData], List[Dict
 # User resolution
 # ---------------------------------------------------------------------------
 
-async def _resolve_or_create_user(
-    db: AsyncSession, name: str, user_lookup: Dict[str, User],
-) -> User:
-    """Find a user by name (case-insensitive) or create a placeholder."""
+def _resolve_or_create_user(
+    name: str, user_lookup: Dict[str, dict],
+) -> dict:
+    """Find a user by name (case-insensitive) or create a placeholder in Firestore."""
     key = name.lower()
     if key in user_lookup:
         return user_lookup[key]
-    # Create placeholder user
+    # Create placeholder user in Firestore
     email = f"{name.lower().replace(' ', '.')}@victoriaenso.sg"
-    user = User(
-        firebase_uid=f"ve-import-{_uuid.uuid4().hex[:12]}",
-        email=email,
-        full_name=name,
-    )
-    db.add(user)
-    await db.flush()
-    await db.refresh(user)
-    user_lookup[key] = user
-    user_lookup[email.lower()] = user
-    return user
+    doc_id = str(_uuid.uuid4())
+    now = datetime.now(timezone.utc)
+    user_data = {
+        "firebase_uid": f"ve-import-{_uuid.uuid4().hex[:12]}",
+        "email": email,
+        "full_name": name,
+        "phone": None,
+        "created_at": now,
+        "updated_at": now,
+    }
+    result = create_document("users", user_data, doc_id=doc_id)
+    user_lookup[key] = result
+    user_lookup[email.lower()] = result
+    return result
+
+
+def _entry_date(value: Any) -> date | None:
+    if isinstance(value, datetime):
+        return value.date()
+    if isinstance(value, date):
+        return value
+    if isinstance(value, str):
+        try:
+            return datetime.fromisoformat(value.replace("Z", "+00:00")).date()
+        except ValueError:
+            return None
+    return None
 
 
 # ---------------------------------------------------------------------------
 # Main import function
 # ---------------------------------------------------------------------------
 
-async def import_ve_payroll(
-    db: AsyncSession,
+def import_ve_payroll(
+    db: FirestoreClient,
     store_id: _uuid.UUID,
     content: bytes,
 ) -> VEImportResult:
@@ -282,15 +295,35 @@ async def import_ve_payroll(
 
     wb = load_workbook(filename=io.BytesIO(content), data_only=True)
 
-    # Build user lookup
-    all_users = (await db.execute(select(User))).scalars().all()
-    user_lookup: Dict[str, User] = {}
+    # Build user lookup from Firestore
+    all_users = sorted(
+        query_collection("users"),
+        key=lambda user: (
+            str(user.get("updated_at") or ""),
+            str(user.get("created_at") or ""),
+            str(user.get("id") or ""),
+        ),
+    )
+    user_lookup: Dict[str, dict] = {}
     for u in all_users:
-        user_lookup[u.email.lower()] = u
-        user_lookup[u.full_name.lower()] = u
+        if u.get("email"):
+            user_lookup[u["email"].lower()] = u
+        if u.get("full_name"):
+            user_lookup[u["full_name"].lower()] = u
 
     # Skip non-data sheets
     skip_sheets = {"sheet3", "sheet2", "sheet1"}
+
+    timesheet_col = f"stores/{store_id}/timesheets"
+    orders_col = f"stores/{store_id}/orders"
+    existing_time_entry_keys = {
+        (str(entry.get("user_id", "")), entry_date)
+        for entry in query_collection(timesheet_col, order_by="-clock_in")
+        if (entry_date := _entry_date(entry.get("clock_in"))) is not None
+    }
+
+    batch = firestore_db.batch()
+    batch_count = 0
 
     for sheet_name in wb.sheetnames:
         if sheet_name.lower() in skip_sheets:
@@ -302,104 +335,117 @@ async def import_ve_payroll(
         month_result.errors.extend(parse_errors)
 
         for staff_data in staff_data_list:
-            user = await _resolve_or_create_user(db, staff_data.name, user_lookup)
-            if user.full_name not in [u for u in result.users_created]:
-                # Track if this is a newly created user (no pre-existing)
-                pass
+            user = _resolve_or_create_user(staff_data.name, user_lookup)
 
             staff_result = StaffImportResult(staff_data.name)
             staff_result.total_hours = staff_data.total_hours
             staff_result.total_sales = staff_data.total_sales
 
+            user_id = user.get("id", "")
+            user_name = user.get("full_name", staff_data.name)
+
             # Update/create EmployeeProfile with hourly rate and commission
             if staff_data.hour_rate > 0:
-                existing_profile = (await db.execute(
-                    select(EmployeeProfile).where(
-                        EmployeeProfile.user_id == user.id
-                    )
-                )).scalar_one_or_none()
-
-                if existing_profile is None:
-                    profile = EmployeeProfile(
-                        user_id=user.id,
-                        date_of_birth=date(1990, 1, 1),
-                        nationality=NationalityEnum.foreigner,
-                        basic_salary=0,
-                        hourly_rate=staff_data.hour_rate,
-                        commission_rate=staff_data.sales_pct,
-                        start_date=date(2024, 1, 1),
-                    )
-                    db.add(profile)
+                profiles = query_collection(
+                    "employee_profiles",
+                    filters=[("user_id", "==", str(user_id))],
+                    limit=1,
+                )
+                now = datetime.now(timezone.utc)
+                if not profiles:
+                    profile_id = str(_uuid.uuid4())
+                    profile_data = {
+                        "user_id": str(user_id),
+                        "date_of_birth": "1990-01-01",
+                        "nationality": "foreigner",
+                        "basic_salary": 0,
+                        "hourly_rate": staff_data.hour_rate,
+                        "commission_rate": staff_data.sales_pct,
+                        "start_date": "2024-01-01",
+                        "created_at": now,
+                        "updated_at": now,
+                    }
+                    create_document("employee_profiles", profile_data, doc_id=profile_id)
                     if staff_data.name not in result.profiles_updated:
                         result.profiles_updated.append(staff_data.name)
                 else:
-                    existing_profile.hourly_rate = staff_data.hour_rate
+                    profile = profiles[0]
+                    update_fields = {"hourly_rate": staff_data.hour_rate, "updated_at": now}
                     if staff_data.sales_pct > 0:
-                        existing_profile.commission_rate = staff_data.sales_pct
+                        update_fields["commission_rate"] = staff_data.sales_pct
+                    update_document("employee_profiles", profile["id"], update_fields)
                     if staff_data.name not in result.profiles_updated:
                         result.profiles_updated.append(staff_data.name)
 
             # Create daily TimeEntry records
             for entry_date, hours, daily_sales in staff_data.daily_entries:
                 if hours > 0:
-                    # Check for duplicates
-                    dup = (await db.execute(
-                        select(TimeEntry).where(
-                            and_(
-                                TimeEntry.user_id == user.id,
-                                TimeEntry.store_id == store_id,
-                                TimeEntry.clock_in >= datetime.combine(
-                                    entry_date, time(0, 0)),
-                                TimeEntry.clock_in < datetime.combine(
-                                    entry_date + timedelta(days=1), time(0, 0)),
-                            )
-                        )
-                    )).scalar_one_or_none()
-
-                    if dup is not None:
+                    duplicate_key = (str(user_id), entry_date)
+                    if duplicate_key in existing_time_entry_keys:
                         staff_result.time_entries_skipped += 1
                     else:
-                        # Synthetic clock_in/clock_out from hours
                         clock_in = datetime.combine(entry_date, time(9, 0))
                         clock_out_dt = clock_in + timedelta(hours=hours)
-                        entry = TimeEntry(
-                            user_id=user.id,
-                            store_id=store_id,
-                            clock_in=clock_in,
-                            clock_out=clock_out_dt,
-                            break_minutes=0,
-                            notes=f"VE payroll import: {sheet_name}",
-                            status=TimeEntryStatus.approved,
-                        )
-                        db.add(entry)
+                        doc_id = str(_uuid.uuid4())
+                        now = datetime.now(timezone.utc)
+                        ref = firestore_db.collection(timesheet_col).document(doc_id)
+                        batch.set(ref, {
+                            "id": doc_id,
+                            "user_id": str(user_id),
+                            "store_id": str(store_id),
+                            "clock_in": clock_in,
+                            "clock_out": clock_out_dt,
+                            "break_minutes": 0,
+                            "notes": f"VE payroll import: {sheet_name}",
+                            "status": "approved",
+                            "approved_by": None,
+                            "user_name": user_name,
+                            "created_at": now,
+                            "updated_at": now,
+                        })
+                        batch_count += 1
                         staff_result.time_entries_created += 1
+                        existing_time_entry_keys.add(duplicate_key)
 
                 # Create Order record for daily sales
                 if daily_sales > 0:
                     order_num = (
                         f"VE-{entry_date.strftime('%Y%m%d')}"
-                        f"-{user.full_name.replace(' ', '')[:6].upper()}"
+                        f"-{user_name.replace(' ', '')[:6].upper()}"
                         f"-{_uuid.uuid4().hex[:4]}"
                     )
-                    order = Order(
-                        order_number=order_num,
-                        store_id=store_id,
-                        staff_id=user.id,
-                        salesperson_id=user.id,
-                        order_date=datetime.combine(entry_date, time(12, 0)),
-                        subtotal=daily_sales,
-                        grand_total=daily_sales,
-                        payment_method="mixed",
-                        status=OrderStatus.completed,
-                        source=OrderSource.manual,
-                    )
-                    db.add(order)
+                    order_doc_id = str(_uuid.uuid4())
+                    now = datetime.now(timezone.utc)
+                    ref = firestore_db.collection(orders_col).document(order_doc_id)
+                    batch.set(ref, {
+                        "id": order_doc_id,
+                        "order_number": order_num,
+                        "store_id": str(store_id),
+                        "staff_id": str(user_id),
+                        "salesperson_id": str(user_id),
+                        "order_date": datetime.combine(entry_date, time(12, 0)),
+                        "subtotal": daily_sales,
+                        "grand_total": daily_sales,
+                        "payment_method": "mixed",
+                        "status": "completed",
+                        "source": "manual",
+                        "created_at": now,
+                        "updated_at": now,
+                    })
+                    batch_count += 1
                     staff_result.orders_created += 1
+
+                # Commit batch if approaching limit
+                if batch_count >= 499:
+                    batch.commit()
+                    batch = firestore_db.batch()
+                    batch_count = 0
 
             month_result.staff_results.append(staff_result)
 
         result.months.append(month_result)
 
-    await db.flush()
+    if batch_count > 0:
+        batch.commit()
     wb.close()
     return result

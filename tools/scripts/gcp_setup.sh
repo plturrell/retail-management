@@ -2,22 +2,26 @@
 set -euo pipefail
 
 # ─── GCP Project Setup for RetailSG ──────────────────────────
-# Project: project-b41c0c0d-6eea-4e9d-a78 (561509133799)
+# Project: victoriaensoapp (568773738080)
 #
 # Run this once to configure all GCP resources.
 # Prerequisites: gcloud CLI installed and authenticated.
 # ──────────────────────────────────────────────────────────────
 
-PROJECT_ID="project-b41c0c0d-6eea-4e9d-a78"
-REGION="asia-southeast1"
-DB_INSTANCE="retailsg"
-DB_NAME="retailsg"
-DB_USER="retailsg"
-SERVICE_ACCOUNT="retailsg-api"
+PROJECT_ID="${PROJECT_ID:-victoriaensoapp}"
+PROJECT_NUMBER="${PROJECT_NUMBER:-568773738080}"
+REGION="${REGION:-asia-southeast1}"
+DB_INSTANCE="${DB_INSTANCE:-retailsg}"
+DB_NAME="${DB_NAME:-retailsg}"
+DB_USER="${DB_USER:-retailsg}"
+SERVICE_ACCOUNT="${SERVICE_ACCOUNT:-retailsg-api}"
+ARTIFACT_REPO="${ARTIFACT_REPO:-retailsg}"
+AI_GCS_BUCKET="${AI_GCS_BUCKET:-${PROJECT_ID}-ai-artifacts}"
 
 echo "═══════════════════════════════════════════════════════"
 echo "  RetailSG — GCP Setup"
 echo "  Project: $PROJECT_ID"
+echo "  Project number: $PROJECT_NUMBER"
 echo "═══════════════════════════════════════════════════════"
 
 # Set the active project
@@ -35,20 +39,42 @@ gcloud services enable \
     artifactregistry.googleapis.com \
     firebase.googleapis.com \
     identitytoolkit.googleapis.com \
+    firestore.googleapis.com \
+    storage.googleapis.com \
     aiplatform.googleapis.com \
     generativelanguage.googleapis.com \
     --quiet
 echo "  ✔ APIs enabled"
 
+echo ""
+echo "▶ Ensuring Firebase is attached to the GCP project..."
+firebase projects:addfirebase "$PROJECT_ID" --quiet 2>/dev/null || echo "  (Firebase already attached or CLI cannot modify project)"
+echo "  ✔ Firebase project ready"
+
 # ─── Artifact Registry ───────────────────────────────────────
 echo ""
 echo "▶ Creating Artifact Registry repo..."
-gcloud artifacts repositories create retailsg \
+gcloud artifacts repositories create "$ARTIFACT_REPO" \
     --repository-format=docker \
     --location="$REGION" \
     --description="RetailSG container images" \
     --quiet 2>/dev/null || echo "  (already exists)"
 echo "  ✔ Artifact Registry ready"
+
+# ─── Cloud Storage ────────────────────────────────────────────
+echo ""
+echo "▶ Creating AI artifact Cloud Storage bucket..."
+if gcloud storage buckets describe "gs://${AI_GCS_BUCKET}" --quiet >/dev/null 2>&1; then
+    echo "  (bucket already exists)"
+else
+    gcloud storage buckets create "gs://${AI_GCS_BUCKET}" \
+        --project="$PROJECT_ID" \
+        --location="$REGION" \
+        --uniform-bucket-level-access \
+        --public-access-prevention \
+        --quiet
+fi
+echo "  ✔ Cloud Storage bucket: gs://${AI_GCS_BUCKET}"
 
 # ─── Cloud SQL ────────────────────────────────────────────────
 echo ""
@@ -87,12 +113,22 @@ gcloud iam service-accounts create "$SERVICE_ACCOUNT" \
 SA_EMAIL="${SERVICE_ACCOUNT}@${PROJECT_ID}.iam.gserviceaccount.com"
 
 # Grant roles
-for ROLE in roles/cloudsql.client roles/secretmanager.secretAccessor roles/firebase.admin; do
+for ROLE in \
+    roles/cloudsql.client \
+    roles/secretmanager.secretAccessor \
+    roles/firebase.admin \
+    roles/datastore.user \
+    roles/aiplatform.user \
+    roles/documentai.apiUser; do
     gcloud projects add-iam-policy-binding "$PROJECT_ID" \
         --member="serviceAccount:$SA_EMAIL" \
         --role="$ROLE" \
         --quiet > /dev/null
 done
+gcloud storage buckets add-iam-policy-binding "gs://${AI_GCS_BUCKET}" \
+    --member="serviceAccount:$SA_EMAIL" \
+    --role="roles/storage.objectAdmin" \
+    --quiet > /dev/null
 echo "  ✔ Service account: $SA_EMAIL"
 
 # ─── Secret Manager ──────────────────────────────────────────
@@ -106,6 +142,12 @@ echo -n "$DB_URL" | gcloud secrets create retailsg-db-url \
     --data-file=- --quiet 2>/dev/null || \
     echo -n "$DB_URL" | gcloud secrets versions add retailsg-db-url --data-file=- --quiet
 echo "  ✔ Secret: retailsg-db-url"
+
+# AI artifact bucket name
+echo -n "$AI_GCS_BUCKET" | gcloud secrets create retailsg-ai-gcs-bucket \
+    --data-file=- --quiet 2>/dev/null || \
+    echo -n "$AI_GCS_BUCKET" | gcloud secrets versions add retailsg-ai-gcs-bucket --data-file=- --quiet
+echo "  ✔ Secret: retailsg-ai-gcs-bucket"
 
 # ─── Firebase Auth Setup ──────────────────────────────────────
 echo ""
@@ -244,6 +286,7 @@ echo ""
 echo "  Project:          $PROJECT_ID"
 echo "  Region:           $REGION"
 echo "  Cloud SQL:        $DB_INSTANCE ($REGION)"
+echo "  AI GCS bucket:    gs://$AI_GCS_BUCKET"
 echo "  Service Account:  $SA_EMAIL"
 echo "  Database URL:     (stored in Secret Manager)"
 echo ""
@@ -262,8 +305,12 @@ echo "    2. Run Snowflake DDL (as RETAILSG_SVC):"
 echo "       snowflake/schema/001_dimensions.sql"
 echo "       snowflake/schema/002_facts.sql"
 echo "       snowflake/schema/003_cortex_views.sql"
-echo "    3. Deploy API:"
+echo "    3. Sync Firebase apps:"
+echo "       ./tools/scripts/sync_firebase_apps.sh"
+echo "    4. Deploy API:"
 echo "       cd backend && gcloud builds submit --config=cloudbuild.yaml ."
-echo "    4. Trigger first ETL:"
+echo "    5. Deploy Firebase:"
+echo "       firebase deploy --project $PROJECT_ID"
+echo "    6. Trigger first ETL:"
 echo "       curl -X POST https://<YOUR_CLOUD_RUN_URL>/api/etl/run"
 echo ""

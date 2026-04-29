@@ -109,6 +109,12 @@ class PayrollRunRead(UUIDMixin, TimestampMixin):
     total_cpf_employee: Decimal
     total_cpf_employer: Decimal
     total_net: Decimal
+    store_sales_amount: Decimal = Decimal("0")
+    store_sales_order_count: int = 0
+    total_hours_worked: Decimal = Decimal("0")
+    total_labor_cost: Decimal = Decimal("0")
+    sales_per_labor_hour: Decimal = Decimal("0")
+    labor_cost_percent_of_sales: Decimal = Decimal("0")
     payslips: list[PaySlipRead] = []
 
     model_config = ConfigDict(from_attributes=True)
@@ -124,6 +130,12 @@ class PayrollRunSummary(UUIDMixin, TimestampMixin):
     total_cpf_employee: Decimal
     total_cpf_employer: Decimal
     total_net: Decimal
+    store_sales_amount: Decimal = Decimal("0")
+    store_sales_order_count: int = 0
+    total_hours_worked: Decimal = Decimal("0")
+    total_labor_cost: Decimal = Decimal("0")
+    sales_per_labor_hour: Decimal = Decimal("0")
+    labor_cost_percent_of_sales: Decimal = Decimal("0")
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -133,6 +145,7 @@ class PayrollRunSummary(UUIDMixin, TimestampMixin):
 
 class PaySlipRead(UUIDMixin, TimestampMixin):
     payroll_run_id: UUID
+    store_id: UUID
     user_id: UUID
     basic_salary: Decimal
     hours_worked: Optional[Decimal] = None
@@ -142,6 +155,10 @@ class PaySlipRead(UUIDMixin, TimestampMixin):
     deductions: Decimal
     commission_sales: Decimal = Decimal("0")
     commission_amount: Decimal = Decimal("0")
+    sales_order_count: int = 0
+    sales_per_hour: Decimal = Decimal("0")
+    total_labor_cost: Decimal = Decimal("0")
+    labor_cost_percent_of_sales: Decimal = Decimal("0")
     gross_pay: Decimal
     cpf_employee: Decimal
     cpf_employer: Decimal

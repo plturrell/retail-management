@@ -126,14 +126,14 @@ fun PaySlipDetail(slip: PaySlipRead, onBack: () -> Unit) {
             item { PayRow("Overtime (${slip.overtimeHours}h)", slip.overtimePay) }
             item { PayRow("Commission (on $${String.format("%.2f", slip.commissionSales)})", slip.commissionAmount) }
             item { PayRow("Allowances", slip.allowances) }
-            item { HorizontalDivider(Modifier.padding(vertical = 8.dp)) }
+            item { Divider(Modifier.padding(vertical = 8.dp)) }
             item { PayRow("Gross Pay", slip.grossPay, bold = true) }
             item { Spacer(Modifier.height(12.dp)) }
             item { Text("Deductions", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold) }
             item { PayRow("CPF Employee", slip.cpfEmployee) }
             item { PayRow("CPF Employer", slip.cpfEmployer) }
             item { PayRow("Other Deductions", slip.deductions) }
-            item { HorizontalDivider(Modifier.padding(vertical = 8.dp)) }
+            item { Divider(Modifier.padding(vertical = 8.dp)) }
             item {
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                     Text("Net Pay", fontWeight = FontWeight.Bold, style = MaterialTheme.typography.titleMedium)

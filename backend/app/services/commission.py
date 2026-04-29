@@ -32,9 +32,16 @@ def _round_commission(amount: Decimal) -> Decimal:
     return amount.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
 
 
-def parse_tiers(tiers_json: str) -> list[CommissionTier]:
-    """Parse tiers JSON string into CommissionTier list."""
-    raw = json.loads(tiers_json)
+def parse_tiers(tiers_data: str | list) -> list[CommissionTier]:
+    """Parse tiers from a JSON string or a list of dicts into CommissionTier list.
+
+    Accepts either a JSON string (legacy SQLAlchemy storage) or a native list
+    (Firestore storage).
+    """
+    if isinstance(tiers_data, str):
+        raw = json.loads(tiers_data)
+    else:
+        raw = tiers_data
     result = []
     for t in raw:
         result.append(CommissionTier(

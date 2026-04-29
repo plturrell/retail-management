@@ -5,13 +5,12 @@ from datetime import date, datetime, timezone
 from typing import Optional
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel
-from sqlalchemy.ext.asyncio import AsyncSession
+from google.cloud.firestore_v1.client import Client as FirestoreClient
 
-from app.database import get_db
-from app.models.user import UserStoreRole
-from app.auth.dependencies import require_store_access
+from app.firestore import get_firestore_db
+from app.auth.dependencies import ROLE_HIERARCHY, RoleEnum, get_current_user, require_store_access
 from app.services.ai_analytics import (
     AnalyticsReport,
     compute_demand_forecasts,
@@ -33,6 +32,15 @@ from app.services.staff_analytics import (
 router = APIRouter(prefix="/api/stores/{store_id}/analytics", tags=["analytics"])
 
 
+def _role_name(role_assignment: dict) -> RoleEnum:
+    raw_role = role_assignment.get("role")
+    return raw_role if isinstance(raw_role, RoleEnum) else RoleEnum(str(raw_role))
+
+
+def _is_manager_or_above(role_assignment: dict) -> bool:
+    return ROLE_HIERARCHY[_role_name(role_assignment)] >= ROLE_HIERARCHY[RoleEnum.manager]
+
+
 class ReorderRecommendation(BaseModel):
     sku_id: str
     sku_code: str
@@ -51,14 +59,14 @@ async def full_analytics_report(
     from_date: date = Query(..., alias="from"),
     to_date: date = Query(..., alias="to"),
     include_gemini: bool = Query(False, description="Include Gemini AI summary"),
-    _: UserStoreRole = Depends(require_store_access),
-    db: AsyncSession = Depends(get_db),
+    _: dict = Depends(require_store_access),
+    db: FirestoreClient = Depends(get_firestore_db),
 ):
     """Full analytics report: margins, trends, forecasts, AI insights."""
-    margins = await compute_margin_analysis(db, store_id, from_date, to_date)
-    trends = await compute_sales_trends(db, store_id, from_date, to_date)
-    forecasts = await compute_demand_forecasts(db, store_id)
-    insights = await generate_insights(db, store_id, margins, trends, forecasts)
+    margins = await compute_margin_analysis(store_id, from_date, to_date)
+    trends = await compute_sales_trends(store_id, from_date, to_date)
+    forecasts = await compute_demand_forecasts(store_id)
+    insights = await generate_insights(store_id, margins, trends, forecasts)
 
     gemini_summary = None
     if include_gemini:
@@ -90,11 +98,11 @@ async def margin_analysis(
     store_id: UUID,
     from_date: date = Query(..., alias="from"),
     to_date: date = Query(..., alias="to"),
-    _: UserStoreRole = Depends(require_store_access),
-    db: AsyncSession = Depends(get_db),
+    _: dict = Depends(require_store_access),
+    db: FirestoreClient = Depends(get_firestore_db),
 ):
     """Profitability analysis per SKU."""
-    return await compute_margin_analysis(db, store_id, from_date, to_date)
+    return await compute_margin_analysis(store_id, from_date, to_date)
 
 
 @router.get("/forecasts")
@@ -102,22 +110,22 @@ async def demand_forecast(
     store_id: UUID,
     lookback_days: int = Query(60, ge=7, le=365),
     top_n: int = Query(20, ge=1, le=100),
-    _: UserStoreRole = Depends(require_store_access),
-    db: AsyncSession = Depends(get_db),
+    _: dict = Depends(require_store_access),
+    db: FirestoreClient = Depends(get_firestore_db),
 ):
     """Demand forecasting per SKU based on sales velocity trends."""
-    return await compute_demand_forecasts(db, store_id, lookback_days, top_n)
+    return await compute_demand_forecasts(store_id, lookback_days, top_n)
 
 
 @router.get("/reorder", response_model=list[ReorderRecommendation])
 async def reorder_suggestions(
     store_id: UUID,
     lookback_days: int = Query(30, ge=7, le=180),
-    _: UserStoreRole = Depends(require_store_access),
-    db: AsyncSession = Depends(get_db),
+    _: dict = Depends(require_store_access),
+    db: FirestoreClient = Depends(get_firestore_db),
 ):
     """Intelligent reorder recommendations based on sales velocity and stock levels."""
-    recs = await reorder_recommendations(db, store_id, lookback_days)
+    recs = await reorder_recommendations(store_id, lookback_days)
     return [ReorderRecommendation(**r) for r in recs]
 
 
@@ -130,29 +138,51 @@ async def staff_performance(
     store_id: UUID,
     from_date: date = Query(..., alias="from"),
     to_date: date = Query(..., alias="to"),
-    _: UserStoreRole = Depends(require_store_access),
-    db: AsyncSession = Depends(get_db),
+    role_assignment: dict = Depends(require_store_access),
+    user: dict = Depends(get_current_user),
+    db: FirestoreClient = Depends(get_firestore_db),
 ):
-    """All staff performance overview with ranking for a date range."""
-    return await get_staff_sales_summary(db, store_id, from_date, to_date)
+    """Staff performance overview.
+
+    Managers and owners can see the full team. Staff users only receive their
+    own row, so clients cannot reveal peer names or sales by bypassing UI masks.
+    """
+    overview = await get_staff_sales_summary(store_id, from_date, to_date)
+    if _is_manager_or_above(role_assignment):
+        return overview
+
+    user_id = str(user.get("id"))
+    own_rows = [row for row in overview.staff if row.user_id == user_id]
+    return overview.model_copy(
+        update={
+            "staff": own_rows,
+            "total_store_sales": round(sum(row.total_sales for row in own_rows), 2),
+        }
+    )
 
 
 @router.get("/staff/{user_id}/insights", response_model=StaffInsightsResponse)
 async def staff_insights(
     store_id: UUID,
     user_id: UUID,
-    _: UserStoreRole = Depends(require_store_access),
-    db: AsyncSession = Depends(get_db),
+    role_assignment: dict = Depends(require_store_access),
+    user: dict = Depends(get_current_user),
+    db: FirestoreClient = Depends(get_firestore_db),
 ):
     """AI-generated insights for an individual staff member."""
-    return await generate_staff_insights(db, store_id, user_id)
+    if str(user.get("id")) != str(user_id) and not _is_manager_or_above(role_assignment):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="You can only view your own staff insights",
+        )
+    return await generate_staff_insights(store_id, user_id)
 
 
 @router.get("/scheduling-recommendations", response_model=SchedulingRecommendationsResponse)
 async def scheduling_recommendations(
     store_id: UUID,
-    _: UserStoreRole = Depends(require_store_access),
-    db: AsyncSession = Depends(get_db),
+    _: dict = Depends(require_store_access),
+    db: FirestoreClient = Depends(get_firestore_db),
 ):
     """AI-powered scheduling recommendations based on sales patterns."""
-    return await get_scheduling_recommendations(db, store_id)
+    return await get_scheduling_recommendations(store_id)

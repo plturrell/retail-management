@@ -16,5 +16,9 @@
 	<true/>
 	<key>com.apple.security.network.client</key>
 	<true/>
+	<!-- Required so .fileImporter and drag-and-drop CSV import can read the
+	     user-selected file inside the macOS sandbox. -->
+	<key>com.apple.security.files.user-selected.read-only</key>
+	<true/>
 </dict>
 </plist>

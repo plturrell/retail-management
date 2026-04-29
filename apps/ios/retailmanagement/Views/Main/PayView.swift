@@ -61,7 +61,7 @@ struct PayView: View {
                 .padding(.vertical, 4)
             }
         }
-        .listStyle(.insetGrouped)
+        .insetGroupedListStyleCompat()
     }
 
     private func loadPayslips() async {
@@ -131,7 +131,7 @@ struct PaySlipDetailView: View {
                 }
             }
         }
-        .listStyle(.insetGrouped)
+        .insetGroupedListStyleCompat()
         .navigationTitle("Payslip")
     }
 

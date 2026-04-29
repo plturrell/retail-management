@@ -78,6 +78,19 @@ See [`backend/cloudbuild.yaml`](backend/cloudbuild.yaml) for Cloud Build → Clo
 cd backend && gcloud builds submit --config=cloudbuild.yaml .
 ```
 
+### Local cache pressure
+
+Build tools can fill the small local volume quickly. Use an external cache root
+when available and clean generated outputs with:
+
+```bash
+CACHE_ROOT=/Volumes/ExternalCache/retailmanagement tools/scripts/clean_local_caches.sh --setup-env
+tools/scripts/clean_local_caches.sh
+```
+
+See [`docs/local-cache-and-object-storage.md`](docs/local-cache-and-object-storage.md)
+for npm, pip, Gradle, Homebrew, Firebase emulator, and Xcode DerivedData settings.
+
 ## Data pipeline (Gemini / Mangle)
 
 From the **repository root**:
@@ -87,7 +100,12 @@ export GEMINI_API_KEY="your_key"
 ./tools/pipelines/run_pipeline.sh
 ```
 
-Pipeline steps write under `data/ocr_outputs/`, `data/mangle_facts/`, and `data/catalog/`. Paths are resolved from [`tools/pipelines/paths.py`](tools/pipelines/paths.py) (no hardcoded home directories).
+Pipeline steps may write temporary local outputs under `data/ocr_outputs/`,
+`data/mangle_facts/`, and `data/catalog/`. Durable OCR/AI artifacts should live
+in `gs://victoriaensoapp-ai-artifacts`; see
+[`docs/local-cache-and-object-storage.md`](docs/local-cache-and-object-storage.md).
+Paths are resolved from [`tools/pipelines/paths.py`](tools/pipelines/paths.py)
+(no hardcoded home directories).
 
 Other CLIs (run from repo root with `python3 tools/pipelines/…` or `python3 tools/scripts/…`):
 

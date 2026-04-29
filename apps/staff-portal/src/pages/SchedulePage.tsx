@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
+import { useAuth } from "../contexts/AuthContext";
 import { api } from "../lib/api";
-
-const STORE_ID = import.meta.env.VITE_STORE_ID as string;
+import { Icon } from "../components/Icon";
 
 // ---- helpers ----
 
@@ -49,19 +49,28 @@ const DAY_LABELS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
 // ---- component ----
 
 export default function SchedulePage() {
+  const { selectedStore, loading: authLoading } = useAuth();
+  const storeId = selectedStore?.id ?? null;
   const [weekStart, setWeekStart] = useState(() => startOfWeek(new Date()));
   const [shifts, setShifts] = useState<Shift[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
   const fetchShifts = useCallback(async () => {
+    if (!storeId) {
+      setShifts([]);
+      setLoading(false);
+      setError(authLoading ? null : "No store selected");
+      return;
+    }
+
     setLoading(true);
     setError(null);
     try {
       const from = fmtDate(weekStart);
       const to = fmtDate(addDays(weekStart, 6));
       const res = await api.get<{ data: Shift[] }>(
-        `/stores/${STORE_ID}/schedules/my-shifts?from=${from}&to=${to}`,
+        `/stores/${storeId}/schedules/my-shifts?from=${from}&to=${to}`,
       );
       setShifts(res.data);
     } catch (e: unknown) {
@@ -69,11 +78,12 @@ export default function SchedulePage() {
     } finally {
       setLoading(false);
     }
-  }, [weekStart]);
+  }, [authLoading, storeId, weekStart]);
 
   useEffect(() => {
-    fetchShifts();
-  }, [fetchShifts]);
+    if (authLoading) return;
+    void fetchShifts();
+  }, [authLoading, fetchShifts]);
 
   const today = fmtDate(new Date());
 
@@ -99,7 +109,7 @@ export default function SchedulePage() {
           className="rounded-md p-2 text-gray-600 hover:bg-gray-100"
           aria-label="Previous week"
         >
-          ◀
+          <Icon name="chevron-left" className="h-5 w-5" />
         </button>
         <div className="text-center">
           <p className="text-sm font-semibold text-gray-800">{weekLabel}</p>
@@ -115,7 +125,7 @@ export default function SchedulePage() {
           className="rounded-md p-2 text-gray-600 hover:bg-gray-100"
           aria-label="Next week"
         >
-          ▶
+          <Icon name="chevron-right" className="h-5 w-5" />
         </button>
       </div>
 
@@ -184,7 +194,7 @@ export default function SchedulePage() {
                             {shift.hours}h ({shift.break_minutes}min break)
                           </p>
                           {shift.notes && (
-                            <p className="mt-1 text-xs text-gray-500">📝 {shift.notes}</p>
+                            <p className="mt-1 text-xs text-gray-500">{shift.notes}</p>
                           )}
                         </div>
                       </div>

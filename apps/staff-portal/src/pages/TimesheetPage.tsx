@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { useAuth } from "../contexts/AuthContext";
 import { api } from "../lib/api";
-
-const STORE_ID = import.meta.env.VITE_STORE_ID as string;
+import { Icon } from "../components/Icon";
 
 // ---- types ----
 
@@ -57,6 +57,9 @@ function statusBadge(status: string) {
 // ---- component ----
 
 export default function TimesheetPage() {
+  const { selectedStore, loading: authLoading } = useAuth();
+  const storeId = selectedStore?.id ?? null;
+
   // clock state
   const [activeEntry, setActiveEntry] = useState<TimeEntry | null>(null);
   const [timerStr, setTimerStr] = useState("00:00:00");
@@ -78,16 +81,24 @@ export default function TimesheetPage() {
 
   // ---- clock status ----
   const fetchStatus = useCallback(async () => {
+    if (authLoading) return;
     try {
       const res = await api.get<{ data: TimeEntry | null }>("/timesheets/status");
       setActiveEntry(res.data);
     } catch {
       // ignore — user may not be clocked in
     }
-  }, []);
+  }, [authLoading]);
 
   // ---- history ----
   const fetchHistory = useCallback(async () => {
+    if (!storeId) {
+      setEntries([]);
+      setHistLoading(false);
+      setError(authLoading ? null : "No store selected");
+      return;
+    }
+
     setHistLoading(true);
     setError(null);
     try {
@@ -99,7 +110,7 @@ export default function TimesheetPage() {
         params.set("date_to", end.toISOString());
       }
       const res = await api.get<{ data: TimeEntry[] }>(
-        `/stores/${STORE_ID}/timesheets?${params}`,
+        `/stores/${storeId}/timesheets?${params}`,
       );
       setEntries(res.data);
     } catch (e: unknown) {
@@ -107,10 +118,17 @@ export default function TimesheetPage() {
     } finally {
       setHistLoading(false);
     }
-  }, [dateFrom, dateTo]);
+  }, [authLoading, dateFrom, dateTo, storeId]);
 
-  useEffect(() => { fetchStatus(); }, [fetchStatus]);
-  useEffect(() => { fetchHistory(); }, [fetchHistory]);
+  useEffect(() => {
+    if (authLoading) return;
+    void fetchStatus();
+  }, [authLoading, fetchStatus]);
+
+  useEffect(() => {
+    if (authLoading) return;
+    void fetchHistory();
+  }, [authLoading, fetchHistory]);
 
   // live timer
   useEffect(() => {
@@ -126,13 +144,18 @@ export default function TimesheetPage() {
 
   // ---- actions ----
   const handleClockIn = async () => {
+    if (!storeId) {
+      setError("No store selected");
+      return;
+    }
+
     setClockLoading(true);
     try {
       const res = await api.post<{ data: TimeEntry }>("/timesheets/clock-in", {
-        store_id: STORE_ID,
+        store_id: storeId,
       });
       setActiveEntry(res.data);
-      fetchHistory();
+      void fetchHistory();
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : "Clock-in failed");
     } finally {
@@ -147,7 +170,7 @@ export default function TimesheetPage() {
         break_minutes: 0,
       });
       setActiveEntry(null);
-      fetchHistory();
+      void fetchHistory();
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : "Clock-out failed");
     } finally {
@@ -181,9 +204,9 @@ export default function TimesheetPage() {
             <button
               onClick={handleClockOut}
               disabled={clockLoading}
-              className="mt-4 w-full rounded-xl bg-red-600 px-6 py-3 text-sm font-bold text-white shadow-sm hover:bg-red-700 disabled:opacity-50 sm:w-auto"
+              className="mt-4 inline-flex w-full items-center justify-center gap-2 rounded-xl bg-red-600 px-6 py-3 text-sm font-bold text-white shadow-sm hover:bg-red-700 disabled:opacity-50 sm:w-auto"
             >
-              {clockLoading ? "Clocking out…" : "🛑 Clock Out"}
+              {clockLoading ? "Clocking out…" : <><Icon name="clock" className="h-4 w-4" /> Clock Out</>}
             </button>
           </div>
         ) : (
@@ -192,9 +215,9 @@ export default function TimesheetPage() {
             <button
               onClick={handleClockIn}
               disabled={clockLoading}
-              className="mt-4 w-full rounded-xl bg-green-600 px-6 py-3 text-sm font-bold text-white shadow-sm hover:bg-green-700 disabled:opacity-50 sm:w-auto"
+              className="mt-4 inline-flex w-full items-center justify-center gap-2 rounded-xl bg-green-600 px-6 py-3 text-sm font-bold text-white shadow-sm hover:bg-green-700 disabled:opacity-50 sm:w-auto"
             >
-              {clockLoading ? "Clocking in…" : "▶ Clock In"}
+              {clockLoading ? "Clocking in…" : <><Icon name="check" className="h-4 w-4" /> Clock In</>}
             </button>
           </div>
         )}

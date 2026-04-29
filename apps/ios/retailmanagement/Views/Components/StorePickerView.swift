@@ -23,6 +23,11 @@ struct StorePickerView: View {
                             Text(store.location)
                                 .font(.subheadline)
                                 .foregroundStyle(.secondary)
+                            if !descriptor(for: store).isEmpty {
+                                Text(descriptor(for: store))
+                                    .font(.caption)
+                                    .foregroundStyle(.blue)
+                            }
                             Text(store.address)
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
@@ -39,6 +44,7 @@ struct StorePickerView: View {
                 }
                 .foregroundStyle(.primary)
             }
+            .macOSFormWidth(560)
             .navigationTitle("Select Store")
             #if canImport(UIKit)
             .navigationBarTitleDisplayMode(.inline)
@@ -49,6 +55,26 @@ struct StorePickerView: View {
                 }
             }
         }
+    }
+
+    private func descriptor(for store: Store) -> String {
+        var parts: [String] = []
+        if store.storeType != .retail {
+            parts.append(store.storeType.rawValue)
+        }
+        if store.isHomeBase {
+            parts.append("home base")
+        }
+        if store.isTempWarehouse {
+            parts.append("temp warehouse")
+        }
+        if store.operationalStatus != .active {
+            parts.append(store.operationalStatus.rawValue)
+        }
+        if let plannedOpenDate = store.plannedOpenDate, !plannedOpenDate.isEmpty {
+            parts.append("opens \(plannedOpenDate)")
+        }
+        return parts.joined(separator: " • ")
     }
 }
 

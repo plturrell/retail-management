@@ -1,12 +1,18 @@
+import uuid as _uuid
+from datetime import date, datetime, time, timezone
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, status
-from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncSession
+from google.cloud.firestore_v1.client import Client as FirestoreClient
 
-from app.database import get_db
-from app.models.store import Store
-from app.models.user import User
+from app.firestore import get_firestore_db
+from app.firestore_helpers import (
+    create_document,
+    delete_document,
+    get_document,
+    query_collection,
+    update_document,
+)
 from app.auth.dependencies import get_current_user
 from app.schemas.common import DataResponse, PaginatedResponse
 from app.schemas.store import StoreCreate, StoreRead, StoreUpdate
@@ -14,26 +20,93 @@ from app.schemas.store import StoreCreate, StoreRead, StoreUpdate
 router = APIRouter(prefix="/api/stores", tags=["stores"])
 
 
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+def _parse_time(val) -> time | None:
+    """Coerce a stored value back to a datetime.time."""
+    if val is None:
+        return None
+    if isinstance(val, time):
+        return val
+    if isinstance(val, str):
+        return time.fromisoformat(val)
+    return val
+
+
+def _parse_date(val) -> date | None:
+    if val is None:
+        return None
+    if isinstance(val, date) and not isinstance(val, datetime):
+        return val
+    if isinstance(val, datetime):
+        return val.date()
+    if isinstance(val, str):
+        return date.fromisoformat(val)
+    return val
+
+
+def _store_to_read(data: dict) -> StoreRead:
+    return StoreRead(
+        id=UUID(data["id"]) if isinstance(data.get("id"), str) else data.get("id"),
+        store_code=data.get("store_code"),
+        name=data.get("name", ""),
+        location=data.get("location", ""),
+        address=data.get("address", ""),
+        business_hours_start=_parse_time(data.get("business_hours_start")),
+        business_hours_end=_parse_time(data.get("business_hours_end")),
+        store_type=data.get("store_type", "retail"),
+        operational_status=data.get("operational_status", "active"),
+        is_home_base=data.get("is_home_base", False),
+        is_temp_warehouse=data.get("is_temp_warehouse", False),
+        planned_open_date=_parse_date(data.get("planned_open_date")),
+        notes=data.get("notes"),
+        is_active=data.get("is_active", True),
+        created_at=data.get("created_at", datetime.now(timezone.utc)),
+        updated_at=data.get("updated_at"),
+    )
+
+
+def _serialize_store_data(data: dict) -> dict:
+    """Convert time objects to ISO strings for Firestore storage."""
+    out = dict(data)
+    for key in ("business_hours_start", "business_hours_end"):
+        if key in out and isinstance(out[key], time):
+            out[key] = out[key].isoformat()
+    if "planned_open_date" in out and isinstance(out["planned_open_date"], date):
+        out["planned_open_date"] = out["planned_open_date"].isoformat()
+    return out
+
+
+# ---------------------------------------------------------------------------
+# Endpoints
+# ---------------------------------------------------------------------------
+
 @router.get("", response_model=PaginatedResponse[StoreRead])
 async def list_stores(
     page: int = 1,
     page_size: int = 50,
-    user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
+    user: dict = Depends(get_current_user),
+    db: FirestoreClient = Depends(get_firestore_db),
 ):
-    store_ids = [ur.store_id for ur in user.store_roles]
-    query = select(Store).where(Store.id.in_(store_ids))
-    total_result = await db.execute(
-        select(Store.id).where(Store.id.in_(store_ids))
-    )
-    total = len(total_result.all())
+    store_ids = [str(sr.get("store_id", "")) for sr in user.get("store_roles", [])]
+    if not store_ids:
+        return PaginatedResponse(data=[], total=0, page=page, page_size=page_size)
 
-    query = query.offset((page - 1) * page_size).limit(page_size)
-    result = await db.execute(query)
-    stores = result.scalars().all()
+    # Fetch each store doc individually (Firestore has no IN query for doc IDs)
+    all_stores = []
+    for sid in store_ids:
+        doc = get_document("stores", sid)
+        if doc is not None:
+            all_stores.append(doc)
+
+    total = len(all_stores)
+    start = (page - 1) * page_size
+    page_items = all_stores[start : start + page_size]
 
     return PaginatedResponse(
-        data=[StoreRead.model_validate(s) for s in stores],
+        data=[_store_to_read(s) for s in page_items],
         total=total,
         page=page,
         page_size=page_size,
@@ -43,57 +116,58 @@ async def list_stores(
 @router.get("/{store_id}", response_model=DataResponse[StoreRead])
 async def get_store(
     store_id: UUID,
-    user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
+    user: dict = Depends(get_current_user),
+    db: FirestoreClient = Depends(get_firestore_db),
 ):
-    result = await db.execute(select(Store).where(Store.id == store_id))
-    store = result.scalar_one_or_none()
+    store = get_document("stores", str(store_id))
     if store is None:
         raise HTTPException(status_code=404, detail="Store not found")
-    return DataResponse(data=StoreRead.model_validate(store))
+    return DataResponse(data=_store_to_read(store))
 
 
 @router.post("", response_model=DataResponse[StoreRead], status_code=201)
 async def create_store(
     payload: StoreCreate,
-    user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
+    user: dict = Depends(get_current_user),
+    db: FirestoreClient = Depends(get_firestore_db),
 ):
-    store = Store(**payload.model_dump())
-    db.add(store)
-    await db.flush()
-    await db.refresh(store)
-    return DataResponse(data=StoreRead.model_validate(store))
+    store_id = str(_uuid.uuid4())
+    now = datetime.now(timezone.utc)
+    doc_data = _serialize_store_data(payload.model_dump())
+    doc_data["created_at"] = now
+    doc_data["updated_at"] = now
+
+    created = create_document("stores", doc_data, doc_id=store_id)
+    return DataResponse(data=_store_to_read(created))
 
 
 @router.patch("/{store_id}", response_model=DataResponse[StoreRead])
 async def update_store(
     store_id: UUID,
     payload: StoreUpdate,
-    user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
+    user: dict = Depends(get_current_user),
+    db: FirestoreClient = Depends(get_firestore_db),
 ):
-    result = await db.execute(select(Store).where(Store.id == store_id))
-    store = result.scalar_one_or_none()
-    if store is None:
+    existing = get_document("stores", str(store_id))
+    if existing is None:
         raise HTTPException(status_code=404, detail="Store not found")
 
-    for key, value in payload.model_dump(exclude_unset=True).items():
-        setattr(store, key, value)
-
-    await db.flush()
-    await db.refresh(store)
-    return DataResponse(data=StoreRead.model_validate(store))
+    updates = _serialize_store_data(payload.model_dump(exclude_unset=True))
+    if updates:
+        updates["updated_at"] = datetime.now(timezone.utc)
+        updated = update_document("stores", str(store_id), updates)
+    else:
+        updated = existing
+    return DataResponse(data=_store_to_read(updated))
 
 
 @router.delete("/{store_id}", status_code=204)
 async def delete_store(
     store_id: UUID,
-    user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
+    user: dict = Depends(get_current_user),
+    db: FirestoreClient = Depends(get_firestore_db),
 ):
-    result = await db.execute(select(Store).where(Store.id == store_id))
-    store = result.scalar_one_or_none()
-    if store is None:
+    existing = get_document("stores", str(store_id))
+    if existing is None:
         raise HTTPException(status_code=404, detail="Store not found")
-    await db.delete(store)
+    delete_document("stores", str(store_id))

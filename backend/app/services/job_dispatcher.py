@@ -52,21 +52,21 @@ async def dispatch_job(
     if job_type not in JOB_TYPES:
         raise ValueError(f"Unknown job type: {job_type}")
 
-    from app.database import async_session_factory
-    from app.models.ai_artifact import AIArtifact
+    import uuid as _uuid
+    from datetime import datetime, timezone
+    from app.firestore_helpers import create_document
 
-    artifact_id: str = ""
-    async with async_session_factory() as session:
-        artifact = AIArtifact(
-            store_id=store_id,
-            artifact_type=job_type,
-            status="pending",
-            payload={"input": payload, "gcs_input_uri": gcs_input_uri},
-        )
-        session.add(artifact)
-        await session.commit()
-        await session.refresh(artifact)
-        artifact_id = str(artifact.id)
+    artifact_id = str(_uuid.uuid4())
+    now = datetime.now(timezone.utc)
+    create_document("ai-artifacts", {
+        "store_id": str(store_id),
+        "artifact_type": job_type,
+        "status": "pending",
+        "payload": {"input": payload, "gcs_input_uri": gcs_input_uri},
+        "gcs_uri": None,
+        "created_at": now,
+        "updated_at": now,
+    }, doc_id=artifact_id)
 
     if settings.ENVIRONMENT == "production":
         await _dispatch_cloud_tasks(job_type, artifact_id, payload, gcs_input_uri)
@@ -113,35 +113,27 @@ async def _dispatch_cloud_tasks(
 
 async def _run_local(job_type: str, artifact_id: str) -> None:
     """Run job in-process for local development."""
-    from uuid import UUID as _UUID
+    from app.firestore_helpers import get_document, update_document
 
-    from app.database import async_session_factory
-    from app.models.ai_artifact import AIArtifact
-    from sqlalchemy import select
+    artifact = get_document("ai-artifacts", artifact_id)
+    if artifact is None:
+        logger.error("Artifact %s not found for local job", artifact_id)
+        return
 
-    aid = _UUID(artifact_id) if isinstance(artifact_id, str) else artifact_id
-    async with async_session_factory() as session:
-        result = await session.execute(
-            select(AIArtifact).where(AIArtifact.id == aid)
-        )
-        artifact = result.scalar_one_or_none()
-        if artifact is None:
-            logger.error("Artifact %s not found for local job", artifact_id)
-            return
+    update_document("ai-artifacts", artifact_id, {"status": "processing"})
 
-        artifact.status = "processing"
-        await session.commit()
-
-        try:
-            output = await _execute_job(job_type, artifact.payload or {})
-            artifact.status = "completed"
-            artifact.payload = {**(artifact.payload or {}), "output": output}
-            await session.commit()
-        except Exception as exc:
-            artifact.status = "failed"
-            artifact.payload = {**(artifact.payload or {}), "error": str(exc)}
-            await session.commit()
-            logger.error("Local job %s failed: %s", artifact_id, exc)
+    try:
+        output = await _execute_job(job_type, artifact.get("payload") or {})
+        update_document("ai-artifacts", artifact_id, {
+            "status": "completed",
+            "payload": {**(artifact.get("payload") or {}), "output": output},
+        })
+    except Exception as exc:
+        update_document("ai-artifacts", artifact_id, {
+            "status": "failed",
+            "payload": {**(artifact.get("payload") or {}), "error": str(exc)},
+        })
+        logger.error("Local job %s failed: %s", artifact_id, exc)
 
 
 async def _execute_job(job_type: str, payload: dict) -> dict:

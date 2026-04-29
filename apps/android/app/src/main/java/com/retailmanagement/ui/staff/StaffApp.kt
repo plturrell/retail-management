@@ -16,6 +16,8 @@ import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import com.google.firebase.auth.FirebaseAuth
 import com.retailmanagement.data.api.RetrofitClient
+import com.retailmanagement.ui.InventoryScreen
+import com.retailmanagement.ui.MasterDataScreen
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
@@ -25,16 +27,20 @@ sealed class StaffTab(val route: String, val label: String, val icon: ImageVecto
     object Timesheet : StaffTab("timesheet", "Timesheet", Icons.Default.Timer)
     object Pay : StaffTab("pay", "Pay", Icons.Default.Payments)
     object Performance : StaffTab("performance", "Performance", Icons.Default.TrendingUp)
+    object Inventory : StaffTab("inventory", "Inventory", Icons.Default.Inventory2)
+    object MasterData : StaffTab("master-data", "Master Data", Icons.Default.ListAlt)
     object Profile : StaffTab("profile", "Profile", Icons.Default.Person)
 }
 
-private val tabs = listOf(StaffTab.Schedule, StaffTab.Timesheet, StaffTab.Pay, StaffTab.Performance, StaffTab.Profile)
+private val staffTabs = listOf(StaffTab.Schedule, StaffTab.Timesheet, StaffTab.Pay, StaffTab.Performance, StaffTab.Profile)
 
 class StaffAppViewModel : ViewModel() {
     private val _userId = MutableStateFlow<String?>(null)
     val userId = _userId.asStateFlow()
     private val _storeId = MutableStateFlow<String?>(null)
     val storeId = _storeId.asStateFlow()
+    private val _role = MutableStateFlow("staff")
+    val role = _role.asStateFlow()
     private val _isLoggedIn = MutableStateFlow(FirebaseAuth.getInstance().currentUser != null)
     val isLoggedIn = _isLoggedIn.asStateFlow()
 
@@ -47,6 +53,7 @@ class StaffAppViewModel : ViewModel() {
         _isLoggedIn.value = false
         _userId.value = null
         _storeId.value = null
+        _role.value = "staff"
     }
 
     fun loadUserContext() {
@@ -54,7 +61,9 @@ class StaffAppViewModel : ViewModel() {
             try {
                 val me = RetrofitClient.api.getMe().data
                 _userId.value = me.id
-                _storeId.value = me.storeRoles?.firstOrNull()?.storeId
+                val firstRole = me.storeRoles?.firstOrNull()
+                _storeId.value = firstRole?.storeId
+                _role.value = firstRole?.role ?: "staff"
             } catch (_: Exception) { /* will retry on screen load */ }
         }
     }
@@ -70,6 +79,7 @@ fun StaffApp(vm: StaffAppViewModel = viewModel()) {
     val isLoggedIn by vm.isLoggedIn.collectAsState()
     val userId by vm.userId.collectAsState()
     val storeId by vm.storeId.collectAsState()
+    val role by vm.role.collectAsState()
 
     if (!isLoggedIn) {
         LoginScreen(onLoginSuccess = { vm.onLoginSuccess() })
@@ -79,11 +89,33 @@ fun StaffApp(vm: StaffAppViewModel = viewModel()) {
     val navController = rememberNavController()
     val currentEntry by navController.currentBackStackEntryAsState()
     val currentRoute = currentEntry?.destination?.route
+    val visibleTabs = remember(role) {
+        when (role) {
+            "owner" -> listOf(
+                StaffTab.Schedule,
+                StaffTab.Timesheet,
+                StaffTab.Pay,
+                StaffTab.Performance,
+                StaffTab.Inventory,
+                StaffTab.MasterData,
+                StaffTab.Profile
+            )
+            "manager" -> listOf(
+                StaffTab.Schedule,
+                StaffTab.Timesheet,
+                StaffTab.Pay,
+                StaffTab.Performance,
+                StaffTab.Inventory,
+                StaffTab.Profile
+            )
+            else -> staffTabs
+        }
+    }
 
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text(tabs.find { it.route == currentRoute }?.label ?: "RetailSG") },
+                title = { Text(visibleTabs.find { it.route == currentRoute }?.label ?: "VictoriaEnso") },
                 colors = TopAppBarDefaults.topAppBarColors(
                     containerColor = MaterialTheme.colorScheme.primaryContainer,
                     titleContentColor = MaterialTheme.colorScheme.onPrimaryContainer
@@ -92,7 +124,7 @@ fun StaffApp(vm: StaffAppViewModel = viewModel()) {
         },
         bottomBar = {
             NavigationBar {
-                tabs.forEach { tab ->
+                visibleTabs.forEach { tab ->
                     NavigationBarItem(
                         selected = currentRoute == tab.route,
                         onClick = {
@@ -119,6 +151,8 @@ fun StaffApp(vm: StaffAppViewModel = viewModel()) {
             composable(StaffTab.Timesheet.route) { TimesheetScreen(storeId = sid, userId = uid) }
             composable(StaffTab.Pay.route) { PayScreen(storeId = sid, userId = uid) }
             composable(StaffTab.Performance.route) { PerformanceScreen(storeId = sid, userId = uid) }
+            composable(StaffTab.Inventory.route) { InventoryScreen(storeId = sid) }
+            composable(StaffTab.MasterData.route) { MasterDataScreen(canEdit = role == "owner") }
             composable(StaffTab.Profile.route) { ProfileScreen(userId = uid, onLogout = { vm.onLogout() }) }
         }
     }

@@ -255,11 +255,24 @@ def write_mangle(output_path: Path, payload: dict[str, Any]) -> None:
 
                 w_amt = txn.get("transaction_withdrawal")
                 d_amt = txn.get("transaction_deposit")
+
+                def _resolve_amount(val: Any) -> float:
+                    if val is None:
+                        return 0.0
+                    if isinstance(val, (int, float)):
+                        return float(val)
+                    if isinstance(val, dict):
+                        return float(val.get("amount", 0))
+                    try:
+                        return float(str(val).replace(",", "").replace("$", ""))
+                    except (TypeError, ValueError):
+                        return 0.0
+
                 if d_amt:
-                    amount = d_amt if isinstance(d_amt, (int, float)) else d_amt.get("amount", 0)
+                    amount = _resolve_amount(d_amt)
                     txn_type = "deposit"
                 elif w_amt:
-                    amount = w_amt if isinstance(w_amt, (int, float)) else w_amt.get("amount", 0)
+                    amount = _resolve_amount(w_amt)
                     txn_type = "withdrawal"
                 else:
                     amount = 0

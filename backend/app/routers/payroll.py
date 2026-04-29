@@ -1,28 +1,27 @@
 from __future__ import annotations
 
+import uuid as _uuid
 from collections import defaultdict
-from datetime import date, datetime, timedelta, timezone
-from decimal import Decimal
+from datetime import date, datetime, timezone
+from decimal import Decimal, ROUND_HALF_UP
+from typing import Any
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy import and_, select
-from sqlalchemy.ext.asyncio import AsyncSession
+from google.cloud.firestore_v1.client import Client as FirestoreClient
+from google.cloud.firestore_v1.transaction import transactional as _transactional
 
-from app.database import get_db
-from app.models.payroll import (
-    CommissionEntry,
-    CommissionRule,
-    EmployeeProfile,
-    NationalityEnum,
-    PayrollRun,
-    PayrollStatusEnum,
-    PaySlip,
+from app.firestore import get_firestore_db
+from app.firestore_helpers import (
+    create_document,
+    doc_to_dict,
+    get_document,
+    query_collection,
+    update_document,
+    delete_document,
 )
-from app.models.order import Order, OrderStatus
-from app.models.timesheet import TimeEntry, TimeEntryStatus
-from app.models.user import RoleEnum, User, UserStoreRole
 from app.auth.dependencies import (
+    RoleEnum,
     get_current_user,
     require_self_or_store_manager,
     require_store_role,
@@ -51,6 +50,111 @@ from app.services.cpf import calculate_cpf
 router = APIRouter(tags=["payroll"])
 
 
+# ---------------------------------------------------------------------------
+# Collection path helpers
+# ---------------------------------------------------------------------------
+
+_PROFILE_COL = "employee-profiles"
+
+
+def _payroll_col(store_id: UUID) -> str:
+    return f"stores/{store_id}/payroll-runs"
+
+
+def _payslip_col(store_id: UUID, run_id: str) -> str:
+    return f"stores/{store_id}/payroll-runs/{run_id}/payslips"
+
+
+def _commission_col(store_id: UUID) -> str:
+    return f"stores/{store_id}/commission-rules"
+
+
+def _timesheet_col(store_id: UUID) -> str:
+    return f"stores/{store_id}/timesheets"
+
+
+def _order_col(store_id: UUID) -> str:
+    return f"stores/{store_id}/orders"
+
+
+def _serialize_date(d: date | None) -> str | None:
+    return d.isoformat() if d else None
+
+
+def _parse_date(val: Any) -> date | None:
+    if val is None:
+        return None
+    if isinstance(val, date):
+        return val
+    return date.fromisoformat(val)
+
+
+_DECIMAL_2DP = Decimal("0.01")
+
+
+def _as_decimal(value: Any, default: str = "0") -> Decimal:
+    if value in (None, ""):
+        return Decimal(default)
+    return Decimal(str(value))
+
+
+def _quantize_2dp(value: Decimal) -> Decimal:
+    return value.quantize(_DECIMAL_2DP, rounding=ROUND_HALF_UP)
+
+
+def _decimal_to_float(value: Decimal) -> float:
+    return float(_quantize_2dp(value))
+
+
+def _safe_ratio(value: Decimal, divisor: Decimal) -> Decimal:
+    if divisor <= 0:
+        return Decimal("0")
+    return _quantize_2dp(value / divisor)
+
+
+def _safe_percent(value: Decimal, divisor: Decimal) -> Decimal:
+    if divisor <= 0:
+        return Decimal("0")
+    return _quantize_2dp((value / divisor) * Decimal("100"))
+
+
+def _user_id_str(user: Any) -> str:
+    if isinstance(user, dict):
+        return str(user.get("id"))
+    return str(getattr(user, "id"))
+
+
+def _normalize_datetime(value: Any) -> datetime | None:
+    if value is None:
+        return None
+    if isinstance(value, str):
+        value = datetime.fromisoformat(value)
+    if value.tzinfo is not None:
+        return value.astimezone(timezone.utc).replace(tzinfo=None)
+    return value
+
+
+def _profile_to_read(data: dict) -> EmployeeProfileRead:
+    """Convert Firestore profile dict to EmployeeProfileRead."""
+    return EmployeeProfileRead(
+        id=UUID(data["id"]) if isinstance(data.get("id"), str) else data.get("id"),
+        user_id=UUID(data["user_id"]) if isinstance(data.get("user_id"), str) else data.get("user_id"),
+        date_of_birth=_parse_date(data.get("date_of_birth")),
+        nationality=data.get("nationality"),
+        basic_salary=Decimal(str(data.get("basic_salary", 0))),
+        hourly_rate=Decimal(str(data["hourly_rate"])) if data.get("hourly_rate") is not None else None,
+        commission_rate=Decimal(str(data["commission_rate"])) if data.get("commission_rate") is not None else None,
+        bank_account=data.get("bank_account"),
+        bank_name=data.get("bank_name", "OCBC"),
+        cpf_account_number=data.get("cpf_account_number"),
+        start_date=_parse_date(data.get("start_date")),
+        end_date=_parse_date(data.get("end_date")),
+        is_active=data.get("is_active", True),
+        created_at=data.get("created_at", datetime.now(timezone.utc)),
+        updated_at=data.get("updated_at"),
+    )
+
+
 # ---- Employee Profile endpoints ----
 
 
@@ -63,22 +167,20 @@ async def create_employee_profile(
     user_id: UUID,
     payload: EmployeeProfileCreate,
     _: UUID = Depends(require_self_or_store_manager),
-    db: AsyncSession = Depends(get_db),
+    db: FirestoreClient = Depends(get_firestore_db),
 ):
-    # Check if profile already exists
-    existing = await db.execute(
-        select(EmployeeProfile).where(EmployeeProfile.user_id == user_id)
-    )
-    if existing.scalar_one_or_none() is not None:
+    doc_id = str(user_id)
+    existing = get_document(_PROFILE_COL, doc_id)
+    if existing is not None:
         raise HTTPException(status_code=400, detail="Employee profile already exists")
 
-    data = payload.model_dump()
-    data["user_id"] = user_id
-    profile = EmployeeProfile(**data)
-    db.add(profile)
-    await db.flush()
-    await db.refresh(profile)
-    return DataResponse(data=EmployeeProfileRead.model_validate(profile))
+    now = datetime.now(timezone.utc)
+    data = payload.model_dump(mode="json")
+    data["user_id"] = str(user_id)
+    data["created_at"] = now
+    data["updated_at"] = now
+    result = create_document(_PROFILE_COL, data, doc_id=doc_id)
+    return DataResponse(data=_profile_to_read(result))
 
 
 @router.get(
@@ -88,15 +190,12 @@ async def create_employee_profile(
 async def get_employee_profile(
     user_id: UUID,
     _: UUID = Depends(require_self_or_store_manager),
-    db: AsyncSession = Depends(get_db),
+    db: FirestoreClient = Depends(get_firestore_db),
 ):
-    result = await db.execute(
-        select(EmployeeProfile).where(EmployeeProfile.user_id == user_id)
-    )
-    profile = result.scalar_one_or_none()
+    profile = get_document(_PROFILE_COL, str(user_id))
     if profile is None:
         raise HTTPException(status_code=404, detail="Employee profile not found")
-    return DataResponse(data=EmployeeProfileRead.model_validate(profile))
+    return DataResponse(data=_profile_to_read(profile))
 
 
 @router.patch(
@@ -107,21 +206,17 @@ async def update_employee_profile(
     user_id: UUID,
     payload: EmployeeProfileUpdate,
     _: UUID = Depends(require_self_or_store_manager),
-    db: AsyncSession = Depends(get_db),
+    db: FirestoreClient = Depends(get_firestore_db),
 ):
-    result = await db.execute(
-        select(EmployeeProfile).where(EmployeeProfile.user_id == user_id)
-    )
-    profile = result.scalar_one_or_none()
-    if profile is None:
+    doc_id = str(user_id)
+    existing = get_document(_PROFILE_COL, doc_id)
+    if existing is None:
         raise HTTPException(status_code=404, detail="Employee profile not found")
 
-    for key, value in payload.model_dump(exclude_unset=True).items():
-        setattr(profile, key, value)
-
-    await db.flush()
-    await db.refresh(profile)
-    return DataResponse(data=EmployeeProfileRead.model_validate(profile))
+    updates = payload.model_dump(exclude_unset=True, mode="json")
+    updates["updated_at"] = datetime.now(timezone.utc)
+    result = update_document(_PROFILE_COL, doc_id, updates)
+    return DataResponse(data=_profile_to_read(result))
 
 
 @router.get(
@@ -132,29 +227,119 @@ async def list_payroll_employees(
     store_id: UUID,
     page: int = 1,
     page_size: int = 50,
-    _: UserStoreRole = Depends(require_store_role(RoleEnum.manager)),
-    db: AsyncSession = Depends(get_db),
+    _=Depends(require_store_role(RoleEnum.manager)),
+    db: FirestoreClient = Depends(get_firestore_db),
 ):
-    role_result = await db.execute(
-        select(UserStoreRole.user_id).where(UserStoreRole.store_id == store_id)
-    )
-    user_ids = [row[0] for row in role_result.all()]
+    # Get all employees in this store from the store's employees subcollection
+    emp_docs = list(db.collection(f"stores/{store_id}/employees").stream())
+    user_ids = [doc.id for doc in emp_docs]
 
     if not user_ids:
         return PaginatedResponse(data=[], total=0, page=page, page_size=page_size)
 
-    base = select(EmployeeProfile).where(EmployeeProfile.user_id.in_(user_ids))
-    from sqlalchemy import func
-    count_result = await db.execute(select(func.count()).select_from(base.subquery()))
-    total = count_result.scalar() or 0
+    # Fetch profiles for these users
+    profiles = []
+    for uid in user_ids:
+        p = get_document(_PROFILE_COL, uid)
+        if p is not None:
+            profiles.append(p)
 
-    result = await db.execute(base.offset((page - 1) * page_size).limit(page_size))
-    profiles = result.scalars().all()
+    total = len(profiles)
+    start = (page - 1) * page_size
+    page_profiles = profiles[start : start + page_size]
     return PaginatedResponse(
-        data=[EmployeeProfileRead.model_validate(p) for p in profiles],
+        data=[_profile_to_read(p) for p in page_profiles],
         total=total,
         page=page,
         page_size=page_size,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Payroll-run / payslip helpers
+# ---------------------------------------------------------------------------
+
+
+def _run_to_summary(data: dict) -> PayrollRunSummary:
+    """Convert Firestore payroll-run dict to PayrollRunSummary."""
+    return PayrollRunSummary(
+        id=UUID(data["id"]) if isinstance(data.get("id"), str) else data.get("id"),
+        store_id=UUID(data["store_id"]) if isinstance(data.get("store_id"), str) else data.get("store_id"),
+        period_start=_parse_date(data.get("period_start")),
+        period_end=_parse_date(data.get("period_end")),
+        status=data.get("status", "draft"),
+        created_by=UUID(data["created_by"]) if isinstance(data.get("created_by"), str) else data.get("created_by"),
+        total_gross=Decimal(str(data.get("total_gross", 0))),
+        total_cpf_employee=Decimal(str(data.get("total_cpf_employee", 0))),
+        total_cpf_employer=Decimal(str(data.get("total_cpf_employer", 0))),
+        total_net=Decimal(str(data.get("total_net", 0))),
+        store_sales_amount=Decimal(str(data.get("store_sales_amount", 0))),
+        store_sales_order_count=int(data.get("store_sales_order_count", 0) or 0),
+        total_hours_worked=Decimal(str(data.get("total_hours_worked", 0))),
+        total_labor_cost=Decimal(str(data.get("total_labor_cost", 0))),
+        sales_per_labor_hour=Decimal(str(data.get("sales_per_labor_hour", 0))),
+        labor_cost_percent_of_sales=Decimal(str(data.get("labor_cost_percent_of_sales", 0))),
+        created_at=data.get("created_at", datetime.now(timezone.utc)),
+        updated_at=data.get("updated_at"),
+    )
+
+
+def _slip_to_read(data: dict, *, fallback_store_id: UUID | None = None) -> PaySlipRead:
+    """Convert Firestore payslip dict to PaySlipRead."""
+    store_id = data.get("store_id")
+    if store_id is None:
+        store_id = fallback_store_id
+    return PaySlipRead(
+        id=UUID(data["id"]) if isinstance(data.get("id"), str) else data.get("id"),
+        payroll_run_id=UUID(data["payroll_run_id"]) if isinstance(data.get("payroll_run_id"), str) else data.get("payroll_run_id"),
+        store_id=UUID(store_id) if isinstance(store_id, str) else store_id,
+        user_id=UUID(data["user_id"]) if isinstance(data.get("user_id"), str) else data.get("user_id"),
+        basic_salary=Decimal(str(data.get("basic_salary", 0))),
+        hours_worked=Decimal(str(data["hours_worked"])) if data.get("hours_worked") is not None else None,
+        overtime_hours=Decimal(str(data.get("overtime_hours", 0))),
+        overtime_pay=Decimal(str(data.get("overtime_pay", 0))),
+        allowances=Decimal(str(data.get("allowances", 0))),
+        deductions=Decimal(str(data.get("deductions", 0))),
+        commission_sales=Decimal(str(data.get("commission_sales", 0))),
+        commission_amount=Decimal(str(data.get("commission_amount", 0))),
+        sales_order_count=int(data.get("sales_order_count", 0) or 0),
+        sales_per_hour=Decimal(str(data.get("sales_per_hour", 0))),
+        total_labor_cost=Decimal(str(data.get("total_labor_cost", 0))),
+        labor_cost_percent_of_sales=Decimal(str(data.get("labor_cost_percent_of_sales", 0))),
+        gross_pay=Decimal(str(data.get("gross_pay", 0))),
+        cpf_employee=Decimal(str(data.get("cpf_employee", 0))),
+        cpf_employer=Decimal(str(data.get("cpf_employer", 0))),
+        net_pay=Decimal(str(data.get("net_pay", 0))),
+        notes=data.get("notes"),
+        created_at=data.get("created_at", datetime.now(timezone.utc)),
+        updated_at=data.get("updated_at"),
+    )
+
+
+def _run_to_read(run_data: dict, slips: list[dict]) -> PayrollRunRead:
+    """Build a PayrollRunRead including nested payslips."""
+    store_id = UUID(run_data["store_id"]) if isinstance(run_data.get("store_id"), str) else run_data.get("store_id")
+    return PayrollRunRead(
+        id=UUID(run_data["id"]) if isinstance(run_data.get("id"), str) else run_data.get("id"),
+        store_id=store_id,
+        period_start=_parse_date(run_data.get("period_start")),
+        period_end=_parse_date(run_data.get("period_end")),
+        status=run_data.get("status", "draft"),
+        created_by=UUID(run_data["created_by"]) if isinstance(run_data.get("created_by"), str) else run_data.get("created_by"),
+        approved_by=UUID(run_data["approved_by"]) if isinstance(run_data.get("approved_by"), str) else run_data.get("approved_by"),
+        total_gross=Decimal(str(run_data.get("total_gross", 0))),
+        total_cpf_employee=Decimal(str(run_data.get("total_cpf_employee", 0))),
+        total_cpf_employer=Decimal(str(run_data.get("total_cpf_employer", 0))),
+        total_net=Decimal(str(run_data.get("total_net", 0))),
+        store_sales_amount=Decimal(str(run_data.get("store_sales_amount", 0))),
+        store_sales_order_count=int(run_data.get("store_sales_order_count", 0) or 0),
+        total_hours_worked=Decimal(str(run_data.get("total_hours_worked", 0))),
+        total_labor_cost=Decimal(str(run_data.get("total_labor_cost", 0))),
+        sales_per_labor_hour=Decimal(str(run_data.get("sales_per_labor_hour", 0))),
+        labor_cost_percent_of_sales=Decimal(str(run_data.get("labor_cost_percent_of_sales", 0))),
+        payslips=[_slip_to_read(s, fallback_store_id=store_id) for s in slips],
+        created_at=run_data.get("created_at", datetime.now(timezone.utc)),
+        updated_at=run_data.get("updated_at"),
     )
 
 
@@ -169,20 +354,35 @@ async def list_payroll_employees(
 async def create_payroll_run(
     store_id: UUID,
     payload: PayrollRunCreate,
-    _: UserStoreRole = Depends(require_store_role(RoleEnum.manager)),
-    user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
+    _=Depends(require_store_role(RoleEnum.manager)),
+    user=Depends(get_current_user),
+    db: FirestoreClient = Depends(get_firestore_db),
 ):
-    run = PayrollRun(
-        store_id=store_id,
-        period_start=payload.period_start,
-        period_end=payload.period_end,
-        created_by=user.id,
-    )
-    db.add(run)
-    await db.flush()
-    await db.refresh(run)
-    return DataResponse(data=PayrollRunSummary.model_validate(run))
+    now = datetime.now(timezone.utc)
+    doc_id = str(_uuid.uuid4())
+    user_id = _user_id_str(user)
+    data = {
+        "store_id": str(store_id),
+        "period_start": _serialize_date(payload.period_start),
+        "period_end": _serialize_date(payload.period_end),
+        "status": "draft",
+        "created_by": user_id,
+        "approved_by": None,
+        "total_gross": 0,
+        "total_cpf_employee": 0,
+        "total_cpf_employer": 0,
+        "total_net": 0,
+        "store_sales_amount": 0,
+        "store_sales_order_count": 0,
+        "total_hours_worked": 0,
+        "total_labor_cost": 0,
+        "sales_per_labor_hour": 0,
+        "labor_cost_percent_of_sales": 0,
+        "created_at": now,
+        "updated_at": now,
+    }
+    result = create_document(_payroll_col(store_id), data, doc_id=doc_id)
+    return DataResponse(data=_run_to_summary(result))
 
 
 @router.get(
@@ -194,21 +394,123 @@ async def list_payroll_runs(
     status: str | None = None,
     period_start: date | None = None,
     period_end: date | None = None,
-    _: UserStoreRole = Depends(require_store_role(RoleEnum.manager)),
-    db: AsyncSession = Depends(get_db),
+    _=Depends(require_store_role(RoleEnum.manager)),
+    db: FirestoreClient = Depends(get_firestore_db),
 ):
-    query = select(PayrollRun).where(PayrollRun.store_id == store_id)
+    filters = []
     if status:
-        query = query.where(PayrollRun.status == status)
+        filters.append(("status", "==", status))
     if period_start:
-        query = query.where(PayrollRun.period_start >= period_start)
+        filters.append(("period_start", ">=", _serialize_date(period_start)))
     if period_end:
-        query = query.where(PayrollRun.period_end <= period_end)
+        filters.append(("period_end", "<=", _serialize_date(period_end)))
 
-    result = await db.execute(query)
-    runs = result.scalars().all()
+    runs = query_collection(_payroll_col(store_id), filters=filters)
+    return DataResponse(data=[_run_to_summary(r) for r in runs])
+
+
+@router.post(
+    "/api/stores/{store_id}/payroll/backfill-metrics",
+    response_model=DataResponse[dict],
+)
+async def backfill_payroll_metrics(
+    store_id: UUID,
+    _=Depends(require_store_role(RoleEnum.owner)),
+    db: FirestoreClient = Depends(get_firestore_db),
+):
+    payroll_runs = query_collection(_payroll_col(store_id))
+    if not payroll_runs:
+        return DataResponse(
+            data={
+                "store_id": str(store_id),
+                "runs_scanned": 0,
+                "runs_updated": 0,
+                "payslips_updated": 0,
+                "runs": [],
+            }
+        )
+
+    user_name_cache: dict[str, str] = {}
+    runs_updated = 0
+    payslips_updated = 0
+    run_summaries: list[dict[str, Any]] = []
+    now = datetime.now(timezone.utc)
+
+    for run in payroll_runs:
+        run_id_str = str(run.get("id"))
+        period_start = _parse_date(run.get("period_start"))
+        period_end = _parse_date(run.get("period_end"))
+        if period_start is None or period_end is None:
+            continue
+
+        slip_col = _payslip_col(store_id, run_id_str)
+        slips = query_collection(slip_col)
+        if not slips:
+            continue
+
+        orders = _query_completed_orders_for_period(store_id, period_start, period_end)
+        store_sales_amount, store_sales_order_count, user_sales, user_order_counts = _build_sales_maps(orders)
+        time_entries = _query_approved_time_entries_for_period(store_id, period_start, period_end)
+        user_time_entries = _group_time_entries_by_user(time_entries)
+
+        updated_slips: list[dict] = []
+        for slip in slips:
+            user_id_str = str(slip.get("user_id"))
+            regular_hours, overtime_hours = _compute_timesheet_hours(user_time_entries.get(user_id_str, []))
+            hours_worked = regular_hours + overtime_hours
+            commission_sales = user_sales.get(user_id_str, Decimal("0"))
+            gross_pay = _as_decimal(slip.get("gross_pay", 0))
+            cpf_employer = _as_decimal(slip.get("cpf_employer", 0))
+            full_name = slip.get("full_name") or _user_full_name(user_id_str, user_name_cache)
+            slip_updates = {
+                "store_id": str(store_id),
+                "full_name": full_name,
+                "basic_salary": _decimal_to_float(_derive_base_pay_from_slip(slip)),
+                "hours_worked": _decimal_to_float(hours_worked),
+                "commission_sales": _decimal_to_float(commission_sales),
+                "sales_order_count": user_order_counts.get(user_id_str, 0),
+                **_labor_metric_fields(
+                    sales_amount=commission_sales,
+                    hours_worked=hours_worked,
+                    gross_pay=gross_pay,
+                    cpf_employer=cpf_employer,
+                ),
+                "updated_at": now,
+            }
+            updated_slip = update_document(slip_col, str(slip["id"]), slip_updates)
+            updated_slips.append(updated_slip)
+            payslips_updated += 1
+
+        run_updates = {
+            **_run_totals_from_slips(
+                updated_slips,
+                store_sales_amount=store_sales_amount,
+                store_sales_order_count=store_sales_order_count,
+            ),
+            "updated_at": now,
+        }
+        update_document(_payroll_col(store_id), run_id_str, run_updates)
+        runs_updated += 1
+        run_summaries.append(
+            {
+                "payroll_run_id": run_id_str,
+                "status": run.get("status", "draft"),
+                "payslips_updated": len(updated_slips),
+                "store_sales_amount": run_updates["store_sales_amount"],
+                "total_hours_worked": run_updates["total_hours_worked"],
+                "total_labor_cost": run_updates["total_labor_cost"],
+                "sales_per_labor_hour": run_updates["sales_per_labor_hour"],
+            }
+        )
+
     return DataResponse(
-        data=[PayrollRunSummary.model_validate(r) for r in runs]
+        data={
+            "store_id": str(store_id),
+            "runs_scanned": len(payroll_runs),
+            "runs_updated": runs_updated,
+            "payslips_updated": payslips_updated,
+            "runs": run_summaries,
+        }
     )
 
 
@@ -219,18 +521,16 @@ async def list_payroll_runs(
 async def get_payroll_run(
     store_id: UUID,
     run_id: UUID,
-    _: UserStoreRole = Depends(require_store_role(RoleEnum.manager)),
-    db: AsyncSession = Depends(get_db),
+    _=Depends(require_store_role(RoleEnum.manager)),
+    db: FirestoreClient = Depends(get_firestore_db),
 ):
-    result = await db.execute(
-        select(PayrollRun).where(
-            PayrollRun.id == run_id, PayrollRun.store_id == store_id
-        )
-    )
-    run = result.scalar_one_or_none()
-    if run is None:
+    run_data = get_document(_payroll_col(store_id), str(run_id))
+    if run_data is None:
         raise HTTPException(status_code=404, detail="Payroll run not found")
-    return DataResponse(data=PayrollRunRead.model_validate(run))
+
+    # Fetch payslips subcollection
+    slips = query_collection(_payslip_col(store_id, str(run_id)))
+    return DataResponse(data=_run_to_read(run_data, slips))
 
 
 def _calculate_age(dob: date, reference_date: date) -> int:
@@ -247,9 +547,7 @@ _SG_OT_MULTIPLIER = Decimal("1.5")
 
 
 def _compute_timesheet_hours(
-    entries: list[TimeEntry],
-    period_start: date,
-    period_end: date,
+    entries: list[dict],
 ) -> tuple[Decimal, Decimal]:
     """Compute total regular hours and overtime hours from approved time entries.
 
@@ -258,16 +556,18 @@ def _compute_timesheet_hours(
 
     Returns (regular_hours, overtime_hours).
     """
-    # Bucket hours by ISO week number
     weekly_hours: dict[tuple[int, int], Decimal] = defaultdict(Decimal)
 
     for entry in entries:
-        if entry.clock_out is None:
+        clock_in = entry.get("clock_in")
+        clock_out = entry.get("clock_out")
+        if clock_out is None or clock_in is None:
             continue
-        delta = entry.clock_out - entry.clock_in
-        worked_seconds = max(delta.total_seconds() - entry.break_minutes * 60, 0)
+        delta = clock_out - clock_in
+        break_mins = entry.get("break_minutes", 0) or 0
+        worked_seconds = max(delta.total_seconds() - break_mins * 60, 0)
         worked_hours = Decimal(str(round(worked_seconds / 3600, 2)))
-        iso_year, iso_week, _ = entry.clock_in.isocalendar()
+        iso_year, iso_week, _ = clock_in.isocalendar()
         weekly_hours[(iso_year, iso_week)] += worked_hours
 
     total_regular = Decimal("0")
@@ -283,6 +583,145 @@ def _compute_timesheet_hours(
     return total_regular, total_overtime
 
 
+def _period_bounds(period_start: date, period_end: date) -> tuple[datetime, datetime]:
+    return (
+        datetime.combine(period_start, datetime.min.time()),
+        datetime.combine(period_end, datetime.max.time()),
+    )
+
+
+def _query_completed_orders_for_period(
+    store_id: UUID,
+    period_start: date,
+    period_end: date,
+) -> list[dict]:
+    period_start_dt, period_end_dt = _period_bounds(period_start, period_end)
+    all_orders = query_collection(
+        _order_col(store_id),
+        filters=[("status", "==", "completed")],
+    )
+    filtered_orders: list[dict] = []
+    for order in all_orders:
+        order_date = _normalize_datetime(order.get("order_date"))
+        if order_date is not None and period_start_dt <= order_date <= period_end_dt:
+            filtered_orders.append(order)
+    return filtered_orders
+
+
+def _build_sales_maps(
+    orders: list[dict],
+) -> tuple[Decimal, int, dict[str, Decimal], dict[str, int]]:
+    store_sales_amount = Decimal("0")
+    user_sales: dict[str, Decimal] = defaultdict(lambda: Decimal("0"))
+    user_order_counts: dict[str, int] = defaultdict(int)
+
+    for order in orders:
+        order_total = _as_decimal(order.get("grand_total", 0))
+        store_sales_amount += order_total
+        seller_id = order.get("salesperson_id") or order.get("staff_id")
+        if seller_id:
+            seller_id_str = str(seller_id)
+            user_sales[seller_id_str] += order_total
+            user_order_counts[seller_id_str] += 1
+
+    return store_sales_amount, len(orders), user_sales, user_order_counts
+
+
+def _query_approved_time_entries_for_period(
+    store_id: UUID,
+    period_start: date,
+    period_end: date,
+) -> list[dict]:
+    period_start_dt, period_end_dt = _period_bounds(period_start, period_end)
+    all_time_entries = query_collection(
+        _timesheet_col(store_id),
+        filters=[("status", "==", "approved")],
+    )
+    filtered_entries: list[dict] = []
+    for entry in all_time_entries:
+        clock_in = _normalize_datetime(entry.get("clock_in"))
+        clock_out = _normalize_datetime(entry.get("clock_out"))
+        if clock_in is None or clock_out is None:
+            continue
+        if period_start_dt <= clock_in <= period_end_dt:
+            normalized_entry = dict(entry)
+            normalized_entry["clock_in"] = clock_in
+            normalized_entry["clock_out"] = clock_out
+            filtered_entries.append(normalized_entry)
+    return filtered_entries
+
+
+def _group_time_entries_by_user(entries: list[dict]) -> dict[str, list[dict]]:
+    user_time_entries: dict[str, list[dict]] = defaultdict(list)
+    for entry in entries:
+        user_time_entries[str(entry.get("user_id"))].append(entry)
+    return user_time_entries
+
+
+def _labor_metric_fields(
+    *,
+    sales_amount: Decimal,
+    hours_worked: Decimal,
+    gross_pay: Decimal,
+    cpf_employer: Decimal,
+) -> dict[str, float]:
+    total_labor_cost = gross_pay + cpf_employer
+    sales_per_hour = _safe_ratio(sales_amount, hours_worked)
+    labor_cost_percent_of_sales = _safe_percent(total_labor_cost, sales_amount)
+    return {
+        "sales_per_hour": _decimal_to_float(sales_per_hour),
+        "total_labor_cost": _decimal_to_float(total_labor_cost),
+        "labor_cost_percent_of_sales": _decimal_to_float(labor_cost_percent_of_sales),
+    }
+
+
+def _derive_base_pay_from_slip(slip: dict) -> Decimal:
+    return _as_decimal(slip.get("gross_pay", 0)) - (
+        _as_decimal(slip.get("overtime_pay", 0))
+        + _as_decimal(slip.get("allowances", 0))
+        + _as_decimal(slip.get("commission_amount", 0))
+        - _as_decimal(slip.get("deductions", 0))
+    )
+
+
+def _run_totals_from_slips(
+    slips: list[dict],
+    *,
+    store_sales_amount: Decimal,
+    store_sales_order_count: int,
+) -> dict[str, float | int]:
+    total_gross = sum(_as_decimal(slip.get("gross_pay", 0)) for slip in slips)
+    total_cpf_employee = sum(_as_decimal(slip.get("cpf_employee", 0)) for slip in slips)
+    total_cpf_employer = sum(_as_decimal(slip.get("cpf_employer", 0)) for slip in slips)
+    total_net = sum(_as_decimal(slip.get("net_pay", 0)) for slip in slips)
+    total_hours_worked = sum(_as_decimal(slip.get("hours_worked", 0)) for slip in slips)
+    total_labor_cost = total_gross + total_cpf_employer
+    sales_per_labor_hour = _safe_ratio(store_sales_amount, total_hours_worked)
+    labor_cost_percent_of_sales = _safe_percent(total_labor_cost, store_sales_amount)
+    return {
+        "total_gross": _decimal_to_float(total_gross),
+        "total_cpf_employee": _decimal_to_float(total_cpf_employee),
+        "total_cpf_employer": _decimal_to_float(total_cpf_employer),
+        "total_net": _decimal_to_float(total_net),
+        "store_sales_amount": _decimal_to_float(store_sales_amount),
+        "store_sales_order_count": store_sales_order_count,
+        "total_hours_worked": _decimal_to_float(total_hours_worked),
+        "total_labor_cost": _decimal_to_float(total_labor_cost),
+        "sales_per_labor_hour": _decimal_to_float(sales_per_labor_hour),
+        "labor_cost_percent_of_sales": _decimal_to_float(labor_cost_percent_of_sales),
+    }
+
+
+def _user_full_name(user_id: str, cache: dict[str, str]) -> str:
+    cached = cache.get(user_id)
+    if cached:
+        return cached
+    user_doc = get_document("users", user_id) or {}
+    full_name = user_doc.get("full_name", "Unknown")
+    cache[user_id] = full_name
+    return full_name
+
+
 @router.post(
     "/api/stores/{store_id}/payroll/{run_id}/calculate",
     response_model=DataResponse[PayrollRunRead],
@@ -290,43 +729,36 @@ def _compute_timesheet_hours(
 async def calculate_payroll(
     store_id: UUID,
     run_id: UUID,
-    _: UserStoreRole = Depends(require_store_role(RoleEnum.manager)),
-    user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
+    _=Depends(require_store_role(RoleEnum.manager)),
+    user=Depends(get_current_user),
+    db: FirestoreClient = Depends(get_firestore_db),
 ):
-    # Get the payroll run
-    result = await db.execute(
-        select(PayrollRun).where(
-            PayrollRun.id == run_id, PayrollRun.store_id == store_id
-        )
-    )
-    run = result.scalar_one_or_none()
-    if run is None:
+    run_id_str = str(run_id)
+    col = _payroll_col(store_id)
+    run_data = get_document(col, run_id_str)
+    if run_data is None:
         raise HTTPException(status_code=404, detail="Payroll run not found")
 
-    if run.status != PayrollStatusEnum.draft:
+    if run_data.get("status") != "draft":
         raise HTTPException(
             status_code=400, detail="Payroll run is not in draft status"
         )
 
-    # Get all active employee profiles for employees in this store
-    role_result = await db.execute(
-        select(UserStoreRole.user_id).where(UserStoreRole.store_id == store_id)
-    )
-    store_user_ids = [row[0] for row in role_result.all()]
+    # Get all employees in this store
+    emp_docs = list(db.collection(f"stores/{store_id}/employees").stream())
+    store_user_ids = [doc.id for doc in emp_docs]
 
     if not store_user_ids:
         raise HTTPException(
             status_code=400, detail="No employees found for this store"
         )
 
-    profile_result = await db.execute(
-        select(EmployeeProfile).where(
-            EmployeeProfile.user_id.in_(store_user_ids),
-            EmployeeProfile.is_active == True,
-        )
-    )
-    profiles = profile_result.scalars().all()
+    # Fetch active employee profiles
+    profiles = []
+    for uid in store_user_ids:
+        p = get_document(_PROFILE_COL, uid)
+        if p is not None and p.get("is_active", True):
+            profiles.append(p)
 
     if not profiles:
         raise HTTPException(
@@ -334,176 +766,129 @@ async def calculate_payroll(
         )
 
     # Delete existing payslips for this run (recalculation)
-    existing_slips = await db.execute(
-        select(PaySlip).where(PaySlip.payroll_run_id == run_id)
-    )
-    for slip in existing_slips.scalars().all():
-        await db.delete(slip)
-    await db.flush()
-
-    # Delete existing commission entries for payslips in this run
-    existing_entries = await db.execute(
-        select(CommissionEntry).where(
-            CommissionEntry.payslip_id.in_(
-                select(PaySlip.id).where(PaySlip.payroll_run_id == run_id)
-            )
-        )
-    )
-    for entry in existing_entries.scalars().all():
-        await db.delete(entry)
-    await db.flush()
+    slip_col = _payslip_col(store_id, run_id_str)
+    existing_slips = query_collection(slip_col)
+    for slip in existing_slips:
+        delete_document(slip_col, slip["id"])
 
     # Fetch active commission rules for this store
-    comm_rule_result = await db.execute(
-        select(CommissionRule).where(
-            CommissionRule.store_id == store_id,
-            CommissionRule.is_active == True,
-        )
+    commission_rules = query_collection(
+        _commission_col(store_id),
+        filters=[("is_active", "==", True)],
     )
-    commission_rules = comm_rule_result.scalars().all()
 
-    # Fetch completed orders for the period, grouped by salesperson
-    order_result = await db.execute(
-        select(Order).where(
-            Order.store_id == store_id,
-            Order.status == OrderStatus.completed,
-            Order.order_date >= datetime.combine(run.period_start, datetime.min.time()),
-            Order.order_date <= datetime.combine(run.period_end, datetime.max.time()),
-        )
-    )
-    all_orders = order_result.scalars().all()
+    period_start = _parse_date(run_data.get("period_start"))
+    period_end = _parse_date(run_data.get("period_end"))
+    filtered_orders = _query_completed_orders_for_period(store_id, period_start, period_end)
+    (
+        store_sales_amount,
+        store_sales_order_count,
+        user_sales,
+        user_order_counts,
+    ) = _build_sales_maps(filtered_orders)
+    filtered_entries = _query_approved_time_entries_for_period(store_id, period_start, period_end)
+    user_time_entries = _group_time_entries_by_user(filtered_entries)
 
-    # Sum sales by salesperson_id (fallback to staff_id)
-    user_sales: dict[UUID, Decimal] = defaultdict(lambda: Decimal("0"))
-    for order in all_orders:
-        seller_id = order.salesperson_id or order.staff_id
-        if seller_id:
-            user_sales[seller_id] += Decimal(str(order.grand_total))
-
-    # Fetch approved timesheet entries for the pay period for all store employees
-    period_start_dt = datetime.combine(run.period_start, datetime.min.time())
-    period_end_dt = datetime.combine(run.period_end, datetime.max.time())
-
-    ts_result = await db.execute(
-        select(TimeEntry).where(
-            TimeEntry.store_id == store_id,
-            TimeEntry.user_id.in_(store_user_ids),
-            TimeEntry.status == TimeEntryStatus.approved,
-            TimeEntry.clock_in >= period_start_dt,
-            TimeEntry.clock_in <= period_end_dt,
-            TimeEntry.clock_out.isnot(None),
-        )
-    )
-    all_time_entries = ts_result.scalars().all()
-
-    # Group time entries by user
-    user_time_entries: dict[UUID, list[TimeEntry]] = defaultdict(list)
-    for te in all_time_entries:
-        user_time_entries[te.user_id].append(te)
-
-    total_gross = Decimal("0")
-    total_cpf_ee = Decimal("0")
-    total_cpf_er = Decimal("0")
-    total_net = Decimal("0")
+    now = datetime.now(timezone.utc)
+    new_slips: list[dict] = []
+    user_name_cache: dict[str, str] = {}
 
     for profile in profiles:
-        age = _calculate_age(profile.date_of_birth, run.period_end)
-        basic = Decimal(str(profile.basic_salary))
+        uid_str = str(profile.get("user_id", profile.get("id")))
+        dob = _parse_date(profile.get("date_of_birth"))
+        age = _calculate_age(dob, period_end)
+        basic = _as_decimal(profile.get("basic_salary", 0))
+        full_name = _user_full_name(uid_str, user_name_cache)
 
-        entries = user_time_entries.get(profile.user_id, [])
-        regular_hours, overtime_hours = _compute_timesheet_hours(
-            entries, run.period_start, run.period_end
-        )
+        entries = user_time_entries.get(uid_str, [])
+        regular_hours, overtime_hours = _compute_timesheet_hours(entries)
         total_hours = regular_hours + overtime_hours
 
-        if profile.hourly_rate is not None:
-            # Hourly-rate staff: gross = hours × hourly_rate + overtime_pay
-            rate = Decimal(str(profile.hourly_rate))
+        hourly_rate = profile.get("hourly_rate")
+        if hourly_rate is not None:
+            rate = _as_decimal(hourly_rate)
+            base_pay = regular_hours * rate
             overtime_pay = overtime_hours * rate * _SG_OT_MULTIPLIER
-            gross_pay = regular_hours * rate + overtime_pay
+            gross_pay = base_pay + overtime_pay
         else:
-            # Salaried staff: use basic_salary, populate hours for records
+            base_pay = basic
             overtime_pay = Decimal("0")
-            gross_pay = basic
+            gross_pay = base_pay
 
         # CPF calculation
         cpf_ee = Decimal("0")
         cpf_er = Decimal("0")
-
-        if profile.nationality != NationalityEnum.foreigner:
-            cpf_result = calculate_cpf(
-                age=age,
-                ordinary_wages=gross_pay,
-            )
+        nationality = profile.get("nationality", "")
+        if nationality != "foreigner":
+            cpf_result = calculate_cpf(age=age, ordinary_wages=gross_pay)
             cpf_ee = cpf_result.employee_contribution
             cpf_er = cpf_result.employer_contribution
 
         # Commission calculation
-        emp_sales = user_sales.get(profile.user_id, Decimal("0"))
+        emp_sales = user_sales.get(uid_str, Decimal("0"))
         commission_amount = Decimal("0")
 
         if emp_sales > 0:
             if commission_rules:
-                # Use store commission rules (tiered)
                 for rule in commission_rules:
-                    tiers = parse_tiers(rule.tiers)
+                    tiers = parse_tiers(rule.get("tiers", []))
                     commission_amount += calculate_commission(emp_sales, tiers)
-            elif profile.commission_rate is not None and profile.commission_rate > 0:
-                # Fallback to employee flat rate
-                rate = Decimal(str(profile.commission_rate)) / Decimal("100")
-                commission_amount = calculate_flat_commission(emp_sales, rate)
+            else:
+                cr = profile.get("commission_rate")
+                if cr is not None and Decimal(str(cr)) > 0:
+                    rate = Decimal(str(cr)) / Decimal("100")
+                    commission_amount = calculate_flat_commission(emp_sales, rate)
 
         gross_pay += commission_amount
         net_pay = gross_pay - cpf_ee
+        emp_order_count = user_order_counts.get(uid_str, 0)
 
-        slip = PaySlip(
-            payroll_run_id=run_id,
-            user_id=profile.user_id,
-            basic_salary=float(basic),
-            hours_worked=float(total_hours),
-            overtime_hours=float(overtime_hours),
-            overtime_pay=float(overtime_pay),
-            commission_sales=float(emp_sales),
-            commission_amount=float(commission_amount),
-            gross_pay=float(gross_pay),
-            cpf_employee=float(cpf_ee),
-            cpf_employer=float(cpf_er),
-            net_pay=float(net_pay),
-        )
-        db.add(slip)
-        await db.flush()
-        await db.refresh(slip)
-
-        # Create commission entries for audit trail
-        if commission_amount > 0 and commission_rules:
-            for rule in commission_rules:
-                tiers = parse_tiers(rule.tiers)
-                rule_commission = calculate_commission(emp_sales, tiers)
-                if rule_commission > 0:
-                    entry = CommissionEntry(
-                        payslip_id=slip.id,
-                        commission_rule_id=rule.id,
-                        sales_amount=float(emp_sales),
-                        commission_amount=float(rule_commission),
-                        rule_name=rule.name,
-                    )
-                    db.add(entry)
-
-        total_gross += gross_pay
-        total_cpf_ee += cpf_ee
-        total_cpf_er += cpf_er
-        total_net += net_pay
+        slip_id = str(_uuid.uuid4())
+        slip_data = {
+            "payroll_run_id": run_id_str,
+            "store_id": str(store_id),
+            "user_id": uid_str,
+            "full_name": full_name,
+            "basic_salary": _decimal_to_float(base_pay),
+            "hours_worked": _decimal_to_float(total_hours),
+            "overtime_hours": _decimal_to_float(overtime_hours),
+            "overtime_pay": _decimal_to_float(overtime_pay),
+            "allowances": 0,
+            "deductions": 0,
+            "commission_sales": _decimal_to_float(emp_sales),
+            "commission_amount": _decimal_to_float(commission_amount),
+            "sales_order_count": emp_order_count,
+            **_labor_metric_fields(
+                sales_amount=emp_sales,
+                hours_worked=total_hours,
+                gross_pay=gross_pay,
+                cpf_employer=cpf_er,
+            ),
+            "gross_pay": _decimal_to_float(gross_pay),
+            "cpf_employee": _decimal_to_float(cpf_ee),
+            "cpf_employer": _decimal_to_float(cpf_er),
+            "net_pay": _decimal_to_float(net_pay),
+            "notes": None,
+            "created_at": now,
+            "updated_at": now,
+        }
+        create_document(slip_col, slip_data, doc_id=slip_id)
+        slip_data["id"] = slip_id
+        new_slips.append(slip_data)
 
     # Update run totals
-    run.total_gross = float(total_gross)
-    run.total_cpf_employee = float(total_cpf_ee)
-    run.total_cpf_employer = float(total_cpf_er)
-    run.total_net = float(total_net)
-    run.status = PayrollStatusEnum.calculated
+    update_document(col, run_id_str, {
+        **_run_totals_from_slips(
+            new_slips,
+            store_sales_amount=store_sales_amount,
+            store_sales_order_count=store_sales_order_count,
+        ),
+        "status": "calculated",
+        "updated_at": datetime.now(timezone.utc),
+    })
 
-    await db.flush()
-    await db.refresh(run)
-    return DataResponse(data=PayrollRunRead.model_validate(run))
+    updated_run = get_document(col, run_id_str)
+    return DataResponse(data=_run_to_read(updated_run, new_slips))
 
 
 @router.patch(
@@ -515,58 +900,72 @@ async def adjust_payslip(
     run_id: UUID,
     slip_id: UUID,
     payload: PaySlipAdjust,
-    _: UserStoreRole = Depends(require_store_role(RoleEnum.manager)),
-    db: AsyncSession = Depends(get_db),
+    _=Depends(require_store_role(RoleEnum.manager)),
+    db: FirestoreClient = Depends(get_firestore_db),
 ):
-    # Verify the run belongs to the store
-    run_result = await db.execute(
-        select(PayrollRun).where(
-            PayrollRun.id == run_id, PayrollRun.store_id == store_id
-        )
-    )
-    run = run_result.scalar_one_or_none()
-    if run is None:
+    run_id_str = str(run_id)
+    run_data = get_document(_payroll_col(store_id), run_id_str)
+    if run_data is None:
         raise HTTPException(status_code=404, detail="Payroll run not found")
 
-    result = await db.execute(
-        select(PaySlip).where(
-            PaySlip.id == slip_id, PaySlip.payroll_run_id == run_id
-        )
-    )
-    slip = result.scalar_one_or_none()
-    if slip is None:
+    slip_col = _payslip_col(store_id, run_id_str)
+    slip_data = get_document(slip_col, str(slip_id))
+    if slip_data is None:
         raise HTTPException(status_code=404, detail="Payslip not found")
 
-    for key, value in payload.model_dump(exclude_unset=True).items():
-        setattr(slip, key, value)
+    updates = payload.model_dump(exclude_unset=True, mode="json")
+    # Merge updates into slip_data for recalculation
+    for key, value in updates.items():
+        slip_data[key] = value
 
     # Recalculate derived totals
-    slip.gross_pay = float(
-        Decimal(str(slip.basic_salary))
-        + Decimal(str(slip.overtime_pay))
-        + Decimal(str(slip.allowances))
-        + Decimal(str(slip.commission_amount))
-        - Decimal(str(slip.deductions))
+    gross_pay = (
+        _as_decimal(slip_data.get("basic_salary", 0))
+        + _as_decimal(slip_data.get("overtime_pay", 0))
+        + _as_decimal(slip_data.get("allowances", 0))
+        + _as_decimal(slip_data.get("commission_amount", 0))
+        - _as_decimal(slip_data.get("deductions", 0))
     )
-    slip.net_pay = float(
-        Decimal(str(slip.gross_pay)) - Decimal(str(slip.cpf_employee))
-    )
+    cpf_employee = _as_decimal(slip_data.get("cpf_employee", 0))
+    cpf_employer = _as_decimal(slip_data.get("cpf_employer", 0))
+    net_pay = gross_pay - cpf_employee
+    total_labor_cost = gross_pay + cpf_employer
+    sales_amount = _as_decimal(slip_data.get("commission_sales", 0))
+    hours_worked = _as_decimal(slip_data.get("hours_worked", 0))
+    sales_per_hour = _safe_ratio(sales_amount, hours_worked)
+    labor_cost_percent_of_sales = _safe_percent(total_labor_cost, sales_amount)
+    updates["gross_pay"] = _decimal_to_float(gross_pay)
+    updates["net_pay"] = _decimal_to_float(net_pay)
+    updates["sales_per_hour"] = _decimal_to_float(sales_per_hour)
+    updates["total_labor_cost"] = _decimal_to_float(total_labor_cost)
+    updates["labor_cost_percent_of_sales"] = _decimal_to_float(labor_cost_percent_of_sales)
+    updates["updated_at"] = datetime.now(timezone.utc)
 
-    await db.flush()
-    await db.refresh(slip)
+    updated_slip = update_document(slip_col, str(slip_id), updates)
 
     # Recalculate parent PayrollRun totals
-    all_slips_result = await db.execute(
-        select(PaySlip).where(PaySlip.payroll_run_id == run_id)
-    )
-    all_slips = all_slips_result.scalars().all()
-    run.total_gross = float(sum(Decimal(str(s.gross_pay)) for s in all_slips))
-    run.total_cpf_employee = float(sum(Decimal(str(s.cpf_employee)) for s in all_slips))
-    run.total_cpf_employer = float(sum(Decimal(str(s.cpf_employer)) for s in all_slips))
-    run.total_net = float(sum(Decimal(str(s.net_pay)) for s in all_slips))
-    await db.flush()
+    all_slips = query_collection(slip_col)
+    total_gross = sum(_as_decimal(s.get("gross_pay", 0)) for s in all_slips)
+    total_cpf_employee = sum(_as_decimal(s.get("cpf_employee", 0)) for s in all_slips)
+    total_cpf_employer = sum(_as_decimal(s.get("cpf_employer", 0)) for s in all_slips)
+    total_net = sum(_as_decimal(s.get("net_pay", 0)) for s in all_slips)
+    total_hours_worked = sum(_as_decimal(s.get("hours_worked", 0)) for s in all_slips)
+    total_labor_cost_run = total_gross + total_cpf_employer
+    store_sales_amount = _as_decimal(run_data.get("store_sales_amount", 0))
+    run_updates = {
+        "total_gross": _decimal_to_float(total_gross),
+        "total_cpf_employee": _decimal_to_float(total_cpf_employee),
+        "total_cpf_employer": _decimal_to_float(total_cpf_employer),
+        "total_net": _decimal_to_float(total_net),
+        "total_hours_worked": _decimal_to_float(total_hours_worked),
+        "total_labor_cost": _decimal_to_float(total_labor_cost_run),
+        "sales_per_labor_hour": _decimal_to_float(_safe_ratio(store_sales_amount, total_hours_worked)),
+        "labor_cost_percent_of_sales": _decimal_to_float(_safe_percent(total_labor_cost_run, store_sales_amount)),
+        "updated_at": datetime.now(timezone.utc),
+    }
+    update_document(_payroll_col(store_id), run_id_str, run_updates)
 
-    return DataResponse(data=PaySlipRead.model_validate(slip))
+    return DataResponse(data=_slip_to_read(updated_slip, fallback_store_id=store_id))
 
 
 @router.post(
@@ -576,38 +975,72 @@ async def adjust_payslip(
 async def approve_payroll(
     store_id: UUID,
     run_id: UUID,
-    _: UserStoreRole = Depends(require_store_role(RoleEnum.owner)),
-    user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
+    _=Depends(require_store_role(RoleEnum.owner)),
+    user=Depends(get_current_user),
+    db: FirestoreClient = Depends(get_firestore_db),
 ):
-    result = await db.execute(
-        select(PayrollRun).where(
-            PayrollRun.id == run_id, PayrollRun.store_id == store_id
-        )
-    )
-    run = result.scalar_one_or_none()
-    if run is None:
+    run_id_str = str(run_id)
+    col = _payroll_col(store_id)
+    run_data = get_document(col, run_id_str)
+    if run_data is None:
         raise HTTPException(status_code=404, detail="Payroll run not found")
 
-    if run.status != PayrollStatusEnum.calculated:
+    if run_data.get("status") != "calculated":
         raise HTTPException(
             status_code=400,
             detail="Payroll run must be in calculated status to approve",
         )
 
-    if run.created_by == user.id:
+    created_by = run_data.get("created_by")
+    user_id_str = _user_id_str(user)
+    if created_by == user_id_str:
         raise HTTPException(
             status_code=400,
             detail="Payroll run cannot be approved by its creator (separation of duties)",
         )
 
-    run.status = PayrollStatusEnum.approved
-    run.approved_by = user.id
+    # Use Firestore transaction for status update
+    run_ref = db.collection(col).document(run_id_str)
 
-    await db.flush()
-    await db.refresh(run)
-    return DataResponse(data=PayrollRunSummary.model_validate(run))
+    @_transactional
+    def _approve(transaction):
+        snapshot = run_ref.get(transaction=transaction)
+        if not snapshot.exists:
+            raise HTTPException(status_code=404, detail="Payroll run not found")
+        current = snapshot.to_dict()
+        if current.get("status") != "calculated":
+            raise HTTPException(
+                status_code=400,
+                detail="Payroll run must be in calculated status to approve",
+            )
+        transaction.update(run_ref, {
+            "status": "approved",
+            "approved_by": user_id_str,
+            "updated_at": datetime.now(timezone.utc),
+        })
 
+    transaction = db.transaction()
+    _approve(transaction)
+
+    updated = doc_to_dict(run_ref.get())
+    return DataResponse(data=_run_to_summary(updated))
+
+
+
+# ---------------------------------------------------------------------------
+# Commission Rule helper
+# ---------------------------------------------------------------------------
+
+def _rule_to_read(data: dict) -> CommissionRuleRead:
+    """Convert Firestore commission-rule dict to CommissionRuleRead."""
+    return CommissionRuleRead(
+        id=UUID(data["id"]) if isinstance(data.get("id"), str) else data.get("id"),
+        store_id=UUID(data["store_id"]) if isinstance(data.get("store_id"), str) else data.get("store_id"),
+        name=data.get("name", ""),
+        tiers=data.get("tiers", []),
+        is_active=data.get("is_active", True),
+        created_at=data.get("created_at", datetime.now(timezone.utc)),
+    )
 
 
 # ---- Commission Rule endpoints ----
@@ -621,21 +1054,20 @@ async def approve_payroll(
 async def create_commission_rule(
     store_id: UUID,
     payload: CommissionRuleCreate,
-    _: UserStoreRole = Depends(require_store_role(RoleEnum.manager)),
-    db: AsyncSession = Depends(get_db),
+    _=Depends(require_store_role(RoleEnum.manager)),
+    db: FirestoreClient = Depends(get_firestore_db),
 ):
-    import json
-
-    rule = CommissionRule(
-        store_id=store_id,
-        name=payload.name,
-        tiers=json.dumps([t.model_dump(mode="json") for t in payload.tiers]),
-        is_active=payload.is_active,
-    )
-    db.add(rule)
-    await db.flush()
-    await db.refresh(rule)
-    return DataResponse(data=CommissionRuleRead.model_validate(rule))
+    now = datetime.now(timezone.utc)
+    doc_id = str(_uuid.uuid4())
+    data = {
+        "store_id": str(store_id),
+        "name": payload.name,
+        "tiers": [t.model_dump(mode="json") for t in payload.tiers],
+        "is_active": payload.is_active,
+        "created_at": now,
+    }
+    result = create_document(_commission_col(store_id), data, doc_id=doc_id)
+    return DataResponse(data=_rule_to_read(result))
 
 
 @router.get(
@@ -645,18 +1077,15 @@ async def create_commission_rule(
 async def list_commission_rules(
     store_id: UUID,
     active_only: bool = True,
-    _: UserStoreRole = Depends(require_store_role(RoleEnum.manager)),
-    db: AsyncSession = Depends(get_db),
+    _=Depends(require_store_role(RoleEnum.manager)),
+    db: FirestoreClient = Depends(get_firestore_db),
 ):
-    query = select(CommissionRule).where(CommissionRule.store_id == store_id)
+    filters = []
     if active_only:
-        query = query.where(CommissionRule.is_active == True)
+        filters.append(("is_active", "==", True))
 
-    result = await db.execute(query)
-    rules = result.scalars().all()
-    return DataResponse(
-        data=[CommissionRuleRead.model_validate(r) for r in rules]
-    )
+    rules = query_collection(_commission_col(store_id), filters=filters)
+    return DataResponse(data=[_rule_to_read(r) for r in rules])
 
 
 @router.get(
@@ -666,19 +1095,13 @@ async def list_commission_rules(
 async def get_commission_rule(
     store_id: UUID,
     rule_id: UUID,
-    _: UserStoreRole = Depends(require_store_role(RoleEnum.manager)),
-    db: AsyncSession = Depends(get_db),
+    _=Depends(require_store_role(RoleEnum.manager)),
+    db: FirestoreClient = Depends(get_firestore_db),
 ):
-    result = await db.execute(
-        select(CommissionRule).where(
-            CommissionRule.id == rule_id,
-            CommissionRule.store_id == store_id,
-        )
-    )
-    rule = result.scalar_one_or_none()
+    rule = get_document(_commission_col(store_id), str(rule_id))
     if rule is None:
         raise HTTPException(status_code=404, detail="Commission rule not found")
-    return DataResponse(data=CommissionRuleRead.model_validate(rule))
+    return DataResponse(data=_rule_to_read(rule))
 
 
 @router.patch(
@@ -689,32 +1112,21 @@ async def update_commission_rule(
     store_id: UUID,
     rule_id: UUID,
     payload: CommissionRuleUpdate,
-    _: UserStoreRole = Depends(require_store_role(RoleEnum.manager)),
-    db: AsyncSession = Depends(get_db),
+    _=Depends(require_store_role(RoleEnum.manager)),
+    db: FirestoreClient = Depends(get_firestore_db),
 ):
-    import json
-
-    result = await db.execute(
-        select(CommissionRule).where(
-            CommissionRule.id == rule_id,
-            CommissionRule.store_id == store_id,
-        )
-    )
-    rule = result.scalar_one_or_none()
-    if rule is None:
+    col = _commission_col(store_id)
+    rule_id_str = str(rule_id)
+    existing = get_document(col, rule_id_str)
+    if existing is None:
         raise HTTPException(status_code=404, detail="Commission rule not found")
 
-    updates = payload.model_dump(exclude_unset=True)
+    updates = payload.model_dump(exclude_unset=True, mode="json")
     if "tiers" in updates and updates["tiers"] is not None:
-        updates["tiers"] = json.dumps(
-            [t.model_dump(mode="json") for t in payload.tiers]
-        )
-    for key, value in updates.items():
-        setattr(rule, key, value)
+        updates["tiers"] = [t.model_dump(mode="json") for t in payload.tiers]
 
-    await db.flush()
-    await db.refresh(rule)
-    return DataResponse(data=CommissionRuleRead.model_validate(rule))
+    result = update_document(col, rule_id_str, updates)
+    return DataResponse(data=_rule_to_read(result))
 
 
 @router.delete(
@@ -724,19 +1136,14 @@ async def update_commission_rule(
 async def delete_commission_rule(
     store_id: UUID,
     rule_id: UUID,
-    _: UserStoreRole = Depends(require_store_role(RoleEnum.manager)),
-    db: AsyncSession = Depends(get_db),
+    _=Depends(require_store_role(RoleEnum.manager)),
+    db: FirestoreClient = Depends(get_firestore_db),
 ):
-    result = await db.execute(
-        select(CommissionRule).where(
-            CommissionRule.id == rule_id,
-            CommissionRule.store_id == store_id,
-        )
-    )
-    rule = result.scalar_one_or_none()
-    if rule is None:
+    col = _commission_col(store_id)
+    rule_id_str = str(rule_id)
+    existing = get_document(col, rule_id_str)
+    if existing is None:
         raise HTTPException(status_code=404, detail="Commission rule not found")
 
-    await db.delete(rule)
-    await db.flush()
+    delete_document(col, rule_id_str)
     return DataResponse(data={"deleted": True})

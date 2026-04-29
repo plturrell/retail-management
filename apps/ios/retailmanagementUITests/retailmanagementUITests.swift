@@ -2,40 +2,56 @@
 //  retailmanagementUITests.swift
 //  retailmanagementUITests
 //
-//  Created by Craig on 11/4/26.
-//
 
 import XCTest
 
 final class retailmanagementUITests: XCTestCase {
+    private let launchArgument = "--uitest-manager-inventory"
 
     override func setUpWithError() throws {
-        // Put setup code here. This method is called before the invocation of each test method in the class.
-
-        // In UI tests it is usually best to stop immediately when a failure occurs.
         continueAfterFailure = false
-
-        // In UI tests it’s important to set the initial state - such as interface orientation - required for your tests before they run. The setUp method is a good place to do this.
-    }
-
-    override func tearDownWithError() throws {
-        // Put teardown code here. This method is called after the invocation of each test method in the class.
     }
 
     @MainActor
-    func testExample() throws {
-        // UI tests must launch the application that they test.
+    func testManagerInventoryHappyPathHarnessRendersCoreManagerWorkflow() throws {
         let app = XCUIApplication()
+        app.launchArguments.append(launchArgument)
         app.launch()
 
-        // Use XCTAssert and related functions to verify your tests produce the correct results.
+        XCTAssertTrue(app.otherElements["managerInventory.root"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.buttons["managerInventory.runBrain"].exists)
+        XCTAssertTrue(app.staticTexts["managerInventory.watchlistTitle"].exists)
+        XCTAssertTrue(app.buttons["managerInventory.insight.PRE-001"].exists)
+        XCTAssertTrue(app.staticTexts["Supplier Pendant"].exists)
+
+        app.buttons["managerInventory.insight.CUS-900"].tap()
+
+        XCTAssertTrue(app.staticTexts["managerInventory.detailTitle"].waitForExistence(timeout: 2))
+        XCTAssertTrue(app.staticTexts["Custom Bridal Halo"].exists)
+        XCTAssertTrue(app.staticTexts["Demand spiked after a bridal expo appointment."].exists)
+        XCTAssertTrue(app.staticTexts["managerInventory.recommendationsTitle"].exists)
+
+        scrollToElement(app.staticTexts["managerInventory.workflowStudioTitle"], in: app)
+        XCTAssertTrue(app.staticTexts["managerInventory.workflowStudioTitle"].exists)
+        XCTAssertTrue(app.staticTexts["Purchase Order Builder"].exists)
+        XCTAssertTrue(app.staticTexts["Work Orders & Transfers"].exists)
     }
 
     @MainActor
     func testLaunchPerformance() throws {
-        // This measures how long it takes to launch your application.
         measure(metrics: [XCTApplicationLaunchMetric()]) {
-            XCUIApplication().launch()
+            let app = XCUIApplication()
+            app.launchArguments.append(launchArgument)
+            app.launch()
+        }
+    }
+
+    @MainActor
+    private func scrollToElement(_ element: XCUIElement, in app: XCUIApplication, maxSwipes: Int = 6) {
+        var remainingSwipes = maxSwipes
+        while !element.exists && remainingSwipes > 0 {
+            app.swipeUp()
+            remainingSwipes -= 1
         }
     }
 }

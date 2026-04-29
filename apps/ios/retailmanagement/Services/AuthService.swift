@@ -10,8 +10,20 @@ import Foundation
 /// Wraps Firebase Authentication using the Firebase Auth SDK.
 final class AuthService: @unchecked Sendable {
     static let shared = AuthService()
+    static let defaultAuthEmailDomain = "victoriaenso.com"
 
     private init() {}
+
+    static func authEmail(forUsername value: String) -> String {
+        let identifier = value.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        guard !identifier.isEmpty, !identifier.contains("@") else { return identifier }
+        return "\(identifier)@\(defaultAuthEmailDomain)"
+    }
+
+    static func username(fromEmail value: String?) -> String {
+        guard let value, !value.isEmpty else { return "" }
+        return value.split(separator: "@", maxSplits: 1).first.map(String.init) ?? value
+    }
 
     /// Whether Firebase has been configured (GoogleService-Info.plist was found).
     var isFirebaseConfigured: Bool {
@@ -33,9 +45,10 @@ final class AuthService: @unchecked Sendable {
 
     // MARK: - Auth Methods
 
-    /// Sign in with email and password.
+    /// Sign in with username and password. Firebase still receives the backing email.
     @discardableResult
-    func signIn(email: String, password: String) async throws -> FirebaseAuth.User {
+    func signIn(username: String, password: String) async throws -> FirebaseAuth.User {
+        let email = Self.authEmail(forUsername: username)
         let result = try await Auth.auth().signIn(withEmail: email, password: password)
         return result.user
     }

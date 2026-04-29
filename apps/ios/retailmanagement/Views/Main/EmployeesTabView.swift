@@ -12,6 +12,10 @@ nonisolated struct Employee: Codable, Identifiable, Hashable, Sendable {
     let email: String
     let phone: String?
     let role: UserRole
+
+    var username: String {
+        AuthService.username(fromEmail: email)
+    }
 }
 
 private nonisolated struct SearchedUser: Codable, Identifiable, Sendable {
@@ -19,6 +23,10 @@ private nonisolated struct SearchedUser: Codable, Identifiable, Sendable {
     let email: String
     let fullName: String
     let firebaseUid: String
+
+    var username: String {
+        AuthService.username(fromEmail: email)
+    }
 }
 
 private nonisolated struct AssignRoleBody: Encodable, Sendable {
@@ -61,11 +69,23 @@ struct EmployeesTabView: View {
     @State private var employeesVM = EmployeesViewModel()
     @State private var selectedEmployee: Employee?
     @State private var showInviteSheet = false
+    @State private var searchQuery: String = ""
+    @FocusState private var isSearchFocused: Bool
 
     private var isOwner: Bool {
         guard let user = authViewModel.currentUser,
               let store = storeViewModel.selectedStore else { return false }
         return user.role(for: store.id) == .owner
+    }
+
+    private var filteredEmployees: [Employee] {
+        let q = searchQuery.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        guard !q.isEmpty else { return employeesVM.employees }
+        return employeesVM.employees.filter {
+            $0.fullName.lowercased().contains(q)
+                || $0.username.lowercased().contains(q)
+                || ($0.phone?.lowercased().contains(q) ?? false)
+        }
     }
 
     var body: some View {
@@ -80,22 +100,45 @@ struct EmployeesTabView: View {
                         systemImage: "person.3",
                         description: Text("Add team members to manage your store.")
                     )
+                } else if filteredEmployees.isEmpty {
+                    ContentUnavailableView.search(text: searchQuery)
                 } else {
                     List {
-                        Section("\(employeesVM.employees.count) Team Members") {
-                            ForEach(employeesVM.employees) { emp in
+                        Section("\(filteredEmployees.count) of \(employeesVM.employees.count) Team Members") {
+                            ForEach(filteredEmployees) { emp in
                                 Button {
                                     selectedEmployee = emp
                                 } label: {
                                     EmployeeRow(employee: emp)
                                 }
                                 .foregroundStyle(.primary)
+                                .contextMenu {
+                                    Button {
+                                        selectedEmployee = emp
+                                    } label: {
+                                        Label("View Details", systemImage: "info.circle")
+                                    }
+                                    Button {
+                                        copyToPasteboard(emp.username)
+                                    } label: {
+                                        Label("Copy Username", systemImage: "person.crop.circle")
+                                    }
+                                    if let phone = emp.phone, !phone.isEmpty {
+                                        Button {
+                                            copyToPasteboard(phone)
+                                        } label: {
+                                            Label("Copy Phone", systemImage: "phone")
+                                        }
+                                    }
+                                }
                             }
                         }
                     }
                 }
             }
             .navigationTitle("Employees")
+            .searchable(text: $searchQuery, prompt: "Search employees")
+            .searchFocused($isSearchFocused)
             .toolbar {
                 if isOwner {
                     ToolbarItem(placement: .primaryAction) {
@@ -111,6 +154,14 @@ struct EmployeesTabView: View {
                 if let storeId = storeViewModel.selectedStore?.id {
                     await employeesVM.loadEmployees(storeId: storeId)
                 }
+            }
+            .onReceive(NotificationCenter.default.publisher(for: .appRefreshRequested)) { _ in
+                if let storeId = storeViewModel.selectedStore?.id {
+                    Task { await employeesVM.loadEmployees(storeId: storeId) }
+                }
+            }
+            .onReceive(NotificationCenter.default.publisher(for: .appFindRequested)) { _ in
+                isSearchFocused = true
             }
             .sheet(item: $selectedEmployee) { emp in
                 EmployeeDetailView(employee: emp, onChanged: {
@@ -154,7 +205,7 @@ struct EmployeeRow: View {
             VStack(alignment: .leading, spacing: 3) {
                 Text(employee.fullName)
                     .font(.subheadline.weight(.medium))
-                Text(employee.email)
+                Text(employee.username)
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
@@ -216,7 +267,7 @@ struct EmployeeDetailView: View {
                 }
 
                 Section("Contact") {
-                    LabeledContent("Email", value: employee.email)
+                    LabeledContent("Username", value: employee.username)
                     if let phone = employee.phone {
                         LabeledContent("Phone", value: phone)
                     }
@@ -318,7 +369,7 @@ struct InviteEmployeeView: View {
     var onInvited: (() -> Void)? = nil
     @Environment(StoreViewModel.self) var storeViewModel
     @Environment(\.dismiss) private var dismiss
-    @State private var searchEmail = ""
+    @State private var searchUsername = ""
     @State private var searchResults: [SearchedUser] = []
     @State private var selectedRole: UserRole = .staff
     @State private var isSearching = false
@@ -331,10 +382,10 @@ struct InviteEmployeeView: View {
             Form {
                 Section("Find User") {
                     HStack {
-                        TextField("Search by email", text: $searchEmail)
-                            .textContentType(.emailAddress)
+                        TextField("Search by username", text: $searchUsername)
+                            .textContentType(.username)
                             #if canImport(UIKit)
-                            .keyboardType(.emailAddress)
+                            .keyboardType(.asciiCapable)
                             .textInputAutocapitalization(.never)
                             #endif
                             .autocorrectionDisabled()
@@ -347,7 +398,7 @@ struct InviteEmployeeView: View {
                                 Image(systemName: "magnifyingglass")
                             }
                         }
-                        .disabled(searchEmail.count < 3 || isSearching)
+                        .disabled(searchUsername.count < 3 || isSearching)
                     }
                 }
 
@@ -358,7 +409,7 @@ struct InviteEmployeeView: View {
                                 VStack(alignment: .leading, spacing: 2) {
                                     Text(user.fullName)
                                         .font(.subheadline.weight(.medium))
-                                    Text(user.email)
+                                    Text(user.username)
                                         .font(.caption)
                                         .foregroundStyle(.secondary)
                                 }
@@ -408,11 +459,11 @@ struct InviteEmployeeView: View {
         do {
             let response: DataResponse<[SearchedUser]> = try await NetworkService.shared.get(
                 endpoint: "/api/users/search",
-                queryItems: [URLQueryItem(name: "email", value: searchEmail)]
+                queryItems: [URLQueryItem(name: "email", value: AuthService.authEmail(forUsername: searchUsername))]
             )
             searchResults = response.data
             if searchResults.isEmpty {
-                errorMessage = "No users found with that email."
+                errorMessage = "No users found with that username."
             }
         } catch {
             errorMessage = error.localizedDescription

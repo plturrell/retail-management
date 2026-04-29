@@ -1,21 +1,28 @@
 """Human Resources and Shift Management endpoints."""
 from __future__ import annotations
 
+import uuid as _uuid
 from datetime import datetime, timezone
 from typing import List, Optional
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, ConfigDict
-from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import selectinload
+from google.cloud.firestore_v1.client import Client as FirestoreClient
 
-from app.database import get_db
-from app.models.user import RoleEnum as _RoleEnum, User, UserStoreRole
-from app.models.payroll import EmployeeProfile
-from app.models.timesheet import TimeEntry, TimeEntryStatus
-from app.auth.dependencies import get_current_user, ensure_store_role, require_store_role
+from app.firestore import get_firestore_db
+from app.firestore_helpers import (
+    create_document,
+    get_document,
+    query_collection,
+    update_document,
+)
+from app.auth.dependencies import (
+    RoleEnum as _RoleEnum,
+    ensure_store_role,
+    get_current_user,
+    require_store_role,
+)
 
 router = APIRouter(prefix="/api/stores/{store_id}/hr", tags=["hr"])
 
@@ -31,7 +38,7 @@ class EmployeeRead(BaseModel):
 
 
 class ClockActionRequest(BaseModel):
-    user_id: UUID  # In production, derived securely, but required if manager clocks in a staff member
+    user_id: UUID
     notes: Optional[str] = None
 
 
@@ -49,30 +56,32 @@ class TimeEntryRead(BaseModel):
 @router.get("/employees", response_model=List[EmployeeRead])
 async def get_store_employees(
     store_id: UUID,
-    db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    db: FirestoreClient = Depends(get_firestore_db),
+    current_user: dict = Depends(get_current_user),
 ):
     """Fetch all active employees associated with this specific store."""
     ensure_store_role(current_user, store_id, _RoleEnum.manager)
-    query = (
-        select(UserStoreRole)
-        .options(selectinload(UserStoreRole.user))
-        .where(UserStoreRole.store_id == store_id)
-    )
-    result = await db.execute(query)
-    roles = result.scalars().all()
-    
-    # Normally we query EmployeeProfile directly, but for now we fallback correctly to mapped structural definitions
-    mapped_employees = []
-    for role in roles:
+
+    role_path = f"stores/{store_id}/roles"
+    role_docs = query_collection(role_path)
+
+    mapped_employees: List[EmployeeRead] = []
+    for role in role_docs:
+        uid = role.get("user_id", role.get("id"))
+        user_data = get_document("users", str(uid))
+        if user_data is None:
+            continue
+        role_val = role.get("role", "staff")
+        if hasattr(role_val, "value"):
+            role_val = role_val.value
         mapped_employees.append(
             EmployeeRead(
-                id=role.user.id, # Map fallback for ID abstractions
-                user_id=role.user.id,
-                full_name=role.user.full_name,
-                email=role.user.email,
-                role=role.role.value,
-                is_active=True
+                id=UUID(user_data["id"]) if isinstance(user_data.get("id"), str) else user_data.get("id"),
+                user_id=UUID(user_data["id"]) if isinstance(user_data.get("id"), str) else user_data.get("id"),
+                full_name=user_data.get("full_name", ""),
+                email=user_data.get("email", ""),
+                role=role_val,
+                is_active=True,
             )
         )
     return mapped_employees
@@ -82,102 +91,115 @@ async def get_store_employees(
 async def clock_in_staff(
     store_id: UUID,
     req: ClockActionRequest,
-    db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    db: FirestoreClient = Depends(get_firestore_db),
+    current_user: dict = Depends(get_current_user),
 ):
     """Generates a fresh active shift entity. Errors if already clocked in."""
-    # Authorise: user can clock themselves in, or a manager can clock in staff
-    if req.user_id != current_user.id:
+    if str(req.user_id) != str(current_user.get("id")):
         ensure_store_role(current_user, store_id, _RoleEnum.manager)
 
     # Verify target user belongs to this store
-    target_role = await db.execute(
-        select(UserStoreRole).where(
-            UserStoreRole.user_id == req.user_id,
-            UserStoreRole.store_id == store_id,
-        )
-    )
-    if target_role.scalar_one_or_none() is None:
+    role_path = f"stores/{store_id}/roles"
+    target_role = get_document(role_path, str(req.user_id))
+    if target_role is None:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Target user does not belong to this store",
         )
 
-    # Check if active shift exists
-    active_q = select(TimeEntry).where(
-        TimeEntry.user_id == req.user_id,
-        TimeEntry.store_id == store_id,
-        TimeEntry.clock_out.is_(None)
+    # Check if active shift exists (timesheets subcollection)
+    ts_path = f"stores/{store_id}/timesheets"
+    active_shifts = query_collection(
+        ts_path,
+        filters=[
+            ("user_id", "==", str(req.user_id)),
+            ("clock_out", "==", None),
+        ],
+        limit=1,
     )
-    result = await db.execute(active_q)
-    active = result.scalar_one_or_none()
-    
-    if active:
+
+    if active_shifts:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="User is already clocked in and hasn't closed out the active roster shift."
+            detail="User is already clocked in and hasn't closed out the active roster shift.",
         )
 
     now = datetime.now(timezone.utc)
-    new_entry = TimeEntry(
+    entry_id = str(_uuid.uuid4())
+    entry_data = {
+        "id": entry_id,
+        "user_id": str(req.user_id),
+        "store_id": str(store_id),
+        "clock_in": now,
+        "clock_out": None,
+        "break_minutes": 0,
+        "status": "pending",
+        "notes": req.notes,
+    }
+
+    create_document(ts_path, entry_data, doc_id=entry_id)
+
+    return TimeEntryRead(
+        id=UUID(entry_id),
         user_id=req.user_id,
         store_id=store_id,
         clock_in=now,
-        status=TimeEntryStatus.pending,
-        notes=req.notes
+        clock_out=None,
+        break_minutes=0,
+        status="pending",
     )
-    
-    db.add(new_entry)
-    await db.flush()
-    await db.refresh(new_entry)
-    
-    return new_entry
 
 
 @router.post("/clock-out", response_model=TimeEntryRead)
 async def clock_out_staff(
     store_id: UUID,
     req: ClockActionRequest,
-    db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    db: FirestoreClient = Depends(get_firestore_db),
+    current_user: dict = Depends(get_current_user),
 ):
     """Closes an active running shift. Errors if no active shift."""
-    # Authorise: user can clock themselves out, or a manager can clock out staff
-    if req.user_id != current_user.id:
+    if str(req.user_id) != str(current_user.get("id")):
         ensure_store_role(current_user, store_id, _RoleEnum.manager)
 
     # Verify target user belongs to this store
-    target_role = await db.execute(
-        select(UserStoreRole).where(
-            UserStoreRole.user_id == req.user_id,
-            UserStoreRole.store_id == store_id,
-        )
-    )
-    if target_role.scalar_one_or_none() is None:
+    role_path = f"stores/{store_id}/roles"
+    target_role = get_document(role_path, str(req.user_id))
+    if target_role is None:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Target user does not belong to this store",
         )
 
-    active_q = select(TimeEntry).where(
-        TimeEntry.user_id == req.user_id,
-        TimeEntry.store_id == store_id,
-        TimeEntry.clock_out.is_(None)
+    ts_path = f"stores/{store_id}/timesheets"
+    active_shifts = query_collection(
+        ts_path,
+        filters=[
+            ("user_id", "==", str(req.user_id)),
+            ("clock_out", "==", None),
+        ],
+        limit=1,
     )
-    result = await db.execute(active_q)
-    active_entry = result.scalar_one_or_none()
-    
-    if not active_entry:
+
+    if not active_shifts:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Cannot clock out. No active shift is currently tracking for this identity."
+            detail="Cannot clock out. No active shift is currently tracking for this identity.",
         )
 
-    active_entry.clock_out = datetime.now(timezone.utc)
+    active_entry = active_shifts[0]
+    now = datetime.now(timezone.utc)
+    updates = {"clock_out": now}
     if req.notes:
-        active_entry.notes = req.notes
+        updates["notes"] = req.notes
 
-    await db.flush()
-    await db.refresh(active_entry)
-    
-    return active_entry
+    update_document(ts_path, active_entry["id"], updates)
+
+    return TimeEntryRead(
+        id=UUID(active_entry["id"]) if isinstance(active_entry.get("id"), str) else active_entry.get("id"),
+        user_id=req.user_id,
+        store_id=store_id,
+        clock_in=active_entry.get("clock_in", now),
+        clock_out=now,
+        break_minutes=active_entry.get("break_minutes", 0),
+        status=active_entry.get("status", "pending"),
+    )

@@ -7,6 +7,8 @@ plugins {
 android {
     namespace = "com.retailmanagement"
     compileSdk = 34
+    val apiUrl = (project.findProperty("RETAILSG_API_URL") as? String)
+        ?: "https://retailsg-api-568773738080.asia-southeast1.run.app/"
 
     defaultConfig {
         applicationId = "com.retailmanagement"
@@ -14,6 +16,11 @@ android {
         targetSdk = 34
         versionCode = 1
         versionName = "1.0"
+        buildConfigField(
+            "String",
+            "RETAILSG_API_URL",
+            "\"$apiUrl\""
+        )
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables {
@@ -36,6 +43,7 @@ android {
     }
     buildFeatures {
         compose = true
+        buildConfig = true
     }
     composeOptions {
         kotlinCompilerExtensionVersion = "1.5.8"

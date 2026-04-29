@@ -27,6 +27,8 @@ logger = logging.getLogger("ai_gateway")
 _PRICING: dict[str, dict[str, float]] = {
     "gemini-2.5-flash": {"input": 0.15, "output": 0.60},
     "gemini-2.0-flash": {"input": 0.10, "output": 0.40},
+    "deepseek-chat": {"input": 0.14, "output": 0.28},
+    "deepseek-reasoner": {"input": 0.55, "output": 2.19},
 }
 
 # ── Defaults (read from config, fall back to safe values) ────────
@@ -79,8 +81,13 @@ async def invoke(
     """
     start = time.monotonic()
     try:
+        if req.model.startswith("deepseek"):
+            call_coro = _call_openai_compatible(req)
+        else:
+            call_coro = _call_gemini(req)
+
         text, usage = await asyncio.wait_for(
-            _call_gemini(req),
+            call_coro,
             timeout=req.timeout_seconds,
         )
         elapsed_ms = int((time.monotonic() - start) * 1000)
@@ -218,6 +225,52 @@ async def _call_gemini(req: AIRequest) -> tuple[str, dict[str, int]]:
     return text, usage
 
 
+_openai_client = None
+
+
+def _get_openai_client():
+    global _openai_client
+    if _openai_client is None:
+        from openai import OpenAI
+        _openai_client = OpenAI(
+            api_key=settings.DEEPSEEK_API_KEY,
+            base_url="https://api.deepseek.com",
+        )
+    return _openai_client
+
+
+def _sync_openai_call(
+    model: str,
+    prompt: str,
+    temperature: float,
+    max_tokens: int,
+):
+    client = _get_openai_client()
+    return client.chat.completions.create(
+        model=model,
+        messages=[{"role": "user", "content": prompt}],
+        temperature=temperature,
+        max_tokens=max_tokens,
+    )
+
+
+async def _call_openai_compatible(req: AIRequest) -> tuple[str, dict[str, int]]:
+    """Non-blocking OpenAI SDK call for DeepSeek models."""
+    response = await asyncio.to_thread(
+        _sync_openai_call,
+        req.model,
+        req.prompt,
+        req.temperature,
+        req.max_output_tokens,
+    )
+    text = response.choices[0].message.content or ""
+    usage = {}
+    if response.usage:
+        usage["input"] = getattr(response.usage, "prompt_tokens", 0)
+        usage["output"] = getattr(response.usage, "completion_tokens", 0)
+    return text, usage
+
+
 def _estimate_cost(model: str, input_tokens: int, output_tokens: int) -> float:
     rates = _PRICING.get(model, _PRICING[DEFAULT_MODEL])
     cost = (input_tokens * rates["input"] + output_tokens * rates["output"]) / 1_000_000
@@ -243,27 +296,25 @@ def _log_invocation(req: AIRequest, resp: AIResponse) -> None:
 
 
 async def persist_invocation(req: AIRequest, resp: AIResponse) -> None:
-    """Write invocation audit row to Cloud SQL (fire-and-forget)."""
+    """Write invocation audit row to Firestore (fire-and-forget)."""
     try:
-        from app.database import async_session_factory
-        from app.models.ai_artifact import AIInvocation
+        from datetime import datetime, timezone
+        from app.firestore_helpers import create_document
 
         prompt_hash = hashlib.sha256(req.prompt.encode()).hexdigest()[:64]
-        async with async_session_factory() as session:
-            row = AIInvocation(
-                request_id=resp.request_id,
-                purpose=req.purpose,
-                model=resp.model,
-                prompt_hash=prompt_hash,
-                input_tokens=resp.input_tokens,
-                output_tokens=resp.output_tokens,
-                latency_ms=resp.latency_ms,
-                estimated_cost_usd=resp.estimated_cost_usd,
-                is_fallback=resp.is_fallback,
-                error=resp.error,
-                store_id=req.store_id,
-            )
-            session.add(row)
-            await session.commit()
+        create_document("ai-invocations", {
+            "request_id": resp.request_id,
+            "purpose": req.purpose,
+            "model": resp.model,
+            "prompt_hash": prompt_hash,
+            "input_tokens": resp.input_tokens,
+            "output_tokens": resp.output_tokens,
+            "latency_ms": resp.latency_ms,
+            "estimated_cost_usd": resp.estimated_cost_usd,
+            "is_fallback": resp.is_fallback,
+            "error": resp.error,
+            "store_id": str(req.store_id) if req.store_id else None,
+            "created_at": datetime.now(timezone.utc),
+        })
     except Exception as exc:
         logger.warning("Failed to persist AI invocation: %s", exc)

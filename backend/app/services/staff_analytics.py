@@ -15,14 +15,50 @@ from typing import Optional
 from uuid import UUID
 
 from pydantic import BaseModel
-from sqlalchemy import func, select, extract
-from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.order import Order, OrderStatus
-from app.models.user import User, UserStoreRole, RoleEnum
-from app.models.timesheet import TimeEntry
+from app.firestore_helpers import get_document, query_collection
 
 logger = logging.getLogger(__name__)
+
+
+def _coerce_order_date(value: object) -> date | None:
+    if value is None:
+        return None
+    if isinstance(value, date) and not isinstance(value, datetime):
+        return value
+    if isinstance(value, datetime):
+        return value.date()
+    if isinstance(value, str):
+        try:
+            return date.fromisoformat(value[:10])
+        except ValueError:
+            return None
+    return None
+
+
+def _load_store_orders(store_id: UUID) -> list[dict]:
+    return query_collection(f"stores/{store_id}/orders")
+
+
+def _filter_orders_for_period(
+    orders: list[dict],
+    start: date,
+    end: date,
+    *,
+    salesperson_id: UUID | None = None,
+) -> list[dict]:
+    filtered: list[dict] = []
+    salesperson_key = str(salesperson_id) if salesperson_id is not None else None
+    for order in orders:
+        if order.get("status") == "voided":
+            continue
+        if salesperson_key is not None and order.get("salesperson_id") != salesperson_key:
+            continue
+        order_date = _coerce_order_date(order.get("order_date"))
+        if order_date is None or order_date < start or order_date > end:
+            continue
+        filtered.append(order)
+    return filtered
 
 
 # ──────────────────── Response Models ────────────────────
@@ -79,48 +115,44 @@ class SchedulingRecommendationsResponse(BaseModel):
 
 
 async def get_staff_sales_summary(
-    db: AsyncSession,
     store_id: UUID,
     start_date: date,
     end_date: date,
 ) -> StaffPerformanceOverview:
     """Per-staff sales totals and ranking for a given period."""
-    range_start = datetime.combine(start_date, datetime.min.time())
-    range_end = datetime.combine(end_date, datetime.max.time())
+    orders = [
+        order for order in _filter_orders_for_period(
+            _load_store_orders(store_id),
+            start_date,
+            end_date,
+        )
+        if order.get("salesperson_id")
+    ]
 
-    query = (
-        select(
-            Order.salesperson_id,
-            func.sum(Order.grand_total).label("total_sales"),
-            func.count(Order.id).label("order_count"),
-        )
-        .where(
-            Order.store_id == store_id,
-            Order.status != OrderStatus.voided,
-            Order.order_date >= range_start,
-            Order.order_date <= range_end,
-            Order.salesperson_id.isnot(None),
-        )
-        .group_by(Order.salesperson_id)
-        .order_by(func.sum(Order.grand_total).desc())
-    )
-    result = await db.execute(query)
-    rows = result.all()
+    # Aggregate by salesperson
+    sp_agg: dict[str, dict] = {}
+    for o in orders:
+        sp_id = o.get("salesperson_id", "")
+        if sp_id not in sp_agg:
+            sp_agg[sp_id] = {"total_sales": 0.0, "order_count": 0}
+        sp_agg[sp_id]["total_sales"] += float(o.get("grand_total", 0))
+        sp_agg[sp_id]["order_count"] += 1
+
+    # Sort by total sales desc
+    sorted_sp = sorted(sp_agg.items(), key=lambda x: x[1]["total_sales"], reverse=True)
 
     # Resolve user names
-    sp_ids = [row[0] for row in rows]
-    name_map: dict[UUID, str] = {}
-    if sp_ids:
-        user_result = await db.execute(
-            select(User.id, User.full_name).where(User.id.in_(sp_ids))
-        )
-        name_map = {uid: name for uid, name in user_result.all()}
+    name_map: dict[str, str] = {}
+    for sp_id, _ in sorted_sp:
+        user_doc = get_document("users", sp_id)
+        if user_doc:
+            name_map[sp_id] = user_doc.get("full_name", "Unknown")
 
     staff_items = []
     total_store_sales = 0.0
-    for rank, (sp_id, total_sales, order_count) in enumerate(rows, start=1):
-        total = float(total_sales or 0)
-        count = int(order_count or 0)
+    for rank, (sp_id, agg) in enumerate(sorted_sp, start=1):
+        total = agg["total_sales"]
+        count = agg["order_count"]
         avg = total / count if count > 0 else 0.0
         total_store_sales += total
         staff_items.append(StaffPerformanceItem(
@@ -146,30 +178,18 @@ async def get_staff_sales_summary(
 
 
 async def _get_period_stats(
-    db: AsyncSession, store_id: UUID, user_id: UUID,
+    store_id: UUID, user_id: UUID,
     start: date, end: date,
 ) -> dict:
     """Get sales stats for a user in a given period."""
-    range_start = datetime.combine(start, datetime.min.time())
-    range_end = datetime.combine(end, datetime.max.time())
-
-    query = (
-        select(
-            func.sum(Order.grand_total).label("total_sales"),
-            func.count(Order.id).label("order_count"),
-        )
-        .where(
-            Order.store_id == store_id,
-            Order.salesperson_id == user_id,
-            Order.status != OrderStatus.voided,
-            Order.order_date >= range_start,
-            Order.order_date <= range_end,
-        )
+    orders = _filter_orders_for_period(
+        _load_store_orders(store_id),
+        start,
+        end,
+        salesperson_id=user_id,
     )
-    result = await db.execute(query)
-    row = result.one()
-    total = float(row[0] or 0)
-    count = int(row[1] or 0)
+    total = sum(float(o.get("grand_total", 0)) for o in orders)
+    count = len(orders)
     avg = total / count if count > 0 else 0.0
     return {
         "period_from": str(start),
@@ -181,7 +201,6 @@ async def _get_period_stats(
 
 
 async def get_staff_performance_comparison(
-    db: AsyncSession,
     store_id: UUID,
     user_id: UUID,
     current_start: date,
@@ -190,13 +209,11 @@ async def get_staff_performance_comparison(
     previous_end: date,
 ) -> PeriodComparison:
     """Compare a staff member's performance between two periods."""
-    user_result = await db.execute(
-        select(User.full_name).where(User.id == user_id)
-    )
-    full_name = user_result.scalar_one_or_none() or "Unknown"
+    user_doc = get_document("users", str(user_id))
+    full_name = user_doc.get("full_name", "Unknown") if user_doc else "Unknown"
 
-    current = await _get_period_stats(db, store_id, user_id, current_start, current_end)
-    previous = await _get_period_stats(db, store_id, user_id, previous_start, previous_end)
+    current = await _get_period_stats(store_id, user_id, current_start, current_end)
+    previous = await _get_period_stats(store_id, user_id, previous_start, previous_end)
 
     change_pct = None
     if previous["total_sales"] > 0:
@@ -217,7 +234,6 @@ async def get_staff_performance_comparison(
 
 
 async def generate_staff_insights(
-    db: AsyncSession,
     store_id: UUID,
     user_id: UUID,
 ) -> StaffInsightsResponse:
@@ -225,43 +241,39 @@ async def generate_staff_insights(
     from app.services.ai_gateway import AIRequest, SYNC_TIMEOUT_SECONDS, invoke
 
     # Get user name
-    user_result = await db.execute(
-        select(User.full_name).where(User.id == user_id)
-    )
-    full_name = user_result.scalar_one_or_none() or "Unknown"
+    user_doc = get_document("users", str(user_id))
+    full_name = user_doc.get("full_name", "Unknown") if user_doc else "Unknown"
 
     # Get last 30 days of sales data
     now = datetime.now(timezone.utc)
     thirty_days_ago = (now - timedelta(days=30)).date()
     today = now.date()
 
-    summary = await _get_period_stats(db, store_id, user_id, thirty_days_ago, today)
+    summary = await _get_period_stats(store_id, user_id, thirty_days_ago, today)
 
-    # Get daily breakdown for patterns
-    range_start = datetime.combine(thirty_days_ago, datetime.min.time())
-    range_end = datetime.combine(today, datetime.max.time())
-
-    daily_query = (
-        select(
-            func.date(Order.order_date).label("day"),
-            func.sum(Order.grand_total).label("daily_total"),
-            func.count(Order.id).label("daily_count"),
-        )
-        .where(
-            Order.store_id == store_id,
-            Order.salesperson_id == user_id,
-            Order.status != OrderStatus.voided,
-            Order.order_date >= range_start,
-            Order.order_date <= range_end,
-        )
-        .group_by(func.date(Order.order_date))
-        .order_by(func.date(Order.order_date))
+    # Get daily breakdown for patterns from orders
+    orders = sorted(
+        _filter_orders_for_period(
+            _load_store_orders(store_id),
+            thirty_days_ago,
+            today,
+            salesperson_id=user_id,
+        ),
+        key=lambda order: _coerce_order_date(order.get("order_date")) or date.min,
     )
-    daily_result = await db.execute(daily_query)
-    daily_rows = daily_result.all()
+
+    daily_buckets: dict[str, dict] = {}
+    for o in orders:
+        od = o.get("order_date", "")
+        day = od[:10] if isinstance(od, str) else str(od.date()) if hasattr(od, "date") else str(od)
+        if day not in daily_buckets:
+            daily_buckets[day] = {"sales": 0.0, "orders": 0}
+        daily_buckets[day]["sales"] += float(o.get("grand_total", 0))
+        daily_buckets[day]["orders"] += 1
+
     daily_data = [
-        {"date": str(row[0]), "sales": float(row[1] or 0), "orders": int(row[2] or 0)}
-        for row in daily_rows
+        {"date": day, "sales": round(info["sales"], 2), "orders": info["orders"]}
+        for day, info in sorted(daily_buckets.items())
     ]
 
     # Build prompt for Gemini
@@ -312,46 +324,43 @@ _DOW_NAMES = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"
 
 
 async def get_scheduling_recommendations(
-    db: AsyncSession,
     store_id: UUID,
 ) -> SchedulingRecommendationsResponse:
     """Suggest optimal staffing by day-of-week based on sales patterns."""
     from app.services.ai_gateway import AIRequest, SYNC_TIMEOUT_SECONDS, invoke
 
-    # Get last 90 days of sales grouped by day-of-week
+    # Get last 90 days of orders
     now = datetime.now(timezone.utc)
     cutoff = now - timedelta(days=90)
 
-    query = (
-        select(
-            func.strftime("%w", Order.order_date).label("dow"),
-            func.sum(Order.grand_total).label("total_sales"),
-            func.count(Order.id).label("order_count"),
-        )
-        .where(
-            Order.store_id == store_id,
-            Order.status != OrderStatus.voided,
-            Order.order_date >= cutoff,
-        )
-        .group_by(func.strftime("%w", Order.order_date))
+    orders = query_collection(
+        f"stores/{store_id}/orders",
+        filters=[("order_date", ">=", cutoff.date().isoformat())],
     )
-    result = await db.execute(query)
-    rows = result.all()
+    orders = [o for o in orders if o.get("status") != "voided"]
 
-    # Build day-of-week breakdown
+    # Build day-of-week breakdown (client-side aggregation)
     dow_data: dict[int, dict] = {}
     weeks_in_range = 13  # ~90 days
-    for row in rows:
-        dow = int(row[0])  # 0=Sunday in strftime %w
-        total = float(row[1] or 0)
-        count = int(row[2] or 0)
-        avg_sales = total / weeks_in_range
-        dow_data[dow] = {
-            "total_sales": round(total, 2),
-            "avg_weekly_sales": round(avg_sales, 2),
-            "total_orders": count,
-            "avg_weekly_orders": round(count / weeks_in_range, 1),
-        }
+    for o in orders:
+        od = o.get("order_date", "")
+        if isinstance(od, str):
+            order_date = date.fromisoformat(od[:10])
+        else:
+            order_date = od.date() if hasattr(od, "date") else od
+        dow = order_date.weekday()  # 0=Monday ... 6=Sunday
+        # Convert to strftime %w convention: 0=Sunday, 1=Monday...6=Saturday
+        dow_key = (dow + 1) % 7
+        if dow_key not in dow_data:
+            dow_data[dow_key] = {"total_sales": 0.0, "total_orders": 0}
+        dow_data[dow_key]["total_sales"] += float(o.get("grand_total", 0))
+        dow_data[dow_key]["total_orders"] += 1
+
+    for key in dow_data:
+        d = dow_data[key]
+        d["avg_weekly_sales"] = round(d["total_sales"] / weeks_in_range, 2)
+        d["avg_weekly_orders"] = round(d["total_orders"] / weeks_in_range, 1)
+        d["total_sales"] = round(d["total_sales"], 2)
 
     # Build recommendations (rule-based first, then AI summary)
     recommendations = []

@@ -12,14 +12,10 @@ from decimal import Decimal, ROUND_HALF_UP
 from typing import Optional
 from uuid import UUID
 
-from sqlalchemy import or_, select
-from sqlalchemy.ext.asyncio import AsyncSession
-
-from app.models.inventory import Promotion
+from app.firestore_helpers import query_collection
 
 
 async def best_discount_for_sku(
-    db: AsyncSession,
     sku_id: UUID,
     category_id: Optional[UUID],
     unit_price: float,
@@ -34,13 +30,17 @@ async def best_discount_for_sku(
     if today is None:
         today = date.today()
 
-    # Fetch promotions targeting this SKU and/or its category (OR)
-    criteria = [Promotion.sku_id == sku_id]
+    # Fetch promotions targeting this SKU
+    promos = query_collection("promotions", filters=[("sku_id", "==", str(sku_id))])
+
+    # Also fetch category-level promotions
     if category_id is not None:
-        criteria.append(Promotion.category_id == category_id)
-    query = select(Promotion).where(or_(*criteria))
-    result = await db.execute(query)
-    promos = result.scalars().all()
+        cat_promos = query_collection("promotions", filters=[("category_id", "==", str(category_id))])
+        # Deduplicate by id
+        seen = {p.get("id") for p in promos}
+        for p in cat_promos:
+            if p.get("id") not in seen:
+                promos.append(p)
 
     if not promos:
         return 0.0
@@ -49,15 +49,14 @@ async def best_discount_for_sku(
     price = Decimal(str(unit_price))
 
     for promo in promos:
-        method = promo.disc_method.upper()
-        value = Decimal(str(promo.disc_value))
+        method = (promo.get("disc_method", "") or "").upper()
+        value = Decimal(str(promo.get("disc_value", 0)))
 
         if method == "PERCENT":
             disc = (price * value / 100).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
         elif method == "AMOUNT":
             disc = min(value, price)
         elif method == "BOGO":
-            # Discount = price of every 2nd item spread across all items
             free_items = qty // 2
             disc = (price * free_items / qty).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP) if qty > 0 else Decimal("0")
         else:

@@ -499,25 +499,55 @@ def extract_sales_entries_with_vertex(
     project_id: str,
     location: str,
     model: str,
+    max_retries: int = 2,
+    timeout_seconds: int = 120,
 ) -> dict[str, Any]:
+    import signal
+    import time
+
     from google import genai
     from google.genai import types
 
     client = genai.Client(vertexai=True, project=project_id, location=location)
     prompt = build_vertex_prompt(document_name, pages)
-    response = client.models.generate_content(
-        model=model,
-        contents=prompt,
-        config=types.GenerateContentConfig(
-            response_mime_type="application/json",
-            response_schema=ENTRY_SCHEMA,
-            temperature=0.1,
-            max_output_tokens=8192,
-        ),
-    )
-    if not response.text:
-        return {"pages": []}
-    return json.loads(response.text)
+
+    for attempt in range(max_retries + 1):
+        try:
+            # Use alarm-based timeout on Unix
+            def _timeout_handler(signum: int, frame: Any) -> None:
+                raise TimeoutError(f"Vertex AI call timed out after {timeout_seconds}s")
+
+            old_handler = signal.signal(signal.SIGALRM, _timeout_handler)
+            signal.alarm(timeout_seconds)
+            try:
+                response = client.models.generate_content(
+                    model=model,
+                    contents=prompt,
+                    config=types.GenerateContentConfig(
+                        response_mime_type="application/json",
+                        response_schema=ENTRY_SCHEMA,
+                        temperature=0.1,
+                        max_output_tokens=8192,
+                    ),
+                )
+            finally:
+                signal.alarm(0)
+                signal.signal(signal.SIGALRM, old_handler)
+
+            if not response.text:
+                return {"pages": []}
+            return json.loads(response.text)
+        except json.JSONDecodeError as exc:
+            print(f"    WARNING: Gemini returned invalid JSON ({exc}), skipping extraction")
+            return {"pages": [], "notes": f"Vertex JSON error: {exc}"}
+        except (TimeoutError, Exception) as exc:
+            if attempt < max_retries:
+                wait = 5 * (attempt + 1)
+                print(f"    RETRY {attempt+1}/{max_retries}: {exc} — waiting {wait}s")
+                time.sleep(wait)
+            else:
+                print(f"    ERROR: {exc} after {max_retries} retries, skipping")
+                return {"pages": [], "notes": f"Extraction failed: {exc}"}
 
 
 def enrich_result(
@@ -701,7 +731,10 @@ def main() -> None:
             f"Processed {pdf_path.name}: pages={len(enriched.get('pages', []))}"
         )
 
-    for img_path in image_files:
+    import sys
+    total_images = len(image_files)
+    for idx, img_path in enumerate(image_files, start=1):
+        print(f"  [{idx}/{total_images}] {img_path.name}...", end=" ", flush=True)
         mime = "image/png" if img_path.suffix.lower() == ".png" else "image/jpeg"
         pages = ocr_image_with_document_ai(
             image_path=img_path,
@@ -720,15 +753,25 @@ def main() -> None:
         )
         enriched = enrich_result(img_path.name, extracted, aliases, product_hints)
         documents.append({"document_name": img_path.name, **enriched})
-        print(
-            f"Processed {img_path.name}: pages={len(enriched.get('pages', []))}"
-        )
+        n_entries = sum(len(p.get("entries", [])) for p in enriched.get("pages", []))
+        print(f"pages={len(enriched.get('pages', []))} entries={n_entries}", flush=True)
+        sys.stdout.flush()
 
     payload = {"documents": documents}
     write_json(output_json, payload)
     write_mangle(output_mangle, payload)
     print(f"JSON   -> {output_json}")
     print(f"Mangle -> {output_mangle}")
+    
+    try:
+        sys.path.append(str(repo_root / "tools" / "scripts"))
+        from vault_utils import upload_to_vault
+        doc_id = "sales_taka_gcp_vertex"
+        print(f"\nUploading to OCR Vault Staging as {doc_id}...")
+        upload_to_vault(args.project_id, doc_id, "Sales Taka Batch", payload)
+        print("Vault upload successful.")
+    except Exception as e:
+        print(f"Error executing vault upload: {e}")
 
 
 if __name__ == "__main__":

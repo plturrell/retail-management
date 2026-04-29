@@ -9,6 +9,7 @@ struct OrdersTabView: View {
     @Environment(StoreViewModel.self) var storeViewModel
     @State private var ordersVM = OrdersViewModel()
     @State private var selectedOrder: Order?
+    @FocusState private var isSearchFocused: Bool
 
     var body: some View {
         NavigationStack {
@@ -49,17 +50,55 @@ struct OrdersTabView: View {
                                     OrderListRow(order: order)
                                 }
                                 .foregroundStyle(.primary)
+                                .contextMenu {
+                                    Button {
+                                        selectedOrder = order
+                                    } label: {
+                                        Label("View Details", systemImage: "info.circle")
+                                    }
+                                    Button {
+                                        copyToPasteboard(order.orderNumber)
+                                    } label: {
+                                        Label("Copy Order #", systemImage: "number")
+                                    }
+                                    Button {
+                                        copyToPasteboard(order.formattedTotal)
+                                    } label: {
+                                        Label("Copy Total", systemImage: "dollarsign.circle")
+                                    }
+                                }
                             }
                         }
                     }
-                    .searchable(text: $ordersVM.searchText, prompt: "Search orders")
                 }
             }
             .navigationTitle("Orders")
+            .searchable(text: $ordersVM.searchText, prompt: "Search orders")
+            .searchFocused($isSearchFocused)
+            .toolbar {
+                ToolbarItem(placement: .primaryAction) {
+                    Button {
+                        if let storeId = storeViewModel.selectedStore?.id {
+                            Task { await ordersVM.loadOrders(storeId: storeId) }
+                        }
+                    } label: {
+                        Label("Refresh", systemImage: "arrow.clockwise")
+                    }
+                    .keyboardShortcut("R", modifiers: [.command])
+                }
+            }
             .task {
                 if let storeId = storeViewModel.selectedStore?.id {
                     await ordersVM.loadOrders(storeId: storeId)
                 }
+            }
+            .onReceive(NotificationCenter.default.publisher(for: .appRefreshRequested)) { _ in
+                if let storeId = storeViewModel.selectedStore?.id {
+                    Task { await ordersVM.loadOrders(storeId: storeId) }
+                }
+            }
+            .onReceive(NotificationCenter.default.publisher(for: .appFindRequested)) { _ in
+                isSearchFocused = true
             }
             .sheet(item: $selectedOrder) { order in
                 OrderDetailView(order: order)

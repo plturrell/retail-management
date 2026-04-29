@@ -1,8 +1,9 @@
-import { Navigate } from "react-router-dom";
+import { Navigate, useLocation } from "react-router-dom";
 import { useAuth } from "../contexts/AuthContext";
 
 export default function ProtectedRoute({ children }: { children: React.ReactNode }) {
-  const { user, loading } = useAuth();
+  const { user, loading, mustChangePassword } = useAuth();
+  const location = useLocation();
 
   if (loading) {
     return (
@@ -13,6 +14,12 @@ export default function ProtectedRoute({ children }: { children: React.ReactNode
   }
 
   if (!user) return <Navigate to="/login" replace />;
+
+  // Hard gate: if an admin flagged this account with must_change_password,
+  // funnel the user to the forced-reset screen until they rotate it.
+  if (mustChangePassword && location.pathname !== "/force-change-password") {
+    return <Navigate to="/force-change-password" replace />;
+  }
 
   return <>{children}</>;
 }

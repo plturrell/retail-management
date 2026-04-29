@@ -3,7 +3,7 @@ package com.retailmanagement.ui.staff
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Email
+import androidx.compose.material.icons.filled.AccountCircle
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.Visibility
 import androidx.compose.material.icons.filled.VisibilityOff
@@ -18,10 +18,17 @@ import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
 import com.google.firebase.auth.FirebaseAuth
 
+private const val DEFAULT_AUTH_EMAIL_DOMAIN = "victoriaenso.com"
+
+private fun usernameToAuthEmail(value: String): String {
+    val identifier = value.trim().lowercase()
+    return if (identifier.isBlank() || identifier.contains("@")) identifier else "$identifier@$DEFAULT_AUTH_EMAIL_DOMAIN"
+}
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun LoginScreen(onLoginSuccess: () -> Unit) {
-    var email by remember { mutableStateOf("") }
+    var username by remember { mutableStateOf("") }
     var password by remember { mutableStateOf("") }
     var passwordVisible by remember { mutableStateOf(false) }
     var isLoading by remember { mutableStateOf(false) }
@@ -46,13 +53,13 @@ fun LoginScreen(onLoginSuccess: () -> Unit) {
             verticalArrangement = Arrangement.Center
         ) {
             Text(
-                text = "RetailSG",
+                text = "VictoriaEnso",
                 style = MaterialTheme.typography.headlineLarge,
                 fontWeight = FontWeight.Bold,
                 color = MaterialTheme.colorScheme.primary
             )
             Text(
-                text = "Staff Portal",
+                text = "Retail Management",
                 style = MaterialTheme.typography.titleMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
@@ -60,11 +67,11 @@ fun LoginScreen(onLoginSuccess: () -> Unit) {
             Spacer(modifier = Modifier.height(48.dp))
 
             OutlinedTextField(
-                value = email,
-                onValueChange = { email = it; errorMessage = null },
-                label = { Text("Email") },
-                leadingIcon = { Icon(Icons.Default.Email, contentDescription = null) },
-                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Email),
+                value = username,
+                onValueChange = { username = it; errorMessage = null },
+                label = { Text("Username") },
+                leadingIcon = { Icon(Icons.Default.AccountCircle, contentDescription = null) },
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Text),
                 singleLine = true,
                 modifier = Modifier.fillMaxWidth()
             )
@@ -105,14 +112,14 @@ fun LoginScreen(onLoginSuccess: () -> Unit) {
                 onClick = {
                     isLoading = true
                     errorMessage = null
-                    auth.signInWithEmailAndPassword(email.trim(), password)
+                    auth.signInWithEmailAndPassword(usernameToAuthEmail(username), password)
                         .addOnSuccessListener { isLoading = false; onLoginSuccess() }
                         .addOnFailureListener { e ->
                             isLoading = false
                             errorMessage = e.localizedMessage ?: "Login failed"
                         }
                 },
-                enabled = !isLoading && email.isNotBlank() && password.isNotBlank(),
+                enabled = !isLoading && username.isNotBlank() && password.isNotBlank(),
                 modifier = Modifier
                     .fillMaxWidth()
                     .height(50.dp)

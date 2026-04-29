@@ -1,6 +1,7 @@
 package com.retailmanagement.data.api
 
 import com.google.firebase.auth.FirebaseAuth
+import com.retailmanagement.BuildConfig
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.tasks.await
 import okhttp3.Interceptor
@@ -12,8 +13,9 @@ import java.util.concurrent.TimeUnit
 
 object RetrofitClient {
 
-    // TODO: Replace with actual backend URL
-    private const val BASE_URL = "https://api.retailsg.example.com/"
+    private val BASE_URL = BuildConfig.RETAILSG_API_URL.let {
+        if (it.endsWith("/")) it else "$it/"
+    }
 
     private val authInterceptor = Interceptor { chain ->
         val token = runBlocking {
@@ -31,7 +33,9 @@ object RetrofitClient {
             if (token != null) {
                 addHeader("Authorization", "Bearer $token")
             }
-            addHeader("Content-Type", "application/json")
+            if (chain.request().body?.contentType() == null) {
+                addHeader("Content-Type", "application/json")
+            }
         }.build()
 
         chain.proceed(request)

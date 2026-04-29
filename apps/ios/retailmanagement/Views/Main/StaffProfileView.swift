@@ -24,7 +24,7 @@ struct StaffProfileView: View {
                             VStack(alignment: .leading, spacing: 4) {
                                 Text(user.fullName)
                                     .font(.title3.weight(.semibold))
-                                Text(user.email)
+                                Text(user.username)
                                     .font(.subheadline)
                                     .foregroundStyle(.secondary)
                                 if let phone = user.phone, !phone.isEmpty {
@@ -98,7 +98,7 @@ struct StaffProfileView: View {
                     }
                 }
             }
-            .listStyle(.insetGrouped)
+            .insetGroupedListStyleCompat()
             .navigationTitle("Profile")
             .task { await loadProfile() }
             .refreshable { await loadProfile() }

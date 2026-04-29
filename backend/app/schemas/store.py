@@ -1,12 +1,30 @@
 from __future__ import annotations
 
-from datetime import datetime, time
+from datetime import date, datetime, time
+from enum import Enum
 from uuid import UUID
 
 from pydantic import BaseModel, Field
 
 from app.models.store import StoreTypeEnum
 from app.schemas.common import TimestampMixin, UUIDMixin
+
+
+class StoreType(str, Enum):
+    flagship = "flagship"
+    outlet = "outlet"
+    pop_up = "pop_up"
+    retail = "retail"
+    warehouse = "warehouse"
+    online = "online"
+    hybrid = "hybrid"
+
+
+class StoreOperationalStatus(str, Enum):
+    active = "active"
+    staging = "staging"
+    planned = "planned"
+    inactive = "inactive"
 
 
 class StoreBase(BaseModel):
@@ -23,6 +41,12 @@ class StoreBase(BaseModel):
     currency: str = Field("SGD", max_length=3)
     business_hours_start: time
     business_hours_end: time
+    store_type: StoreType = StoreType.retail
+    operational_status: StoreOperationalStatus = StoreOperationalStatus.active
+    is_home_base: bool = False
+    is_temp_warehouse: bool = False
+    planned_open_date: date | None = None
+    notes: str | None = Field(None, max_length=1000)
     is_active: bool = True
 
 
@@ -43,8 +67,14 @@ class StoreUpdate(BaseModel):
     currency: str | None = Field(None, max_length=3)
     business_hours_start: time | None = None
     business_hours_end: time | None = None
+    store_type: StoreType | None = None
+    operational_status: StoreOperationalStatus | None = None
+    is_home_base: bool | None = None
+    is_temp_warehouse: bool | None = None
+    planned_open_date: date | None = None
+    notes: str | None = Field(None, max_length=1000)
     is_active: bool | None = None
 
 
 class StoreRead(StoreBase, UUIDMixin, TimestampMixin):
-    pass
+    store_code: str | None = None

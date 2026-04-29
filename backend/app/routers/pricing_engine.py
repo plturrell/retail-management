@@ -7,22 +7,29 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel
-from sqlalchemy import func, select
-from sqlalchemy.ext.asyncio import AsyncSession
+from google.cloud.firestore_v1.client import Client as FirestoreClient
 
-from app.database import get_db
-from app.models.inventory import Inventory, SKU
-from app.models.order import Order, OrderItem, OrderStatus
-from app.models.user import UserStoreRole
+from app.firestore import get_firestore_db
+from app.firestore_helpers import get_document, query_collection
 from app.auth.dependencies import require_store_access
+from app.schemas.inventory import InventoryType
 from app.services.gemini_strategist import (
     PricingCritique,
     PricingStrategyUpdate,
     audit_retail_pricing,
     get_dynamic_pricing_strategy,
 )
+from app.services.supply_chain import list_stage_inventory
 
 router = APIRouter(prefix="/api/stores/{store_id}/strategy", tags=["pricing-strategy"])
+
+
+def _sku_collection(store_id: UUID) -> str:
+    return f"stores/{store_id}/inventory"
+
+
+def _stock_collection(store_id: UUID) -> str:
+    return f"stores/{store_id}/stock"
 
 
 class PricingContext(BaseModel):
@@ -36,76 +43,64 @@ class PricingContext(BaseModel):
 async def evaluate_dynamic_pricing(
     store_id: UUID,
     context: PricingContext,
-    _: UserStoreRole = Depends(require_store_access),
-    db: AsyncSession = Depends(get_db),
+    _: dict = Depends(require_store_access),
+    db: FirestoreClient = Depends(get_firestore_db),
 ):
-    """Evaluate pricing strategy using Gemini with real sales data from the DB."""
+    """Evaluate pricing strategy using Gemini with real sales data."""
     now = datetime.now(timezone.utc)
     cutoff = now - timedelta(days=30)
 
-    # Gather real sales context from the database
-    orders_q = select(Order).where(
-        Order.store_id == store_id,
-        Order.status != OrderStatus.voided,
-        Order.order_date >= cutoff,
+    orders = query_collection(
+        f"stores/{store_id}/orders",
+        filters=[("order_date", ">=", cutoff.date().isoformat())],
     )
-    result = await db.execute(orders_q)
-    orders = result.scalars().all()
+    orders = [o for o in orders if o.get("status") != "voided"]
 
-    total_revenue = sum(float(o.grand_total) for o in orders)
+    total_revenue = sum(float(o.get("grand_total", 0)) for o in orders)
     order_count = len(orders)
     avg_order_value = total_revenue / order_count if order_count > 0 else 0.0
 
-    # Top sellers
-    top_q = (
-        select(
-            SKU.sku_code,
-            SKU.description,
-            func.sum(OrderItem.qty).label("qty"),
-        )
-        .select_from(OrderItem)
-        .join(Order, OrderItem.order_id == Order.id)
-        .join(SKU, OrderItem.sku_id == SKU.id)
-        .where(
-            Order.store_id == store_id,
-            Order.status != OrderStatus.voided,
-            Order.order_date >= cutoff,
-        )
-        .group_by(SKU.sku_code, SKU.description)
-        .order_by(func.sum(OrderItem.qty).desc())
-        .limit(5)
-    )
-    top_result = await db.execute(top_q)
-    top_sellers = [
-        {"sku": row[0], "desc": row[1], "qty": int(row[2])}
-        for row in top_result.all()
-    ]
+    # Top sellers — aggregate from embedded items
+    sku_qty: dict[str, int] = {}
+    for o in orders:
+        for item in o.get("items", []):
+            sid = item.get("sku_id", "")
+            sku_qty[sid] = sku_qty.get(sid, 0) + int(item.get("qty", 0))
+    sorted_skus = sorted(sku_qty.items(), key=lambda x: x[1], reverse=True)[:5]
+    top_sellers = []
+    for sid, qty in sorted_skus:
+        sku = get_document(_sku_collection(store_id), sid)
+        top_sellers.append({
+            "sku": sku.get("sku_code", "UNKNOWN") if sku else "UNKNOWN",
+            "desc": sku.get("description", "") if sku else "",
+            "qty": qty,
+        })
 
-    # Low margin SKUs (cost_price > 70% of selling price)
-    low_margin_q = (
-        select(SKU.sku_code, SKU.description, SKU.cost_price)
-        .where(SKU.store_id == store_id, SKU.cost_price.isnot(None))
-        .limit(5)
-    )
-    lm_result = await db.execute(low_margin_q)
+    # Low margin SKUs
+    all_skus = query_collection(_sku_collection(store_id), limit=5)
     low_margin_skus = [
-        {"sku": row[0], "cost": float(row[2])} for row in lm_result.all()
+        {"sku": s.get("sku_code", ""), "cost": float(s.get("cost_price", 0))}
+        for s in all_skus if s.get("cost_price")
     ]
 
-    # Inventory alerts count
-    alert_q = select(func.count()).select_from(
-        select(Inventory.id).where(
-            Inventory.store_id == store_id,
-            Inventory.qty_on_hand <= Inventory.reorder_level,
-        ).subquery()
+    # Inventory alerts
+    finished_positions = {
+        str(position.sku_id): position
+        for position in list_stage_inventory(store_id, inventory_type=InventoryType.finished)
+    }
+    inventory_alerts = len(
+        [
+            row
+            for row in query_collection(_stock_collection(store_id))
+            if finished_positions.get(str(row.get("sku_id")))
+            and finished_positions[str(row.get("sku_id"))].quantity_on_hand
+            <= int(row.get("reorder_level", 0) or 0)
+        ]
     )
-    alert_result = await db.execute(alert_q)
-    inventory_alerts = alert_result.scalar() or 0
 
-    # Fetch store name
-    from app.models.store import Store
-    store_result = await db.execute(select(Store.name).where(Store.id == store_id))
-    store_name = store_result.scalar_one_or_none() or str(store_id)
+    # Store name
+    store_doc = get_document("stores", str(store_id))
+    store_name = store_doc.get("name", str(store_id)) if store_doc else str(store_id)
 
     sales_context = {
         "total_revenue": total_revenue,
@@ -140,10 +135,9 @@ class PricingAuditRequest(BaseModel):
 async def execute_pricing_audit(
     store_id: UUID,
     request: PricingAuditRequest,
-    _: UserStoreRole = Depends(require_store_access),
+    _: dict = Depends(require_store_access),
 ):
-    """Rigorous algorithmic Gemini pricing critique comparing actuals to ideal mathematical targets."""
-    
+    """Rigorous algorithmic Gemini pricing critique."""
     critique = await audit_retail_pricing(
         store_name=request.store_name,
         store_type=request.store_type,
@@ -151,5 +145,4 @@ async def execute_pricing_audit(
         current_retail_price=request.current_retail_price,
         store_id=store_id,
     )
-    
     return critique

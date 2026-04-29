@@ -3,16 +3,16 @@ from __future__ import annotations
 
 import csv
 import io
-from datetime import datetime, date, time
-from typing import Any, Optional
+import uuid as _uuid
+from datetime import datetime, date, time, timezone
+from typing import Any, Dict, Optional
 from uuid import UUID
 
 from openpyxl import load_workbook
-from sqlalchemy import select, and_
-from sqlalchemy.ext.asyncio import AsyncSession
+from google.cloud.firestore_v1.client import Client as FirestoreClient
 
-from app.models.timesheet import TimeEntry, TimeEntryStatus
-from app.models.user import User
+from app.firestore import db as firestore_db
+from app.firestore_helpers import query_collection
 
 
 class ImportError:
@@ -130,21 +130,40 @@ def _parse_time(value: str) -> time | None:
     return None
 
 
-async def _build_user_lookup(
-    db: AsyncSession, store_id: UUID
-) -> dict[str, User]:
+def _build_user_lookup(db: FirestoreClient) -> dict[str, dict]:
     """Build lookup dicts keyed by lowercase email and full_name."""
-    result = await db.execute(select(User))
-    users = result.scalars().all()
-    lookup: dict[str, User] = {}
+    users = sorted(
+        query_collection("users"),
+        key=lambda user: (
+            str(user.get("updated_at") or ""),
+            str(user.get("created_at") or ""),
+            str(user.get("id") or ""),
+        ),
+    )
+    lookup: dict[str, dict] = {}
     for u in users:
-        lookup[u.email.lower()] = u
-        lookup[u.full_name.lower()] = u
+        if u.get("email"):
+            lookup[u["email"].lower()] = u
+        if u.get("full_name"):
+            lookup[u["full_name"].lower()] = u
     return lookup
 
 
-async def import_timesheet_file(
-    db: AsyncSession,
+def _entry_date(value: Any) -> date | None:
+    if isinstance(value, datetime):
+        return value.date()
+    if isinstance(value, date):
+        return value
+    if isinstance(value, str):
+        try:
+            return datetime.fromisoformat(value.replace("Z", "+00:00")).date()
+        except ValueError:
+            return None
+    return None
+
+
+def import_timesheet_file(
+    db: FirestoreClient,
     store_id: UUID,
     filename: str,
     content: bytes,
@@ -165,13 +184,23 @@ async def import_timesheet_file(
         result.errors.append(ImportError(0, "File is empty or has no data rows."))
         return result
 
-    user_lookup = await _build_user_lookup(db, store_id)
+    user_lookup = _build_user_lookup(db)
+    col_path = f"stores/{store_id}/timesheets"
+    existing_entry_keys = {
+        (str(entry.get("user_id", "")), entry_date)
+        for entry in query_collection(col_path, order_by="-clock_in")
+        if (entry_date := _entry_date(entry.get("clock_in"))) is not None
+    }
+
+    # Use batch writes for bulk creation
+    batch = firestore_db.batch()
+    batch_count = 0
 
     for row_idx, row in enumerate(rows, start=2):  # row 1 is header
         # --- Resolve user ---
         email_val = row.get("email", "").strip()
         name_val = row.get("staff_name", "").strip()
-        user: User | None = None
+        user: dict | None = None
         if email_val:
             user = user_lookup.get(email_val.lower())
         if user is None and name_val:
@@ -221,37 +250,46 @@ async def import_timesheet_file(
             result.skipped_count += 1
             continue
 
-        # --- Check for duplicate (same user + same date) ---
-        dup_result = await db.execute(
-            select(TimeEntry).where(
-                and_(
-                    TimeEntry.user_id == user.id,
-                    TimeEntry.store_id == store_id,
-                    TimeEntry.clock_in >= datetime.combine(entry_date, time(0, 0)),
-                    TimeEntry.clock_in < datetime.combine(entry_date, time(23, 59, 59)),
-                )
-            )
-        )
-        if dup_result.scalar_one_or_none() is not None:
+        user_id = user.get("id", "")
+        user_name = user.get("full_name", "Unknown")
+
+        duplicate_key = (str(user_id), entry_date)
+        if duplicate_key in existing_entry_keys:
             result.errors.append(
-                ImportError(row_idx, f"Duplicate entry for {user.full_name} on {entry_date}")
+                ImportError(row_idx, f"Duplicate entry for {user_name} on {entry_date}")
             )
             result.skipped_count += 1
             continue
 
-        # --- Create TimeEntry ---
+        # --- Create TimeEntry via batch ---
         notes = row.get("notes", "").strip() or None
-        entry = TimeEntry(
-            user_id=user.id,
-            store_id=store_id,
-            clock_in=clock_in_dt,
-            clock_out=clock_out_dt,
-            break_minutes=break_minutes,
-            notes=notes,
-            status=TimeEntryStatus.approved,
-        )
-        db.add(entry)
+        doc_id = str(_uuid.uuid4())
+        now = datetime.now(timezone.utc)
+        ref = firestore_db.collection(col_path).document(doc_id)
+        batch.set(ref, {
+            "id": doc_id,
+            "user_id": str(user_id),
+            "store_id": str(store_id),
+            "clock_in": clock_in_dt,
+            "clock_out": clock_out_dt,
+            "break_minutes": break_minutes,
+            "notes": notes,
+            "status": "approved",
+            "approved_by": None,
+            "user_name": user_name,
+            "created_at": now,
+            "updated_at": now,
+        })
+        batch_count += 1
         result.imported_count += 1
+        existing_entry_keys.add(duplicate_key)
 
-    await db.flush()
+        # Firestore batch limit is 500
+        if batch_count >= 499:
+            batch.commit()
+            batch = firestore_db.batch()
+            batch_count = 0
+
+    if batch_count > 0:
+        batch.commit()
     return result

@@ -43,10 +43,10 @@ final class AuthViewModel {
         }
     }
 
-    /// Sign in with email and password.
-    func signIn(email: String, password: String) async {
-        guard !email.isEmpty, !password.isEmpty else {
-            errorMessage = "Email and password are required."
+    /// Sign in with username and password.
+    func signIn(username: String, password: String) async {
+        guard !username.isEmpty, !password.isEmpty else {
+            errorMessage = "Username and password are required."
             return
         }
 
@@ -54,7 +54,7 @@ final class AuthViewModel {
         errorMessage = nil
 
         do {
-            try await authService.signIn(email: email, password: password)
+            try await authService.signIn(username: username, password: password)
             let user = try await fetchUserProfile()
             currentUser = user
             authState = .authenticated

@@ -87,7 +87,7 @@ struct ScheduleView: View {
                 }
             }
         }
-        .listStyle(.insetGrouped)
+        .insetGroupedListStyleCompat()
     }
 
     private func shiftRow(_ shift: Shift) -> some View {

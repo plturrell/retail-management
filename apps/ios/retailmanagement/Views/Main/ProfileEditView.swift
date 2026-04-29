@@ -88,7 +88,7 @@ struct ProfileEditView: View {
                 }
 
                 Section("Account") {
-                    LabeledContent("Email", value: authViewModel.currentUser?.email ?? "—")
+                    LabeledContent("Username", value: authViewModel.currentUser?.username ?? "—")
                 }
 
                 if let error = viewModel.errorMessage {
@@ -99,6 +99,7 @@ struct ProfileEditView: View {
                     }
                 }
             }
+            .macOSFormWidth(560)
             .navigationTitle("Edit Profile")
             #if canImport(UIKit)
             .navigationBarTitleDisplayMode(.inline)

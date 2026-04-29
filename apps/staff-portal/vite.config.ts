@@ -12,9 +12,9 @@ export default defineConfig({
       registerType: "autoUpdate",
       includeAssets: ["favicon.svg", "icons/*.png"],
       manifest: {
-        name: "RetailSG Staff",
-        short_name: "RetailSG",
-        description: "RetailSG Staff Portal — schedules, timesheets, pay & performance",
+        name: "VictoriaEnso Staff",
+        short_name: "VictoriaEnso",
+        description: "VictoriaEnso Staff Portal — schedules, timesheets, pay & performance",
         theme_color: "#1e40af",
         background_color: "#ffffff",
         display: "standalone",
@@ -47,5 +47,8 @@ export default defineConfig({
   },
   server: {
     port: 5173,
+    fs: {
+      allow: [path.resolve(__dirname, "../..")],
+    },
   },
 });

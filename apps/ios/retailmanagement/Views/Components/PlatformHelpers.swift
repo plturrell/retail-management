@@ -64,9 +64,20 @@ enum AdaptiveLayout {
 struct LiquidGlassUI: ViewModifier {
     var cornerRadius: CGFloat = 20
 
+    /// iOS uses `.ultraThinMaterial` which reads well over photographic content;
+    /// macOS windows are typically opaque, so a `.thinMaterial` reads cleaner
+    /// and avoids the washed-out look of ultra-thin over solid window chrome.
+    private var platformMaterial: Material {
+        #if os(macOS)
+        return .thinMaterial
+        #else
+        return .ultraThinMaterial
+        #endif
+    }
+
     func body(content: Content) -> some View {
         content
-            .background(.ultraThinMaterial)
+            .background(platformMaterial)
             .clipShape(RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
             .overlay(
                 RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
@@ -101,13 +112,15 @@ enum HapticManager {
             generator.notificationOccurred(.error)
         }
         #elseif canImport(AppKit)
+        // AppKit haptics only fire on trackpads that support it; for very subtle
+        // "light" feedback we intentionally no-op to avoid spurious buzzes.
         switch style {
         case .success, .medium:
             NSHapticFeedbackManager.defaultPerformer.perform(.generic, performanceTime: .default)
         case .error:
             NSHapticFeedbackManager.defaultPerformer.perform(.alignment, performanceTime: .default)
         case .light:
-            NSHapticFeedbackManager.defaultPerformer.perform(.levelChange, performanceTime: .default)
+            break
         }
         #endif
     }
@@ -115,6 +128,45 @@ enum HapticManager {
     enum FeedbackStyle {
         case light, medium, success, error
     }
+}
+
+// MARK: - Cross-Platform Pasteboard
+
+/// Copies a string to the system pasteboard on iOS or macOS.
+func copyToPasteboard(_ text: String) {
+    #if canImport(UIKit)
+    UIPasteboard.general.string = text
+    #elseif canImport(AppKit)
+    let pb = NSPasteboard.general
+    pb.clearContents()
+    pb.setString(text, forType: .string)
+    #endif
+}
+
+// MARK: - Cross-Platform Keyboard Type
+
+/// Cross-platform keyboard type. Maps to `UIKeyboardType` on UIKit,
+/// no-op on AppKit (where there is no software keyboard concept).
+enum CompatKeyboardType {
+    case `default`
+    case numberPad
+    case decimalPad
+    case emailAddress
+    case phonePad
+    case url
+
+    #if canImport(UIKit)
+    var uiKitValue: UIKeyboardType {
+        switch self {
+        case .default: return .default
+        case .numberPad: return .numberPad
+        case .decimalPad: return .decimalPad
+        case .emailAddress: return .emailAddress
+        case .phonePad: return .phonePad
+        case .url: return .URL
+        }
+    }
+    #endif
 }
 
 // MARK: - Conditional View Modifiers
@@ -130,13 +182,23 @@ extension View {
         #endif
     }
 
-    /// Applies iOS-specific keyboard type.
+    /// Applies a keyboard type on UIKit; no-op on AppKit.
     @ViewBuilder
-    func keyboardTypeCompat(_ type: Int = 0) -> some View {
+    func keyboardTypeCompat(_ type: CompatKeyboardType) -> some View {
         #if canImport(UIKit)
-        self.keyboardType(.emailAddress)
+        self.keyboardType(type.uiKitValue)
         #else
         self
+        #endif
+    }
+
+    /// Applies `.insetGrouped` on UIKit and `.inset` on AppKit (where `insetGrouped` is unavailable).
+    @ViewBuilder
+    func insetGroupedListStyleCompat() -> some View {
+        #if canImport(UIKit)
+        self.listStyle(.insetGrouped)
+        #else
+        self.listStyle(.inset)
         #endif
     }
 

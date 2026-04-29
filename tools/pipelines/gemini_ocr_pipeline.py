@@ -78,8 +78,8 @@ def main():
     if not api_key:
         print("ERROR: GEMINI_API_KEY environment variable not found!")
         print("")
-        print("Get your key from your GCP project (project-b41c0c0d-6eea-4e9d-a78):")
-        print("  https://console.cloud.google.com/apis/credentials?project=project-b41c0c0d-6eea-4e9d-a78")
+        print("Get your key from your GCP project (victoriaensoapp):")
+        print("  https://console.cloud.google.com/apis/credentials?project=victoriaensoapp")
         print("")
         print("Or from AI Studio: https://aistudio.google.com/app/apikey")
         print("")

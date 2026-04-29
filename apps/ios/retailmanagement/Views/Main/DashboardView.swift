@@ -17,6 +17,10 @@ struct DashboardView: View {
         storeViewModel.selectedStore?.name ?? "Your Store"
     }
 
+    private var lowStockInsights: [InventoryInsight] {
+        inventoryVM.insights.filter(\.lowStock)
+    }
+
     var body: some View {
         NavigationStack {
             ZStack {
@@ -65,16 +69,16 @@ struct DashboardView: View {
                             )
                             KPICard(
                                 title: "Total SKUs",
-                                value: "\(inventoryVM.totalSKUs)",
+                                value: "\(inventoryVM.insights.count)",
                                 icon: "shippingbox.fill",
                                 color: .blue,
                                 animate: animateSymbols
                             )
                             KPICard(
                                 title: "Low Stock",
-                                value: "\(inventoryVM.lowStockItems.count)",
+                                value: "\(lowStockInsights.count)",
                                 icon: "exclamationmark.triangle.fill",
-                                color: inventoryVM.lowStockItems.isEmpty ? .gray : .red,
+                                color: lowStockInsights.isEmpty ? .gray : .red,
                                 animate: animateSymbols
                             )
                         }
@@ -106,7 +110,7 @@ struct DashboardView: View {
                         .padding(.horizontal)
 
                         // Low Stock Alerts - High urgency tactile feedback
-                        if !inventoryVM.lowStockItems.isEmpty {
+                        if !lowStockInsights.isEmpty {
                             VStack(alignment: .leading, spacing: 16) {
                                 HStack {
                                     Image(systemName: "exclamationmark.triangle.fill")
@@ -117,30 +121,28 @@ struct DashboardView: View {
                                     Spacer()
                                 }
 
-                                ForEach(inventoryVM.lowStockItems) { item in
-                                    if let sku = inventoryVM.skus.first(where: { $0.id == item.skuId }) {
-                                        HStack {
-                                            VStack(alignment: .leading, spacing: 4) {
-                                                Text(sku.description)
-                                                    .font(.system(.subheadline, design: .rounded).weight(.medium))
-                                                Text(sku.skuCode)
-                                                    .font(.system(.caption, design: .rounded))
-                                                    .foregroundStyle(.secondary)
-                                            }
-                                            Spacer()
-                                            Text("\(item.qtyOnHand) left")
-                                                .font(.system(.subheadline, design: .rounded).weight(.semibold))
-                                                .foregroundStyle(.red)
-                                                .contentTransition(.numericText())
+                                ForEach(lowStockInsights) { item in
+                                    HStack {
+                                        VStack(alignment: .leading, spacing: 4) {
+                                            Text(item.description)
+                                                .font(.system(.subheadline, design: .rounded).weight(.medium))
+                                            Text(item.skuCode)
+                                                .font(.system(.caption, design: .rounded))
+                                                .foregroundStyle(.secondary)
                                         }
-                                        .padding()
-                                        .background(.ultraThinMaterial)
-                                        .overlay(
-                                            RoundedRectangle(cornerRadius: 16, style: .continuous)
-                                                .strokeBorder(Color.red.opacity(0.3), lineWidth: 0.5)
-                                        )
-                                        .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+                                        Spacer()
+                                        Text("\(item.qtyOnHand) left")
+                                            .font(.system(.subheadline, design: .rounded).weight(.semibold))
+                                            .foregroundStyle(.red)
+                                            .contentTransition(.numericText())
                                     }
+                                    .padding()
+                                    .background(.ultraThinMaterial)
+                                    .overlay(
+                                        RoundedRectangle(cornerRadius: 16, style: .continuous)
+                                            .strokeBorder(Color.red.opacity(0.3), lineWidth: 0.5)
+                                    )
+                                    .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
                                 }
                             }
                             .padding(.horizontal)

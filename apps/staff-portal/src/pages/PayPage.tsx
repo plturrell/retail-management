@@ -1,9 +1,11 @@
 import { useEffect, useState } from "react";
+import { useAuth } from "../contexts/AuthContext";
 import { api } from "../lib/api";
 
 interface PaySlip {
   id: string;
   payroll_run_id: string;
+  store_id: string;
   user_id: string;
   basic_salary: number;
   hours_worked: number | null;
@@ -13,6 +15,10 @@ interface PaySlip {
   deductions: number;
   commission_sales: number;
   commission_amount: number;
+  sales_order_count: number;
+  sales_per_hour: number;
+  total_labor_cost: number;
+  labor_cost_percent_of_sales: number;
   gross_pay: number;
   cpf_employee: number;
   cpf_employer: number;
@@ -32,13 +38,6 @@ interface PayrollRun {
   payslips: PaySlip[];
 }
 
-interface UserMe {
-  id: string;
-  full_name: string;
-  email: string;
-  store_roles: { store_id: string; role: string }[];
-}
-
 interface EmployeeProfile {
   hourly_rate: number | null;
   commission_rate: number | null;
@@ -55,26 +54,34 @@ function periodLabel(start: string, end: string) {
 }
 
 export default function PayPage() {
+  const { profile: userProfile, selectedStore, loading: authLoading } = useAuth();
   const [payslips, setPayslips] = useState<(PaySlip & { period_start: string; period_end: string; run_status: string })[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [expandedId, setExpandedId] = useState<string | null>(null);
-  const [profile, setProfile] = useState<EmployeeProfile | null>(null);
+  const [employeeProfile, setEmployeeProfile] = useState<EmployeeProfile | null>(null);
 
   useEffect(() => {
+    if (authLoading) return;
+
+    if (!userProfile?.id || !selectedStore?.id) {
+      setPayslips([]);
+      setEmployeeProfile(null);
+      setError("No assigned store selected");
+      setLoading(false);
+      return;
+    }
+
+    setLoading(true);
+    setError(null);
     (async () => {
       try {
-        const me = await api.get<{ data: UserMe }>("/users/me");
-        const userId = me.data.id;
-        const storeId = me.data.store_roles?.[0]?.store_id;
-        if (!storeId) { setError("No store assigned"); setLoading(false); return; }
-
         const [runsRes, profileRes] = await Promise.allSettled([
-          api.get<{ data: PayrollRun[] }>(`/stores/${storeId}/payroll`),
-          api.get<{ data: EmployeeProfile }>(`/employees/${userId}/profile`),
+          api.get<{ data: PayrollRun[] }>(`/stores/${selectedStore.id}/payroll`),
+          api.get<{ data: EmployeeProfile }>(`/employees/${userProfile.id}/profile`),
         ]);
 
-        if (profileRes.status === "fulfilled") setProfile(profileRes.value.data);
+        if (profileRes.status === "fulfilled") setEmployeeProfile(profileRes.value.data);
 
         if (runsRes.status === "fulfilled") {
           const runs = runsRes.value.data;
@@ -82,7 +89,7 @@ export default function PayPage() {
             .filter((r) => r.status === "approved" || r.status === "calculated")
             .flatMap((r) =>
               (r.payslips || [])
-                .filter((s) => s.user_id === userId)
+                .filter((s) => s.user_id === userProfile.id)
                 .map((s) => ({ ...s, period_start: r.period_start, period_end: r.period_end, run_status: r.status }))
             )
             .sort((a, b) => b.period_end.localeCompare(a.period_end));
@@ -94,9 +101,9 @@ export default function PayPage() {
         setLoading(false);
       }
     })();
-  }, []);
+  }, [authLoading, userProfile?.id, selectedStore?.id]);
 
-  if (loading) return <div className="flex items-center justify-center py-20 text-gray-400">Loading payslips…</div>;
+  if (authLoading || loading) return <div className="flex items-center justify-center py-20 text-gray-400">Loading payslips…</div>;
   if (error) return <div className="rounded-lg bg-red-50 p-4 text-sm text-red-600">{error}</div>;
 
   return (
@@ -136,23 +143,51 @@ export default function PayPage() {
                   <div className="border-t border-gray-100 bg-gray-50 px-4 py-4 space-y-3">
                     <Section title="Base Pay">
                       <Row label={`Hours worked${s.hours_worked != null ? ` (${s.hours_worked.toFixed(1)}h)` : ""}`}
-                           detail={profile?.hourly_rate ? `× $${profile.hourly_rate.toFixed(2)}/hr` : "Salaried"}
+                           detail={employeeProfile?.hourly_rate ? `× $${employeeProfile.hourly_rate.toFixed(2)}/hr` : "Salaried"}
                            amount={s.basic_salary} />
                     </Section>
                     {(s.overtime_hours > 0 || s.overtime_pay > 0) && (
                       <Section title="Overtime">
                         <Row label={`OT hours (${s.overtime_hours.toFixed(1)}h)`}
-                             detail={profile?.hourly_rate ? `× $${(profile.hourly_rate * 1.5).toFixed(2)}/hr` : ""}
+                             detail={employeeProfile?.hourly_rate ? `× $${(employeeProfile.hourly_rate * 1.5).toFixed(2)}/hr` : ""}
                              amount={s.overtime_pay} />
                       </Section>
                     )}
                     {s.commission_amount > 0 && (
                       <Section title="Commission">
                         <Row label={`Sales total: ${fmt(s.commission_sales)}`}
-                             detail={profile?.commission_rate ? `${profile.commission_rate}%` : "Tiered"}
+                             detail={employeeProfile?.commission_rate ? `${employeeProfile.commission_rate}%` : "Tiered"}
                              amount={s.commission_amount} />
+                        <Row
+                          label={`Orders attributed: ${s.sales_order_count}`}
+                          detail={s.hours_worked ? `${fmt(s.sales_per_hour)}/hr` : "No approved hours recorded"}
+                          amount={s.sales_per_hour}
+                          muted
+                        />
                       </Section>
                     )}
+                    <Section title="Store Linkage">
+                      <Row
+                        label="Productivity"
+                        detail={
+                          s.hours_worked
+                            ? `${s.hours_worked.toFixed(1)}h approved in this store`
+                            : "No approved timesheet hours in this store"
+                        }
+                        amount={s.sales_per_hour}
+                        muted
+                      />
+                      <Row
+                        label="Labor cost to store"
+                        detail={
+                          s.commission_sales > 0
+                            ? `${s.labor_cost_percent_of_sales.toFixed(1)}% of your store-linked sales`
+                            : "No store-linked sales in this run"
+                        }
+                        amount={s.total_labor_cost}
+                        muted
+                      />
+                    </Section>
                     <Section title="CPF Contributions">
                       <Row label="Employee (deducted)" amount={-s.cpf_employee} negative />
                       <Row label="Employer (additional)" detail="Not deducted from pay" amount={s.cpf_employer} muted />

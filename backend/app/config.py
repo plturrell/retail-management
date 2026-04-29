@@ -6,25 +6,41 @@ from typing import List
 class Settings(BaseSettings):
     GCP_PROJECT_ID: str = ""
     GCP_LOCATION: str = "global"
-    DATABASE_URL: str = ""
+    DATABASE_URL: str = ""  # Legacy — kept for migration tooling
+
+    # TiDB Cloud (MySQL-compatible) — used for the inventory ledger and any
+    # other relational/analytical workloads. Format examples:
+    #   mysql+asyncmy://user:pass@host:4000/db?ssl=true
+    #   sqlite+aiosqlite:///./local.sqlite   (for local dev only)
+    # Leave empty in environments that do not yet need the TiDB layer; routes
+    # gated on it will return 503 / no-op gracefully.
+    TIDB_DATABASE_URL: str = ""
+
+    # Optional CA bundle path for TLS to TiDB Cloud. The python:3.14-slim base
+    # image ships system roots at /etc/ssl/certs/ca-certificates.crt; on macOS
+    # dev machines you may need to set this explicitly.
+    TIDB_SSL_CA: str = ""
     FIREBASE_PROJECT_ID: str = ""
-    CORS_ORIGINS: List[str] = ["http://localhost:3000", "http://localhost:5173", "https://project-b41c0c0d-6eea-4e9d-a78.web.app"]
+    FIRESTORE_EMULATOR_HOST: str = ""
+    CORS_ORIGINS: List[str] = ["http://localhost:3000", "http://localhost:5173", "https://victoriaensoapp.web.app"]
     ENVIRONMENT: str = "development"
     GOOGLE_APPLICATION_CREDENTIALS: str = ""
     GEMINI_API_KEY: str = ""
     GEMINI_USE_VERTEX_AI: bool = True
+    DEEPSEEK_API_KEY: str = ""
     VERTEX_AI_LOCATION: str = "global"
     DOCUMENT_AI_LOCATION: str = "us"
     DOCUMENT_AI_PROCESSOR_ID: str = ""
     DOCUMENT_AI_PROCESSOR_VERSION: str = ""
 
     # AI configuration
-    AI_GCS_BUCKET: str = "retailsg-ai-artifacts"
+    AI_GCS_BUCKET: str = "victoriaensoapp-ai-artifacts"
     AI_SYNC_TIMEOUT_SECONDS: int = 15
     AI_ASYNC_TIMEOUT_SECONDS: int = 120
 
     # Multica Configuration
     MULTICA_ENDPOINT_URL: str = ""
+    OPENCLAW_WEBHOOK_URL: str = ""
 
     # Snowflake configuration
     SNOWFLAKE_ACCOUNT: str = ""         # e.g. "xy12345.ap-southeast-1"
@@ -41,8 +57,6 @@ class Settings(BaseSettings):
     @model_validator(mode="after")
     def validate_production_config(self) -> "Settings":
         if self.ENVIRONMENT == "production":
-            if not self.DATABASE_URL:
-                raise ValueError("DATABASE_URL must be set in production")
             if not self.GCP_PROJECT_ID:
                 raise ValueError("GCP_PROJECT_ID must be set in production")
             if not self.FIREBASE_PROJECT_ID:

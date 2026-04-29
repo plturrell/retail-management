@@ -21,6 +21,11 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 
+private fun emailToUsername(value: String?): String {
+    if (value.isNullOrBlank()) return "–"
+    return value.substringBefore("@")
+}
+
 class ProfileViewModel : ViewModel() {
     private val _user = MutableStateFlow<UserRead?>(null)
     val user = _user.asStateFlow()
@@ -66,7 +71,7 @@ fun ProfileScreen(userId: String, onLogout: () -> Unit, vm: ProfileViewModel = v
                         Spacer(Modifier.width(12.dp))
                         Column {
                             Text(user?.fullName ?: "–", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
-                            Text(user?.email ?: "–", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            Text(emailToUsername(user?.email), style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
                         }
                     }
                     if (user?.phone != null) {

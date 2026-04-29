@@ -5,6 +5,15 @@
 
 import Foundation
 
+private extension Data {
+    /// Convenience for building multipart bodies.
+    mutating func append(_ string: String) {
+        if let data = string.data(using: .utf8) {
+            append(data)
+        }
+    }
+}
+
 enum NetworkError: LocalizedError {
     case invalidURL
     case invalidResponse
@@ -54,7 +63,7 @@ actor NetworkService {
         #if DEBUG
         return "http://localhost:8000"
         #else
-        return "https://retailsg-api-561509133799.asia-southeast1.run.app"
+        return "https://retailsg-api-568773738080.asia-southeast1.run.app"
         #endif
     }
 
@@ -62,15 +71,21 @@ actor NetworkService {
     private let session: URLSession
     private let decoder: JSONDecoder
     private let encoder: JSONEncoder
+    private let authTokenProvider: @Sendable () async throws -> String?
 
     /// Called when a 401 is received so the app can sign the user out.
     var onUnauthorized: (@Sendable () -> Void)?
 
     /// Base URL defaults to localhost for development.
     /// For production, set the RETAILSG_API_URL in a Config.plist or xcconfig.
-    private init(baseURL: String? = nil) {
+    init(
+        baseURL: String? = nil,
+        session: URLSession = .shared,
+        authTokenProvider: (@Sendable () async throws -> String?)? = nil
+    ) {
         self.baseURL = baseURL ?? Self.resolvedBaseURL
-        self.session = URLSession.shared
+        self.session = session
+        self.authTokenProvider = authTokenProvider ?? { try await AuthService.shared.getIdToken() }
 
         self.decoder = JSONDecoder()
         decoder.keyDecodingStrategy = .convertFromSnakeCase
@@ -114,6 +129,55 @@ actor NetworkService {
         return try await execute(request)
     }
 
+    /// Upload a single file as `multipart/form-data` and decode the JSON response.
+    /// - Parameters:
+    ///   - endpoint: API path appended to `baseURL`.
+    ///   - fileURL: Local file URL provided by the user (e.g. via `.fileImporter`
+    ///     or a drag-and-drop). The file's bytes are read into memory; use the
+    ///     existing JSON `post(...)` for non-file payloads.
+    ///   - fieldName: Multipart form field name. The backend's CSV import uses `file`.
+    ///   - mimeType: Defaults to `text/csv`. Override for other formats.
+    func upload<T: Decodable>(
+        endpoint: String,
+        fileURL: URL,
+        fieldName: String = "file",
+        mimeType: String = "text/csv"
+    ) async throws -> T {
+        // Sandboxed Mac apps need to begin/end a security-scoped resource access
+        // around files supplied via .fileImporter / drag-and-drop.
+        let needsScope = fileURL.startAccessingSecurityScopedResource()
+        defer {
+            if needsScope { fileURL.stopAccessingSecurityScopedResource() }
+        }
+
+        let fileData: Data
+        do {
+            fileData = try Data(contentsOf: fileURL)
+        } catch {
+            throw NetworkError.unknown(error)
+        }
+
+        let boundary = "Boundary-\(UUID().uuidString)"
+        var request = try await buildRequest(endpoint: endpoint, method: "POST")
+        request.setValue(
+            "multipart/form-data; boundary=\(boundary)",
+            forHTTPHeaderField: "Content-Type"
+        )
+
+        let filename = fileURL.lastPathComponent
+        var body = Data()
+        body.append("--\(boundary)\r\n")
+        body.append(
+            "Content-Disposition: form-data; name=\"\(fieldName)\"; filename=\"\(filename)\"\r\n"
+        )
+        body.append("Content-Type: \(mimeType)\r\n\r\n")
+        body.append(fileData)
+        body.append("\r\n--\(boundary)--\r\n")
+        request.httpBody = body
+
+        return try await execute(request)
+    }
+
     func deleteNoContent(endpoint: String) async throws {
         let request = try await buildRequest(endpoint: endpoint, method: "DELETE")
         let (_, response) = try await session.data(for: request)
@@ -153,7 +217,7 @@ actor NetworkService {
         request.httpMethod = method
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
 
-        if let token = try? await AuthService.shared.getIdToken() {
+        if let token = try? await authTokenProvider() {
             request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
         }
 
