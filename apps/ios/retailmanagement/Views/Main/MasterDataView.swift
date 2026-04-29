@@ -160,7 +160,6 @@ struct MasterDataView: View {
             return
         }
         
-        var components = URLComponents(string: "http://localhost:8000/api/pos-labelling/print")!
         var queryItems: [URLQueryItem] = []
         
         for row in toPrint {
@@ -169,14 +168,19 @@ struct MasterDataView: View {
             queryItems.append(URLQueryItem(name: "prices", value: priceStr))
             queryItems.append(URLQueryItem(name: "names", value: row.product.description ?? ""))
         }
-        components.queryItems = queryItems
         
-        if let url = components.url {
+        do {
+            let url = try NetworkService.shared.url(
+                endpoint: "/api/pos-labelling/print",
+                queryItems: queryItems
+            )
             #if os(iOS)
             UIApplication.shared.open(url)
             #elseif os(macOS)
             NSWorkspace.shared.open(url)
             #endif
+        } catch {
+            commitAlert = "Could not build the POS label print URL."
         }
     }
 

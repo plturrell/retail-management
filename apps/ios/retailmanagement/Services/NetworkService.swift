@@ -55,16 +55,12 @@ enum NetworkError: LocalizedError {
 actor NetworkService {
     static let shared = NetworkService()
 
-    /// Resolves the API base URL from Info.plist or defaults to localhost.
+    /// Resolves the API base URL from Info.plist or defaults to Cloud Run.
     private static var resolvedBaseURL: String {
         if let url = Bundle.main.infoDictionary?["RETAILSG_API_URL"] as? String, !url.isEmpty {
             return url
         }
-        #if DEBUG
-        return "http://localhost:8000"
-        #else
-        return "https://retailsg-api-568773738080.asia-southeast1.run.app"
-        #endif
+        return "https://retailsg-api-gih5bcqjoa-as.a.run.app"
     }
 
     private let baseURL: String
@@ -76,7 +72,7 @@ actor NetworkService {
     /// Called when a 401 is received so the app can sign the user out.
     var onUnauthorized: (@Sendable () -> Void)?
 
-    /// Base URL defaults to localhost for development.
+    /// Base URL defaults to the shared Cloud Run backend.
     /// For production, set the RETAILSG_API_URL in a Config.plist or xcconfig.
     init(
         baseURL: String? = nil,
@@ -95,6 +91,19 @@ actor NetworkService {
     }
 
     // MARK: - Public API
+
+    nonisolated func url(endpoint: String, queryItems: [URLQueryItem] = []) throws -> URL {
+        guard var components = URLComponents(string: baseURL + endpoint) else {
+            throw NetworkError.invalidURL
+        }
+        if !queryItems.isEmpty {
+            components.queryItems = (components.queryItems ?? []) + queryItems
+        }
+        guard let built = components.url else {
+            throw NetworkError.invalidURL
+        }
+        return built
+    }
 
     func get<T: Decodable>(endpoint: String) async throws -> T {
         let request = try await buildRequest(endpoint: endpoint, method: "GET")

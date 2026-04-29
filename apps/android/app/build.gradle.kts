@@ -8,7 +8,7 @@ android {
     namespace = "com.retailmanagement"
     compileSdk = 34
     val apiUrl = (project.findProperty("RETAILSG_API_URL") as? String)
-        ?: "https://retailsg-api-568773738080.asia-southeast1.run.app/"
+        ?: "https://retailsg-api-gih5bcqjoa-as.a.run.app/"
 
     defaultConfig {
         applicationId = "com.retailmanagement"
