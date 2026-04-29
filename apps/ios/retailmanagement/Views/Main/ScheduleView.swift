@@ -78,7 +78,7 @@ struct ScheduleView: View {
         List {
             ForEach(viewModel.shiftsByDate, id: \.date) { dayGroup in
                 Section {
-                    ForEach(dayGroup.shifts) { shift in
+                    ForEach(dayGroup.shifts, id: \.id) { shift in
                         shiftRow(shift)
                     }
                 } header: {

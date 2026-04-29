@@ -5,18 +5,21 @@ from sqlalchemy.orm import DeclarativeBase, sessionmaker, Session
 
 from app.config import settings
 
-engine = create_async_engine(
-    settings.DATABASE_URL,
-    echo=settings.ENVIRONMENT == "development",
-    pool_size=20,
-    max_overflow=10,
-)
+engine = None
+async_session_factory = None
 
-async_session_factory = async_sessionmaker(
-    engine,
-    class_=AsyncSession,
-    expire_on_commit=False,
-)
+if settings.DATABASE_URL:
+    engine = create_async_engine(
+        settings.DATABASE_URL,
+        echo=settings.ENVIRONMENT == "development",
+        pool_size=20,
+        max_overflow=10,
+    )
+    async_session_factory = async_sessionmaker(
+        engine,
+        class_=AsyncSession,
+        expire_on_commit=False,
+    )
 
 
 class Base(DeclarativeBase):
@@ -24,6 +27,8 @@ class Base(DeclarativeBase):
 
 
 async def get_db() -> AsyncSession:
+    if async_session_factory is None:
+        raise RuntimeError("DATABASE_URL is not configured")
     async with async_session_factory() as session:
         try:
             yield session
