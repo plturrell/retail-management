@@ -63,6 +63,7 @@ from app.routers import (
     users,
     pricing_engine,
     payroll,
+    pos_labelling,
     stock_checks,
     data_quality,
 )
@@ -122,3 +123,4 @@ app.include_router(finance.router)
 app.include_router(reports.router)
 app.include_router(stock_checks.router)
 app.include_router(data_quality.router)
+app.include_router(pos_labelling.router)
