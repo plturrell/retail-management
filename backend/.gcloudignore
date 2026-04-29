@@ -18,4 +18,3 @@ docs/
 .vscode/
 *.md
 docker-compose*.yml
-cloudbuild.yaml

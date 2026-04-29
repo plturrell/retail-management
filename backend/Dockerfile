@@ -1,7 +1,7 @@
 # API image — build with context set to this directory:
 #   docker compose build api   (from backend/)
 #   gcloud builds submit --config=cloudbuild.yaml .   (from backend/)
-FROM python:3.14-slim
+FROM python:3.12-slim
 
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1

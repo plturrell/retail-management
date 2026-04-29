@@ -5,9 +5,6 @@
 #   cd backend && gcloud builds submit --config=cloudbuild.yaml .
 #
 # Prerequisites:
-#   - Cloud SQL instance "retailsg" exists
-#   - Secret "retailsg-db-url" stored in Secret Manager
-#   - Secret "retailsg-ai-gcs-bucket" stored in Secret Manager
 #   - Artifact Registry repo "retailsg" exists
 #   - Service account retailsg-api@ has roles/firebase.admin (uses ADC, no key needed)
 
@@ -21,7 +18,7 @@ steps:
     args:
       - "build"
       - "-t"
-      - "${_REGION}-docker.pkg.dev/${PROJECT_ID}/retailsg/${_SERVICE_NAME}:${SHORT_SHA}"
+      - "${_REGION}-docker.pkg.dev/${PROJECT_ID}/retailsg/${_SERVICE_NAME}:${BUILD_ID}"
       - "-t"
       - "${_REGION}-docker.pkg.dev/${PROJECT_ID}/retailsg/${_SERVICE_NAME}:latest"
       - "."
@@ -39,7 +36,7 @@ steps:
       - "run"
       - "deploy"
       - "${_SERVICE_NAME}"
-      - "--image=${_REGION}-docker.pkg.dev/${PROJECT_ID}/retailsg/${_SERVICE_NAME}:${SHORT_SHA}"
+      - "--image=${_REGION}-docker.pkg.dev/${PROJECT_ID}/retailsg/${_SERVICE_NAME}:${BUILD_ID}"
       - "--region=${_REGION}"
       - "--platform=managed"
       # TODO: Replace with --no-allow-unauthenticated + API Gateway/Load Balancer
@@ -51,25 +48,15 @@ steps:
       - "--cpu=1"
       - "--min-instances=0"
       - "--max-instances=10"
-      - "--add-cloudsql-instances=${PROJECT_ID}:${_REGION}:retailsg"
       - "--set-env-vars=ENVIRONMENT=production"
       - "--set-env-vars=GCP_PROJECT_ID=${PROJECT_ID}"
       - "--set-env-vars=FIREBASE_PROJECT_ID=${PROJECT_ID}"
-      - "--set-env-vars=CORS_ORIGINS=[\"http://localhost:5173\",\"https://${PROJECT_ID}.web.app\",\"https://${PROJECT_ID}.firebaseapp.com\"]"
-      - "--set-secrets=DATABASE_URL=retailsg-db-url:latest"
-      - "--set-secrets=SNOWFLAKE_ACCOUNT=retailsg-snowflake-account:latest"
-      - "--set-secrets=SNOWFLAKE_USER=retailsg-snowflake-user:latest"
-      - "--set-secrets=SNOWFLAKE_PASSWORD=retailsg-snowflake-password:latest"
-      - "--set-secrets=SNOWFLAKE_DATABASE=retailsg-snowflake-database:latest"
-      - "--set-secrets=SNOWFLAKE_SCHEMA=retailsg-snowflake-schema:latest"
-      - "--set-secrets=SNOWFLAKE_WAREHOUSE=retailsg-snowflake-warehouse:latest"
-      - "--set-secrets=SNOWFLAKE_ROLE=retailsg-snowflake-role:latest"
-      - "--set-secrets=SNOWFLAKE_ETL_SCHEMA=retailsg-snowflake-etl-schema:latest"
-      - "--set-secrets=AI_GCS_BUCKET=retailsg-ai-gcs-bucket:latest"
+      - "--set-env-vars=^@^CORS_ORIGINS=[\"http://localhost:5173\",\"https://${PROJECT_ID}.web.app\",\"https://${PROJECT_ID}.firebaseapp.com\"]"
+      - "--set-env-vars=AI_GCS_BUCKET=${PROJECT_ID}-ai-artifacts"
       - "--service-account=retailsg-api@${PROJECT_ID}.iam.gserviceaccount.com"
 
 images:
-  - "${_REGION}-docker.pkg.dev/${PROJECT_ID}/retailsg/${_SERVICE_NAME}:${SHORT_SHA}"
+  - "${_REGION}-docker.pkg.dev/${PROJECT_ID}/retailsg/${_SERVICE_NAME}:${BUILD_ID}"
   - "${_REGION}-docker.pkg.dev/${PROJECT_ID}/retailsg/${_SERVICE_NAME}:latest"
 
 options:
