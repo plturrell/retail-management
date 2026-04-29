@@ -30,8 +30,12 @@ JOB_TYPES = {
     "ocr_receipt",
     "ocr_invoice",
     "ocr_sales_ledger",
-    "embedding_generation",
     "bulk_pricing_review",
+    # NOTE: ``embedding_generation`` was previously listed here but the
+    # underlying provider integration was never built. Re-add it (and a
+    # corresponding handler in ``_execute_job``) once the embedding
+    # service is wired up; until then it is intentionally absent so the
+    # dispatcher rejects scheduling attempts up-front.
 }
 
 # Cloud Tasks queue (production only)
@@ -142,8 +146,6 @@ async def _execute_job(job_type: str, payload: dict) -> dict:
         return await _job_catalog_enrichment(payload)
     elif job_type in ("ocr_receipt", "ocr_invoice", "ocr_sales_ledger"):
         return await _job_ocr(job_type, payload)
-    elif job_type == "embedding_generation":
-        return await _job_embeddings(payload)
     elif job_type == "bulk_pricing_review":
         return await _job_bulk_pricing(payload)
     else:
@@ -188,19 +190,6 @@ async def _job_ocr(job_type: str, payload: dict) -> dict:
         job_type=job_type,
         gcs_uri=gcs_uri,
         payload=input_payload,
-    )
-
-
-async def _job_embeddings(payload: dict) -> dict:
-    """Generate embeddings for product search.
-
-    Not yet implemented. Fail loudly so callers can't mistake a no-op for a
-    successful job — the dispatcher records this as a job failure and surfaces
-    it in the artifact log rather than silently returning a stub payload.
-    """
-    raise NotImplementedError(
-        "embedding_generation pipeline is not implemented yet — "
-        "either wire the embedding provider here or remove this dispatch path"
     )
 
 
