@@ -146,6 +146,92 @@ interface ApiService {
         @Query("page_size") pageSize: Int = 200
     ): PaginatedResponse<Order>
 
+    // ── Supply Chain ──
+
+    @GET("api/stores/{storeId}/supply-chain/suppliers")
+    suspend fun listSuppliers(
+        @Path("storeId") storeId: String,
+        @Query("active_only") activeOnly: Boolean = false
+    ): DataResponse<List<SupplierSummary>>
+
+    @POST("api/stores/{storeId}/supply-chain/suppliers")
+    suspend fun createSupplier(
+        @Path("storeId") storeId: String,
+        @Body body: SupplierBody
+    ): DataResponse<SupplierSummary>
+
+    @PATCH("api/stores/{storeId}/supply-chain/suppliers/{supplierId}")
+    suspend fun updateSupplier(
+        @Path("storeId") storeId: String,
+        @Path("supplierId") supplierId: String,
+        @Body body: SupplierBody
+    ): DataResponse<SupplierSummary>
+
+    @GET("api/stores/{storeId}/supply-chain/purchase-orders")
+    suspend fun listPurchaseOrders(
+        @Path("storeId") storeId: String
+    ): DataResponse<List<PurchaseOrderSummary>>
+
+    @POST("api/stores/{storeId}/supply-chain/purchase-orders")
+    suspend fun createPurchaseOrder(
+        @Path("storeId") storeId: String,
+        @Body body: PurchaseOrderCreateBody
+    ): DataResponse<PurchaseOrderSummary>
+
+    @POST("api/stores/{storeId}/supply-chain/purchase-orders/{poId}/receive")
+    suspend fun receivePurchaseOrder(
+        @Path("storeId") storeId: String,
+        @Path("poId") poId: String,
+        @Body body: Map<String, String>
+    ): DataResponse<Any>
+
+    @GET("api/stores/{storeId}/supply-chain/bom-recipes")
+    suspend fun listBomRecipes(
+        @Path("storeId") storeId: String
+    ): DataResponse<List<BOMRecipeSummary>>
+
+    @POST("api/stores/{storeId}/supply-chain/bom-recipes")
+    suspend fun createBomRecipe(
+        @Path("storeId") storeId: String,
+        @Body body: BOMRecipeCreateBody
+    ): DataResponse<BOMRecipeSummary>
+
+    @GET("api/stores/{storeId}/supply-chain/work-orders")
+    suspend fun listWorkOrders(
+        @Path("storeId") storeId: String
+    ): DataResponse<List<WorkOrderSummary>>
+
+    @POST("api/stores/{storeId}/supply-chain/work-orders")
+    suspend fun createWorkOrder(
+        @Path("storeId") storeId: String,
+        @Body body: WorkOrderCreateBody
+    ): DataResponse<WorkOrderSummary>
+
+    @POST("api/stores/{storeId}/supply-chain/work-orders/{woId}/start")
+    suspend fun startWorkOrder(
+        @Path("storeId") storeId: String,
+        @Path("woId") woId: String,
+        @Body body: Map<String, String>
+    ): DataResponse<WorkOrderSummary>
+
+    @POST("api/stores/{storeId}/supply-chain/work-orders/{woId}/complete")
+    suspend fun completeWorkOrder(
+        @Path("storeId") storeId: String,
+        @Path("woId") woId: String,
+        @Body body: Map<String, String>
+    ): DataResponse<Any>
+
+    @GET("api/stores/{storeId}/supply-chain/transfers")
+    suspend fun listTransfers(
+        @Path("storeId") storeId: String
+    ): DataResponse<List<StockTransferSummary>>
+
+    @POST("api/stores/{storeId}/supply-chain/transfers")
+    suspend fun createTransfer(
+        @Path("storeId") storeId: String,
+        @Body body: StockTransferCreateBody
+    ): DataResponse<StockTransferSummary>
+
     // ── Payroll ──
 
     @GET("api/stores/{storeId}/payroll")
