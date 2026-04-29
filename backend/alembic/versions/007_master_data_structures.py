@@ -1,8 +1,14 @@
 """Add master data structures: customers, suppliers, purchases, marketing, staff HR
 
-Revision ID: 007
+Revision ID: 007b_master_data
 Revises: 006
 Create Date: 2026-04-13
+
+Note: originally numbered ``007`` but collided with ``007_commission_tables``.
+Renamed to ``007b_master_data`` to give Alembic a unique revision id while
+preserving the migration's downgrade target. Resolved together with
+``007_commission_tables`` and the orphan ``0001_create_stock_movements`` in
+the merge migration ``009_merge_heads``.
 """
 from typing import Sequence, Union
 
@@ -10,7 +16,7 @@ from alembic import op
 import sqlalchemy as sa
 from sqlalchemy.dialects import postgresql
 
-revision: str = "007"
+revision: str = "007b_master_data"
 down_revision: Union[str, None] = "006"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
