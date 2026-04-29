@@ -9,12 +9,27 @@
 import SwiftUI
 import UniformTypeIdentifiers
 
+// Mirrors the backend allowlist (settings.MASTER_DATA_PUBLISHER_EMAILS in
+// backend/app/config.py) and the staff-portal PUBLISHER_ALLOWLIST. Server is
+// the source of truth — non-allowlisted users get 403 from /publish_price
+// even if this client copy somehow drifts.
+private let masterDataPublisherAllowlist: Set<String> = [
+    "craig@victoriaenso.com",
+    "irina@victoriaenso.com",
+]
+
 struct MasterDataView: View {
     let canEdit: Bool
+    @Environment(AuthViewModel.self) private var authViewModel
     @State private var vm = MasterDataViewModel()
     @State private var showFilePicker = false
     @State private var commitAlert: String?
     @State private var recommendationAlert: String?
+
+    private var canPublishPrice: Bool {
+        guard canEdit, let email = authViewModel.currentUser?.email else { return false }
+        return masterDataPublisherAllowlist.contains(email.lowercased())
+    }
 
     var body: some View {
         NavigationStack {
@@ -335,7 +350,7 @@ struct MasterDataView: View {
                     ProductRowCard(
                         row: row,
                         onPriceChange: { newValue in
-                            vm.updateRow(row.id) { $0.draftPrice = newValue; $0.save = .idle }
+                            vm.updateRow(row.id) { $0.draftPrice = newValue; $0.save = .idle; $0.publish = .idle }
                         },
                         onNotesChange: { newValue in
                             vm.updateRow(row.id) { $0.draftNotes = newValue; $0.save = .idle }
@@ -344,7 +359,9 @@ struct MasterDataView: View {
                             vm.updateRow(row.id) { $0.saleReady = newValue; $0.save = .idle }
                         },
                         onCommit: { Task { if canEdit { await vm.saveRow(id: row.id) } } },
-                        canEdit: canEdit
+                        onPublish: { Task { if canPublishPrice { await vm.publishRow(id: row.id) } } },
+                        canEdit: canEdit,
+                        canPublishPrice: canPublishPrice
                     )
                     Divider()
                 }
@@ -428,7 +445,9 @@ private struct ProductRowCard: View {
     let onNotesChange: (String) -> Void
     let onSaleReadyChange: (Bool) -> Void
     let onCommit: () -> Void
+    let onPublish: () -> Void
     let canEdit: Bool
+    let canPublishPrice: Bool
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -497,9 +516,60 @@ private struct ProductRowCard: View {
             ), onCommit: { onCommit() })
             .textFieldStyle(.roundedBorder)
             .disabled(!canEdit)
+
+            if canEdit, row.product.necPlu != nil {
+                HStack(spacing: 8) {
+                    publishControl
+                    publishStatusLabel
+                    Spacer()
+                }
+            }
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 10)
+    }
+
+    @ViewBuilder
+    private var publishControl: some View {
+        if canPublishPrice {
+            Button(action: onPublish) {
+                if row.publish == .publishing {
+                    HStack(spacing: 4) { ProgressView().controlSize(.mini); Text("Publishing…") }
+                } else {
+                    Text(row.publish == .published ? "Update POS" : "Publish to POS")
+                }
+            }
+            .buttonStyle(.borderedProminent)
+            .tint(row.publish == .published ? .gray : .orange)
+            .controlSize(.small)
+            .disabled(
+                row.publish == .publishing ||
+                Double(row.draftPrice) == nil ||
+                (Double(row.draftPrice) ?? 0) <= 0
+            )
+        } else {
+            Text("Owner-restricted")
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+                .help("Restricted to the named owner accounts (Craig, Irina).")
+        }
+    }
+
+    @ViewBuilder
+    private var publishStatusLabel: some View {
+        switch row.publish {
+        case .idle, .publishing:
+            EmptyView()
+        case .published:
+            Label("Live", systemImage: "checkmark.seal.fill")
+                .font(.caption2)
+                .foregroundStyle(.green)
+        case .error(let msg):
+            Label(msg, systemImage: "xmark.octagon.fill")
+                .font(.caption2)
+                .foregroundStyle(.red)
+                .lineLimit(1)
+        }
     }
 
     private var priceField: some View {

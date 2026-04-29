@@ -53,7 +53,7 @@ struct VendorReviewTabView: View {
             }
             .navigationTitle("Vendor Review")
             .task {
-                await vm.loadMockData()
+                await vm.loadOrder()
             }
         }
     }

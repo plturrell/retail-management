@@ -35,6 +35,7 @@ export interface ProductRow {
 export interface PosStatusEntry {
   in_plus: boolean;
   has_current_price: boolean;
+  active_price_id?: string | null;
 }
 
 export interface PosStatusResponse {
@@ -152,6 +153,14 @@ export interface PriceRecommendationsResponse {
 export interface PublishPriceRequest {
   retail_price: number;
   store_code?: string;
+  currency?: string;
+  tax_code?: string;
+  /**
+   * Concurrency guard. Pass the price_id the row was loaded with (or "" if
+   * the SKU had no active price). The server returns 409 if someone else
+   * has published a different price since.
+   */
+  expected_active_price_id?: string;
 }
 
 export interface PublishPriceResult {
@@ -162,11 +171,48 @@ export interface PublishPriceResult {
   plu_id: string;
   price_id: string;
   retail_price: number;
+  currency?: string;
+  tax_code?: string;
   valid_from: string;
   valid_to: string;
   superseded_price_ids: string[];
   store_id: string;
   product: ProductRow;
+  audit?: { actor_email?: string | null; actor_user_id?: string | null };
+}
+
+/**
+ * Hand-entered SKU — companion to invoice OCR ingest for one-off products.
+ * If retail_price is supplied the server will create the SKU *and* publish
+ * the price to Firestore in a single round-trip.
+ */
+export interface CreateProductRequest {
+  description: string;
+  long_description?: string | null;
+  product_type: string;
+  material: string;
+  size?: string | null;
+  supplier_id?: string;
+  supplier_name?: string | null;
+  internal_code?: string | null;
+  cost_price?: number | null;
+  cost_currency?: string | null;
+  qty_on_hand?: number | null;
+  sku_code?: string | null;
+  nec_plu?: string | null;
+  sourcing_strategy?: string;
+  inventory_type?: string;
+  notes?: string | null;
+  retail_price?: number | null;
+  store_code?: string;
+  currency?: string;
+  tax_code?: string;
+}
+
+export interface CreateProductResult {
+  ok: boolean;
+  product: ProductRow;
+  publish_result: PublishPriceResult | null;
 }
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
@@ -261,6 +307,11 @@ export const masterDataApi = {
     }),
   publishPrice: (sku: string, req: PublishPriceRequest) =>
     request<PublishPriceResult>(`/products/${encodeURIComponent(sku)}/publish_price`, {
+      method: "POST",
+      body: JSON.stringify(req),
+    }),
+  createProduct: (req: CreateProductRequest) =>
+    request<CreateProductResult>(`/products`, {
       method: "POST",
       body: JSON.stringify(req),
     }),

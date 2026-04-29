@@ -38,6 +38,16 @@ class Settings(BaseSettings):
     AI_SYNC_TIMEOUT_SECONDS: int = 15
     AI_ASYNC_TIMEOUT_SECONDS: int = 120
 
+    # Identity allowlist for the master-data "Publish to POS" action. The two
+    # named owners (Craig and Irina) are the only people who should be able to
+    # write a price into Firestore directly from the Master Data page.
+    # Override in prod with the JSON-array form, e.g.
+    #   MASTER_DATA_PUBLISHER_EMAILS='["craig@victoriaenso.com","irina@victoriaenso.com","new@..."]'
+    MASTER_DATA_PUBLISHER_EMAILS: List[str] = [
+        "craig@victoriaenso.com",
+        "irina@victoriaenso.com",
+    ]
+
     # Multica Configuration
     MULTICA_ENDPOINT_URL: str = ""
     OPENCLAW_WEBHOOK_URL: str = ""

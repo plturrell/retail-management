@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   masterDataApi,
+  type CreateProductRequest,
   type ExportResult,
   type IngestPreview,
   type LabelsExportResult,
@@ -48,8 +49,24 @@ function suggestedRetail(cost: number | null | undefined): string {
   return (Math.round(cost * 3 / 5) * 5).toFixed(0);
 }
 
+// Mirrors the backend allowlist (settings.MASTER_DATA_PUBLISHER_EMAILS in
+// backend/app/config.py). UI-only convenience: the server is the source of
+// truth — non-allowlisted owners get a 403 from /publish_price even if they
+// somehow manage to call it. Override locally with VITE_MASTER_DATA_PUBLISHERS
+// (comma-separated emails).
+const PUBLISHER_ALLOWLIST: ReadonlySet<string> = new Set(
+  (import.meta.env.VITE_MASTER_DATA_PUBLISHERS || "craig@victoriaenso.com,irina@victoriaenso.com")
+    .split(",")
+    .map((s: string) => s.trim().toLowerCase())
+    .filter(Boolean),
+);
+
 export default function MasterDataPage() {
-  const { isOwner } = useAuth();
+  const { isOwner, user } = useAuth();
+  const canPublishPrice =
+    isOwner &&
+    Boolean(user?.email) &&
+    PUBLISHER_ALLOWLIST.has((user!.email as string).toLowerCase());
   const [stats, setStats] = useState<Stats | null>(null);
   const [rows, setRows] = useState<RowState[]>([]);
   const [loading, setLoading] = useState(true);
@@ -77,6 +94,12 @@ export default function MasterDataPage() {
     | { kind: "loading" }
     | { kind: "preview"; response: PriceRecommendationsResponse; accepted: Set<string>; overrides: Record<string, string> }
     | { kind: "applying"; total: number; done: number }
+    | { kind: "error"; message: string }
+  >({ kind: "idle" });
+  const [createState, setCreateState] = useState<
+    | { kind: "idle" }
+    | { kind: "open" }
+    | { kind: "submitting" }
     | { kind: "error"; message: string }
   >({ kind: "idle" });
   const fileInputRef = useRef<HTMLInputElement | null>(null);
@@ -207,7 +230,7 @@ export default function MasterDataPage() {
   };
 
   const publishRow = async (sku: string) => {
-    if (!isOwner) return;
+    if (!canPublishPrice) return;
     const row = rows.find((r) => r.product.sku_code === sku);
     if (!row) return;
     const priceNum = Number.parseFloat(row.draftPrice);
@@ -220,8 +243,16 @@ export default function MasterDataPage() {
       return;
     }
     updateRow(sku, (r) => ({ ...r, publish: "publishing", publishError: undefined }));
+    // Optimistic-lock: tell the server which price doc was active when the
+    // user loaded the row. Server returns 409 if someone else has published
+    // in the meantime — at which point we refresh and let the user retry.
+    const plu = row.product.nec_plu ? String(row.product.nec_plu) : null;
+    const expected = plu ? posStatus?.plus[plu]?.active_price_id ?? "" : "";
     try {
-      const result = await masterDataApi.publishPrice(sku, { retail_price: priceNum });
+      const result = await masterDataApi.publishPrice(sku, {
+        retail_price: priceNum,
+        expected_active_price_id: expected,
+      });
       updateRow(sku, (r) => ({
         ...r,
         product: result.product,
@@ -232,7 +263,16 @@ export default function MasterDataPage() {
       const refreshed = await masterDataApi.posStatus().catch(() => null);
       if (refreshed) setPosStatus(refreshed);
     } catch (e) {
-      updateRow(sku, (r) => ({ ...r, publish: "error", publishError: (e as Error).message }));
+      const msg = (e as Error).message;
+      const friendly = msg.includes("409")
+        ? "Another publish landed first — refresh and retry."
+        : msg;
+      updateRow(sku, (r) => ({ ...r, publish: "error", publishError: friendly }));
+      // On conflict, refresh POS status so the next attempt has the new id.
+      if (msg.includes("409")) {
+        const refreshed = await masterDataApi.posStatus().catch(() => null);
+        if (refreshed) setPosStatus(refreshed);
+      }
     }
   };
 
@@ -399,6 +439,25 @@ export default function MasterDataPage() {
 
   const cancelAi = () => setAiState({ kind: "idle" });
 
+  const submitCreate = async (req: CreateProductRequest) => {
+    if (!isOwner) return;
+    setCreateState({ kind: "submitting" });
+    try {
+      const result = await masterDataApi.createProduct(req);
+      setCreateState({ kind: "idle" });
+      await loadAll();
+      const newSku = result.product.sku_code;
+      const published = result.publish_result?.ok;
+      alert(
+        published
+          ? `Added ${newSku} and published S$${result.publish_result?.retail_price.toFixed(2)} to POS.`
+          : `Added ${newSku}. Set a price and click Publish to POS to make it sellable.`,
+      );
+    } catch (err) {
+      setCreateState({ kind: "error", message: (err as Error).message });
+    }
+  };
+
   const toggleSelected = (sku: string) => {
     setSelected((prev) => {
       const next = new Set(prev);
@@ -518,6 +577,13 @@ export default function MasterDataPage() {
                 onChange={onInvoiceFile}
                 className="hidden"
               />
+              <button
+                onClick={() => setCreateState({ kind: "open" })}
+                className="rounded-md border border-emerald-300 bg-emerald-50 px-4 py-2 text-sm font-semibold text-emerald-800 shadow-sm hover:bg-emerald-100"
+                title="Hand-enter a one-off product without a supplier invoice"
+              >
+                + Add SKU manually
+              </button>
               <button
                 onClick={onPickInvoice}
                 disabled={ingestState.kind === "uploading" || ingestState.kind === "committing"}
@@ -784,7 +850,7 @@ export default function MasterDataPage() {
                           {r.save === "error" && <span className="text-red-600" title={r.error}>Error</span>}
                           {r.save === "idle" && p.retail_price && <span className="text-gray-400">—</span>}
                         </div>
-                        {isOwner && p.nec_plu && (
+                        {canPublishPrice && p.nec_plu && (
                           <button
                             onClick={() => void publishRow(p.sku_code)}
                             disabled={
@@ -809,6 +875,14 @@ export default function MasterDataPage() {
                                 ? "Update POS"
                                 : "Publish to POS"}
                           </button>
+                        )}
+                        {!canPublishPrice && isOwner && p.nec_plu && (
+                          <span
+                            className="text-[11px] text-gray-400"
+                            title="Restricted to the named owner accounts (Craig, Irina)."
+                          >
+                            Owner-restricted
+                          </span>
                         )}
                         {r.publish === "published" && (
                           <span className="text-green-600">Live ✓</span>
@@ -965,7 +1039,316 @@ export default function MasterDataPage() {
           onApply={applyAiPrices}
         />
       )}
+
+      {isOwner && (createState.kind === "open" || createState.kind === "submitting" || createState.kind === "error") && (
+        <CreateProductModal
+          submitting={createState.kind === "submitting"}
+          errorMessage={createState.kind === "error" ? createState.message : null}
+          onCancel={() => setCreateState({ kind: "idle" })}
+          onSubmit={submitCreate}
+        />
+      )}
     </div>
+  );
+}
+
+const PRODUCT_TYPE_OPTIONS = [
+  "Bookend",
+  "Napkin Holder",
+  "Decorative Object",
+  "Sculpture",
+  "Figurine",
+  "Vase",
+  "Bowl",
+  "Tray",
+  "Box",
+  "Bracelet",
+  "Necklace",
+  "Ring",
+  "Pendant",
+  "Earring",
+  "Charm",
+];
+
+const MATERIAL_OPTIONS = [
+  "Crystal",
+  "Malachite",
+  "Fluorite",
+  "Marble",
+  "Gypsum",
+  "Mineral Stone",
+  "Mixed Materials",
+];
+
+function CreateProductModal({
+  submitting,
+  errorMessage,
+  onCancel,
+  onSubmit,
+}: {
+  submitting: boolean;
+  errorMessage: string | null;
+  onCancel: () => void;
+  onSubmit: (req: CreateProductRequest) => void;
+}) {
+  const [form, setForm] = useState({
+    description: "",
+    product_type: PRODUCT_TYPE_OPTIONS[0],
+    material: MATERIAL_OPTIONS[0],
+    size: "",
+    supplier_id: "CN-001",
+    supplier_name: "Hengwei Craft",
+    internal_code: "",
+    cost_price: "",
+    qty_on_hand: "",
+    notes: "",
+    retail_price: "",
+    publish_now: false,
+  });
+  const [localError, setLocalError] = useState<string | null>(null);
+
+  const update = <K extends keyof typeof form>(key: K, value: (typeof form)[K]) =>
+    setForm((f) => ({ ...f, [key]: value }));
+
+  const submit = () => {
+    setLocalError(null);
+    if (!form.description.trim()) {
+      setLocalError("Description is required.");
+      return;
+    }
+    const cost = form.cost_price.trim() ? Number.parseFloat(form.cost_price) : null;
+    if (cost !== null && (!Number.isFinite(cost) || cost < 0)) {
+      setLocalError("Cost price must be a non-negative number.");
+      return;
+    }
+    const qty = form.qty_on_hand.trim() ? Number.parseInt(form.qty_on_hand, 10) : null;
+    if (qty !== null && (!Number.isFinite(qty) || qty < 0)) {
+      setLocalError("Quantity must be a non-negative integer.");
+      return;
+    }
+    const retail = form.publish_now && form.retail_price.trim()
+      ? Number.parseFloat(form.retail_price)
+      : null;
+    if (form.publish_now) {
+      if (retail === null || !Number.isFinite(retail) || retail <= 0) {
+        setLocalError("Enter a positive retail price to publish to POS.");
+        return;
+      }
+    }
+
+    const req: CreateProductRequest = {
+      description: form.description.trim(),
+      product_type: form.product_type,
+      material: form.material,
+      size: form.size.trim() || null,
+      supplier_id: form.supplier_id.trim() || "CN-001",
+      supplier_name: form.supplier_name.trim() || null,
+      internal_code: form.internal_code.trim() || null,
+      cost_price: cost,
+      cost_currency: cost !== null ? "SGD" : null,
+      qty_on_hand: qty,
+      notes: form.notes.trim() || null,
+      retail_price: retail,
+    };
+    onSubmit(req);
+  };
+
+  return (
+    <div className="fixed inset-0 z-30 flex items-center justify-center bg-black/50 p-4">
+      <div className="flex max-h-[90vh] w-full max-w-2xl flex-col rounded-md bg-white shadow-xl">
+        <header className="flex items-center justify-between border-b border-gray-200 px-5 py-3">
+          <div>
+            <div className="text-base font-semibold text-gray-900">Add SKU manually</div>
+            <div className="text-xs text-gray-500">
+              Hand-entered products. SKU code and barcode (PLU) are auto-allocated. Optionally set a
+              retail price to publish to POS in one step.
+            </div>
+          </div>
+          <button onClick={onCancel} className="text-sm text-gray-500 hover:underline" disabled={submitting}>
+            Cancel
+          </button>
+        </header>
+        <div className="flex-1 overflow-auto px-5 py-4 text-sm">
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+            <Field label="Description *" hint="Short label shown on labels and the POS screen.">
+              <input
+                type="text"
+                value={form.description}
+                onChange={(e) => update("description", e.target.value)}
+                maxLength={120}
+                disabled={submitting}
+                className="w-full rounded border border-gray-300 px-2 py-1 text-sm focus:border-blue-500 focus:outline-none disabled:bg-gray-100"
+              />
+            </Field>
+            <Field label="Product type *">
+              <select
+                value={form.product_type}
+                onChange={(e) => update("product_type", e.target.value)}
+                disabled={submitting}
+                className="w-full rounded border border-gray-300 px-2 py-1 text-sm focus:border-blue-500 focus:outline-none disabled:bg-gray-100"
+              >
+                {PRODUCT_TYPE_OPTIONS.map((t) => (
+                  <option key={t} value={t}>{t}</option>
+                ))}
+              </select>
+            </Field>
+            <Field label="Material *">
+              <select
+                value={form.material}
+                onChange={(e) => update("material", e.target.value)}
+                disabled={submitting}
+                className="w-full rounded border border-gray-300 px-2 py-1 text-sm focus:border-blue-500 focus:outline-none disabled:bg-gray-100"
+              >
+                {MATERIAL_OPTIONS.map((m) => (
+                  <option key={m} value={m}>{m}</option>
+                ))}
+              </select>
+            </Field>
+            <Field label="Size" hint="e.g. 10x10x30 cm">
+              <input
+                type="text"
+                value={form.size}
+                onChange={(e) => update("size", e.target.value)}
+                disabled={submitting}
+                className="w-full rounded border border-gray-300 px-2 py-1 text-sm focus:border-blue-500 focus:outline-none disabled:bg-gray-100"
+              />
+            </Field>
+            <Field label="Supplier ID">
+              <input
+                type="text"
+                value={form.supplier_id}
+                onChange={(e) => update("supplier_id", e.target.value)}
+                disabled={submitting}
+                className="w-full rounded border border-gray-300 px-2 py-1 text-sm font-mono focus:border-blue-500 focus:outline-none disabled:bg-gray-100"
+              />
+            </Field>
+            <Field label="Supplier name">
+              <input
+                type="text"
+                value={form.supplier_name}
+                onChange={(e) => update("supplier_name", e.target.value)}
+                disabled={submitting}
+                className="w-full rounded border border-gray-300 px-2 py-1 text-sm focus:border-blue-500 focus:outline-none disabled:bg-gray-100"
+              />
+            </Field>
+            <Field label="Supplier item code" hint="Optional. Their SKU on the invoice/box.">
+              <input
+                type="text"
+                value={form.internal_code}
+                onChange={(e) => update("internal_code", e.target.value)}
+                disabled={submitting}
+                className="w-full rounded border border-gray-300 px-2 py-1 text-sm font-mono focus:border-blue-500 focus:outline-none disabled:bg-gray-100"
+              />
+            </Field>
+            <Field label="Qty on hand">
+              <input
+                type="number"
+                min={0}
+                step={1}
+                value={form.qty_on_hand}
+                onChange={(e) => update("qty_on_hand", e.target.value)}
+                disabled={submitting}
+                className="w-full rounded border border-gray-300 px-2 py-1 text-sm focus:border-blue-500 focus:outline-none disabled:bg-gray-100"
+              />
+            </Field>
+            <Field label="Cost price (SGD)">
+              <input
+                type="number"
+                min={0}
+                step="0.01"
+                value={form.cost_price}
+                onChange={(e) => update("cost_price", e.target.value)}
+                disabled={submitting}
+                className="w-full rounded border border-gray-300 px-2 py-1 text-sm focus:border-blue-500 focus:outline-none disabled:bg-gray-100"
+              />
+            </Field>
+            <Field label="Notes">
+              <input
+                type="text"
+                value={form.notes}
+                onChange={(e) => update("notes", e.target.value)}
+                disabled={submitting}
+                className="w-full rounded border border-gray-300 px-2 py-1 text-sm focus:border-blue-500 focus:outline-none disabled:bg-gray-100"
+              />
+            </Field>
+          </div>
+
+          <div className="mt-5 rounded-md border border-amber-200 bg-amber-50 p-3">
+            <label className="flex items-center gap-2 text-sm font-semibold text-amber-900">
+              <input
+                type="checkbox"
+                checked={form.publish_now}
+                onChange={(e) => update("publish_now", e.target.checked)}
+                disabled={submitting}
+              />
+              Publish a retail price to POS in the same step
+            </label>
+            {form.publish_now && (
+              <div className="mt-2 flex items-center gap-2 text-sm">
+                <span className="text-gray-700">Retail (S$, GST-inclusive):</span>
+                <input
+                  type="number"
+                  min={0}
+                  step="0.01"
+                  value={form.retail_price}
+                  onChange={(e) => update("retail_price", e.target.value)}
+                  disabled={submitting}
+                  className="w-28 rounded border border-amber-300 px-2 py-1 text-sm focus:border-amber-500 focus:outline-none disabled:bg-gray-100"
+                />
+                <span className="text-xs text-gray-500">
+                  Creates a Firestore prices/&#123;id&#125; doc valid from today.
+                </span>
+              </div>
+            )}
+          </div>
+
+          {(localError || errorMessage) && (
+            <div className="mt-4 rounded-md border border-red-300 bg-red-50 p-2 text-sm text-red-800">
+              {localError || errorMessage}
+            </div>
+          )}
+        </div>
+        <footer className="flex items-center justify-between border-t border-gray-200 px-5 py-3">
+          <div className="text-xs text-gray-500">
+            SKU code &amp; barcode (PLU) are auto-allocated to keep them aligned.
+          </div>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={onCancel}
+              disabled={submitting}
+              className="rounded-md border border-gray-300 px-3 py-1.5 text-sm hover:bg-gray-50 disabled:opacity-60"
+            >
+              Cancel
+            </button>
+            <button
+              onClick={submit}
+              disabled={submitting || !form.description.trim()}
+              className="rounded-md bg-emerald-600 px-4 py-1.5 text-sm font-semibold text-white hover:bg-emerald-700 disabled:bg-gray-400"
+            >
+              {submitting ? "Adding…" : form.publish_now ? "Add & publish to POS" : "Add SKU"}
+            </button>
+          </div>
+        </footer>
+      </div>
+    </div>
+  );
+}
+
+function Field({
+  label,
+  hint,
+  children,
+}: {
+  label: string;
+  hint?: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <label className="flex flex-col gap-1 text-sm text-gray-700">
+      <span className="font-semibold">{label}</span>
+      {children}
+      {hint && <span className="text-xs text-gray-500">{hint}</span>}
+    </label>
   );
 }
 

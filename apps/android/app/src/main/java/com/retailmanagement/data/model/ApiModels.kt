@@ -277,6 +277,29 @@ data class MasterDataExportResult(
     val stderr: String = ""
 )
 
+// Publish a draft retail price into Firestore so the POS barcode lookup can
+// ring it up. Server enforces the publisher email allowlist
+// (settings.MASTER_DATA_PUBLISHER_EMAILS); non-allowlisted callers get 403.
+data class MasterDataPublishPriceRequest(
+    @SerializedName("retail_price") val retailPrice: Double,
+    @SerializedName("store_code") val storeCode: String = "JEWEL-01",
+    val currency: String = "SGD",
+    @SerializedName("tax_code") val taxCode: String = "G",
+    @SerializedName("expected_active_price_id") val expectedActivePriceId: String? = null
+)
+
+data class MasterDataPublishResult(
+    val ok: Boolean,
+    val sku: String,
+    @SerializedName("plu_code") val pluCode: String,
+    @SerializedName("price_id") val priceId: String,
+    @SerializedName("retail_price") val retailPrice: Double,
+    @SerializedName("valid_from") val validFrom: String,
+    @SerializedName("valid_to") val validTo: String,
+    @SerializedName("superseded_price_ids") val supersededPriceIds: List<String> = emptyList(),
+    val product: MasterDataProductRow? = null
+)
+
 data class IngestPreviewItem(
     @SerializedName("line_number") val lineNumber: Int? = null,
     @SerializedName("supplier_item_code") val supplierItemCode: String? = null,

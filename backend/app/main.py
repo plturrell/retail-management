@@ -65,6 +65,7 @@ from app.routers import (
     pos_labelling,
     stock_checks,
     data_quality,
+    supplier_review,
 )
 # Dormant (SQLAlchemy) routers - not yet migrated to Firestore; intentionally not imported:
 # customers, intelligence, marketing, purchases, staff_hr, suppliers
@@ -122,4 +123,5 @@ app.include_router(finance.router)
 app.include_router(reports.router)
 app.include_router(stock_checks.router)
 app.include_router(data_quality.router)
+app.include_router(supplier_review.router)
 app.include_router(pos_labelling.router)
