@@ -13,6 +13,7 @@ import { auth } from "../lib/firebase";
 import { useAuth } from "../contexts/AuthContext";
 
 type SaveState = "idle" | "saving" | "saved" | "error";
+type PublishState = "idle" | "publishing" | "published" | "error";
 
 interface RowState {
   product: ProductRow;
@@ -22,6 +23,9 @@ interface RowState {
   save: SaveState;
   error?: string;
   savedAt?: number;
+  publish: PublishState;
+  publishError?: string;
+  publishedAt?: number;
 }
 
 const SUPPLIER_LABELS: Record<string, string> = {
@@ -100,6 +104,7 @@ export default function MasterDataPage() {
           draftNotes: p.retail_price_note ?? "",
           saleReady: Boolean(p.sale_ready),
           save: "idle",
+          publish: "idle",
         })),
       );
       setSelected((prev) => {
@@ -199,6 +204,36 @@ export default function MasterDataPage() {
 
   const onPriceKey = (sku: string, e: React.KeyboardEvent<HTMLInputElement>) => {
     if (isOwner && e.key === "Enter") void saveRow(sku);
+  };
+
+  const publishRow = async (sku: string) => {
+    if (!isOwner) return;
+    const row = rows.find((r) => r.product.sku_code === sku);
+    if (!row) return;
+    const priceNum = Number.parseFloat(row.draftPrice);
+    if (Number.isNaN(priceNum) || priceNum <= 0) {
+      updateRow(sku, (r) => ({ ...r, publish: "error", publishError: "Enter a price first" }));
+      return;
+    }
+    if (!row.product.nec_plu) {
+      updateRow(sku, (r) => ({ ...r, publish: "error", publishError: "SKU has no PLU" }));
+      return;
+    }
+    updateRow(sku, (r) => ({ ...r, publish: "publishing", publishError: undefined }));
+    try {
+      const result = await masterDataApi.publishPrice(sku, { retail_price: priceNum });
+      updateRow(sku, (r) => ({
+        ...r,
+        product: result.product,
+        publish: "published",
+        publishedAt: Date.now(),
+        publishError: undefined,
+      }));
+      const refreshed = await masterDataApi.posStatus().catch(() => null);
+      if (refreshed) setPosStatus(refreshed);
+    } catch (e) {
+      updateRow(sku, (r) => ({ ...r, publish: "error", publishError: (e as Error).message }));
+    }
   };
 
   const regenerate = async () => {
@@ -742,10 +777,48 @@ export default function MasterDataPage() {
                       />
                     </td>
                     <td className="px-3 py-2 text-xs">
-                      {r.save === "saving" && <span className="text-gray-500">Saving…</span>}
-                      {r.save === "saved" && <span className="text-green-600">Saved ✓</span>}
-                      {r.save === "error" && <span className="text-red-600" title={r.error}>Error</span>}
-                      {r.save === "idle" && p.retail_price && <span className="text-gray-400">—</span>}
+                      <div className="flex flex-col gap-1">
+                        <div>
+                          {r.save === "saving" && <span className="text-gray-500">Saving…</span>}
+                          {r.save === "saved" && <span className="text-green-600">Saved ✓</span>}
+                          {r.save === "error" && <span className="text-red-600" title={r.error}>Error</span>}
+                          {r.save === "idle" && p.retail_price && <span className="text-gray-400">—</span>}
+                        </div>
+                        {isOwner && p.nec_plu && (
+                          <button
+                            onClick={() => void publishRow(p.sku_code)}
+                            disabled={
+                              r.publish === "publishing" ||
+                              !Number.isFinite(priceNum) ||
+                              priceNum <= 0
+                            }
+                            className={
+                              posState === "live"
+                                ? "rounded border border-gray-300 px-2 py-0.5 text-[11px] font-semibold text-gray-700 hover:bg-gray-50 disabled:cursor-not-allowed disabled:bg-gray-100 disabled:text-gray-400"
+                                : "rounded bg-amber-500 px-2 py-0.5 text-[11px] font-semibold text-white hover:bg-amber-600 disabled:cursor-not-allowed disabled:bg-gray-300"
+                            }
+                            title={
+                              posState === "live"
+                                ? "Replace the current Firestore price with the value in the input"
+                                : "Create a Firestore prices/{id} doc so the POS can ring up this barcode"
+                            }
+                          >
+                            {r.publish === "publishing"
+                              ? "Publishing…"
+                              : posState === "live"
+                                ? "Update POS"
+                                : "Publish to POS"}
+                          </button>
+                        )}
+                        {r.publish === "published" && (
+                          <span className="text-green-600">Live ✓</span>
+                        )}
+                        {r.publish === "error" && (
+                          <span className="text-red-600" title={r.publishError}>
+                            {r.publishError ? r.publishError.slice(0, 40) : "Publish failed"}
+                          </span>
+                        )}
+                      </div>
                     </td>
                   </tr>
                 );

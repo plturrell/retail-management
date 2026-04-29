@@ -3,16 +3,22 @@
 from __future__ import annotations
 
 import sys
-from datetime import date
+import uuid as _uuid
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Optional
 
 from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
 from fastapi.responses import FileResponse
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 from app.auth.dependencies import RoleEnum, require_any_store_role
-from app.firestore_helpers import query_collection
+from app.firestore_helpers import (
+    create_document,
+    get_document,
+    query_collection,
+    update_document,
+)
 
 _REPO_ROOT = Path(__file__).resolve().parents[3]
 if str(_REPO_ROOT) not in sys.path:
@@ -185,3 +191,149 @@ def recommend_prices(
 ) -> dict:
     legacy_master_data = _legacy_master_data()
     return legacy_master_data.recommend_prices(req)
+
+
+class PublishPriceRequest(BaseModel):
+    retail_price: float = Field(gt=0, description="Tax-inclusive retail price (SGD).")
+    store_code: str = Field(default="JEWEL-01")
+
+
+@router.post("/products/{sku}/publish_price")
+def publish_price(
+    sku: str,
+    req: PublishPriceRequest,
+    _: dict = Depends(require_any_store_role(RoleEnum.owner)),
+) -> dict:
+    """Publish *sku*'s retail price to Firestore so the POS barcode lookup
+    returns it. Idempotent end-to-end:
+
+      1. Persists retail_price + retail_price_set_at in master JSON (via the
+         existing legacy patch_product).
+      2. Ensures Firestore plus/{id} and skus/{id} docs exist for this SKU,
+         creating or updating them as needed.
+      3. Supersedes any currently-active prices/{id} doc for the SKU by
+         setting valid_to = yesterday.
+      4. Creates a new prices/{id} doc with valid_from = today and
+         valid_to = +5 years.
+    """
+    legacy = _legacy_master_data()
+
+    patch = legacy.ProductPatch(retail_price=req.retail_price)
+    product = legacy.patch_product(sku, patch)
+
+    plu_code = (product.get("nec_plu") or "").strip()
+    if not plu_code:
+        raise HTTPException(
+            status_code=400,
+            detail=f"sku {sku} has no nec_plu; cannot publish to POS",
+        )
+
+    store_matches = query_collection(
+        "stores", filters=[("store_code", "==", req.store_code)], limit=1
+    )
+    if not store_matches:
+        raise HTTPException(
+            status_code=400,
+            detail=f"store_code {req.store_code} not found in Firestore stores collection",
+        )
+    store_id = str(store_matches[0]["id"])
+
+    plus_matches = query_collection(
+        "plus", filters=[("plu_code", "==", plu_code)], limit=1
+    )
+    if plus_matches:
+        plu_doc = plus_matches[0]
+        sku_id = str(plu_doc.get("sku_id") or "")
+        plu_id = str(plu_doc["id"])
+    else:
+        sku_matches = query_collection(
+            "skus", filters=[("sku_code", "==", sku)], limit=1
+        )
+        sku_id = str(sku_matches[0]["id"]) if sku_matches else str(_uuid.uuid4())
+        plu_id = str(_uuid.uuid4())
+
+    now = datetime.now(timezone.utc)
+    sku_doc_data = {
+        "id": sku_id,
+        "sku_code": sku[:32],
+        "description": (product.get("description") or "")[:60],
+        "long_description": product.get("long_description"),
+        "cost_price": float(product["cost_price"]) if product.get("cost_price") is not None else None,
+        "store_id": store_id,
+        "brand_id": None,
+        "category_id": None,
+        "tax_code": "G",
+        "is_unique_piece": False,
+        "use_stock": bool(product.get("use_stock", True)),
+        "block_sales": bool(product.get("block_sales", False)),
+        "internal_code": product.get("internal_code"),
+        "nec_plu": plu_code,
+        "material": product.get("material"),
+        "product_type": product.get("product_type"),
+        "source": "master_data_publish_price",
+        "updated_at": now,
+    }
+    existing_sku = get_document("skus", sku_id) if sku_id else None
+    if existing_sku:
+        update_document("skus", sku_id, sku_doc_data)
+    else:
+        sku_doc_data["created_at"] = now
+        create_document("skus", sku_doc_data, doc_id=sku_id)
+
+    if plus_matches:
+        update_document("plus", plu_id, {"plu_code": plu_code, "sku_id": sku_id})
+    else:
+        create_document(
+            "plus",
+            {"id": plu_id, "plu_code": plu_code, "sku_id": sku_id},
+            doc_id=plu_id,
+        )
+
+    today = date.today()
+    today_iso = today.isoformat()
+    yesterday_iso = (today - timedelta(days=1)).isoformat()
+    superseded: list[str] = []
+    for old in query_collection("prices", filters=[("sku_id", "==", sku_id)]):
+        old_id = old.get("id")
+        if not old_id:
+            continue
+        vf = old.get("valid_from") or "0000-01-01"
+        vt = old.get("valid_to") or "9999-12-31"
+        if vf <= today_iso <= vt:
+            update_document(
+                "prices",
+                str(old_id),
+                {"valid_to": yesterday_iso, "updated_at": now},
+            )
+            superseded.append(str(old_id))
+
+    price_id = str(_uuid.uuid4())
+    price_doc = {
+        "id": price_id,
+        "sku_id": sku_id,
+        "store_id": store_id,
+        "price_incl_tax": float(req.retail_price),
+        "price_excl_tax": round(float(req.retail_price) / 1.09, 2),
+        "price_unit": 1,
+        "valid_from": today_iso,
+        "valid_to": date(today.year + 5, 12, 31).isoformat(),
+        "source": "master_data_publish",
+        "created_at": now,
+        "updated_at": now,
+    }
+    create_document("prices", price_doc, doc_id=price_id)
+
+    return {
+        "ok": True,
+        "sku": sku,
+        "plu_code": plu_code,
+        "sku_id": sku_id,
+        "plu_id": plu_id,
+        "price_id": price_id,
+        "retail_price": float(req.retail_price),
+        "valid_from": price_doc["valid_from"],
+        "valid_to": price_doc["valid_to"],
+        "superseded_price_ids": superseded,
+        "store_id": store_id,
+        "product": product,
+    }

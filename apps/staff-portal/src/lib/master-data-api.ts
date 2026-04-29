@@ -149,6 +149,26 @@ export interface PriceRecommendationsResponse {
   n_targets?: number;
 }
 
+export interface PublishPriceRequest {
+  retail_price: number;
+  store_code?: string;
+}
+
+export interface PublishPriceResult {
+  ok: boolean;
+  sku: string;
+  plu_code: string;
+  sku_id: string;
+  plu_id: string;
+  price_id: string;
+  retail_price: number;
+  valid_from: string;
+  valid_to: string;
+  superseded_price_ids: string[];
+  store_id: string;
+  product: ProductRow;
+}
+
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const user = auth.currentUser;
   if (!user) throw new Error("Not authenticated");
@@ -238,5 +258,10 @@ export const masterDataApi = {
         target_skus: params.target_skus,
         max_targets: params.max_targets ?? 80,
       }),
+    }),
+  publishPrice: (sku: string, req: PublishPriceRequest) =>
+    request<PublishPriceResult>(`/products/${encodeURIComponent(sku)}/publish_price`, {
+      method: "POST",
+      body: JSON.stringify(req),
     }),
 };
