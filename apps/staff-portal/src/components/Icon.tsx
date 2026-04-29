@@ -23,7 +23,12 @@ type IconName =
   | "user"
   | "users"
   | "wallet"
-  | "x";
+  | "x"
+  | "x-mark"
+  | "calendar-days"
+  | "check-circle"
+  | "document-text"
+  | "plus";
 
 const paths: Record<IconName, string[]> = {
   alert: ["M12 9v4", "M12 17h.01", "M10.3 3.7 2.4 17.2A2 2 0 0 0 4.1 20h15.8a2 2 0 0 0 1.7-2.8L13.7 3.7a2 2 0 0 0-3.4 0Z"],
@@ -51,6 +56,11 @@ const paths: Record<IconName, string[]> = {
   users: ["M9 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8Z", "M3 21a6 6 0 0 1 12 0", "M17 11a3 3 0 1 0 0-6", "M21 21a5 5 0 0 0-5-5"],
   wallet: ["M4 7h15a1 1 0 0 1 1 1v10a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h12", "M16 13h.01"],
   x: ["M18 6 6 18", "M6 6l12 12"],
+  "x-mark": ["M18 6 6 18", "M6 6l12 12"],
+  "calendar-days": ["M7 3v4", "M17 3v4", "M4 9h16", "M5 5h14a1 1 0 0 1 1 1v14a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1Z"],
+  "check-circle": ["M22 11.08V12a10 10 0 1 1-5.93-9.14", "M22 4L12 14.01l-3-3"],
+  "document-text": ["M7 3h7l5 5v13H7V3Z", "M14 3v6h5", "M9 13h6", "M9 17h6"],
+  plus: ["M12 5v14", "M5 12h14"],
 };
 
 export function Icon({ name, className = "h-4 w-4" }: { name: IconName; className?: string }) {

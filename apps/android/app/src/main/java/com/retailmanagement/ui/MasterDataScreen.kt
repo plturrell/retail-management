@@ -19,6 +19,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Print
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Save
 import androidx.compose.material3.Button
@@ -403,7 +404,7 @@ fun MasterDataScreen(canEdit: Boolean = false, vm: MasterDataViewModel = viewMod
                     Text("Regenerate NEC Excel")
                 }
                 OutlinedButton(onClick = { vm.printPosLabels(context) }, enabled = busyLabel == null, modifier = Modifier.fillMaxWidth()) {
-                    Icon(painter = androidx.compose.ui.res.painterResource(android.R.drawable.ic_menu_print), contentDescription = null)
+                    Icon(imageVector = Icons.Default.Print, contentDescription = null)
                     Spacer(Modifier.padding(4.dp))
                     Text("Print POS Labels")
                 }

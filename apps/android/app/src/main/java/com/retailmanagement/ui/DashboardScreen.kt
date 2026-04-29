@@ -27,9 +27,3 @@ fun OrdersScreen() {
     }
 }
 
-@Composable
-fun EmployeesScreen() {
-    Column(modifier = Modifier.fillMaxSize().padding(16.dp)) {
-        Text("Employee Management")
-    }
-}

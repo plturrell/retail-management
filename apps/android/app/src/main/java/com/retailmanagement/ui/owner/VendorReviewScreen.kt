@@ -67,8 +67,8 @@ fun VendorReviewScreen(vm: VendorReviewViewModel = viewModel()) {
             // into the scaled screen coordinates.
             Text("Crop Regions highlighted natively in iOS. Android canvas omitted for brevity.", color = Color.White, modifier = Modifier.align(Alignment.BottomCenter).padding(8.dp))
         }
-
-        HorizontalDivider()
+        
+        androidx.compose.material3.Divider()
 
         // Bottom Half: Reconciliation List
         LazyColumn(

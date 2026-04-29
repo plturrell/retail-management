@@ -16,6 +16,32 @@ interface ApiService {
         @Path("userId") userId: String
     ): DataResponse<EmployeeProfileRead>
 
+    @GET("api/users/stores/{storeId}/employees")
+    suspend fun getStoreEmployees(
+        @Path("storeId") storeId: String
+    ): PaginatedResponse<StoreEmployeeRead>
+
+    @GET("api/users/search")
+    suspend fun searchUsers(
+        @Query("email") email: String
+    ): DataResponse<List<SearchedUser>>
+
+    @POST("api/users/roles")
+    suspend fun assignUserRole(
+        @Body request: UserStoreRoleCreate
+    ): DataResponse<UserStoreRoleRead>
+
+    @PATCH("api/users/roles/{roleId}")
+    suspend fun updateUserRole(
+        @Path("roleId") roleId: String,
+        @Body request: UserStoreRoleUpdate
+    ): DataResponse<UserStoreRoleRead>
+
+    @DELETE("api/users/roles/{roleId}")
+    suspend fun removeUserRole(
+        @Path("roleId") roleId: String
+    )
+
     // ── Schedules ──
 
     @GET("api/stores/{storeId}/schedules/my-shifts")
@@ -24,6 +50,53 @@ interface ApiService {
         @Query("from") from: String,
         @Query("to") to: String
     ): DataResponse<List<ShiftRead>>
+
+    @GET("api/stores/{storeId}/schedules")
+    suspend fun listSchedules(
+        @Path("storeId") storeId: String,
+        @Query("week_start") weekStart: String? = null
+    ): PaginatedResponse<ScheduleRead>
+
+    @GET("api/stores/{storeId}/schedules/{scheduleId}")
+    suspend fun getSchedule(
+        @Path("storeId") storeId: String,
+        @Path("scheduleId") scheduleId: String
+    ): DataResponse<WeeklyScheduleResponse>
+
+    @POST("api/stores/{storeId}/schedules")
+    suspend fun createSchedule(
+        @Path("storeId") storeId: String,
+        @Body request: ScheduleCreate
+    ): DataResponse<ScheduleRead>
+
+    @PATCH("api/stores/{storeId}/schedules/{scheduleId}")
+    suspend fun updateSchedule(
+        @Path("storeId") storeId: String,
+        @Path("scheduleId") scheduleId: String,
+        @Body request: ScheduleUpdate
+    ): DataResponse<ScheduleRead>
+
+    @POST("api/stores/{storeId}/schedules/{scheduleId}/shifts")
+    suspend fun createShift(
+        @Path("storeId") storeId: String,
+        @Path("scheduleId") scheduleId: String,
+        @Body request: ShiftCreate
+    ): DataResponse<ShiftRead>
+
+    @PATCH("api/stores/{storeId}/schedules/{scheduleId}/shifts/{shiftId}")
+    suspend fun updateShift(
+        @Path("storeId") storeId: String,
+        @Path("scheduleId") scheduleId: String,
+        @Path("shiftId") shiftId: String,
+        @Body request: ShiftUpdate
+    ): DataResponse<ShiftRead>
+
+    @DELETE("api/stores/{storeId}/schedules/{scheduleId}/shifts/{shiftId}")
+    suspend fun deleteShift(
+        @Path("storeId") storeId: String,
+        @Path("scheduleId") scheduleId: String,
+        @Path("shiftId") shiftId: String
+    )
 
     // ── Timesheets ──
 
@@ -44,9 +117,34 @@ interface ApiService {
     suspend fun listTimesheets(
         @Path("storeId") storeId: String,
         @Query("user_id") userId: String? = null,
+        @Query("status") status: String? = null,
         @Query("page") page: Int = 1,
         @Query("page_size") pageSize: Int = 20
     ): PaginatedResponse<TimeEntryRead>
+
+    @PATCH("api/stores/{storeId}/timesheets/{entryId}")
+    suspend fun updateTimesheetEntry(
+        @Path("storeId") storeId: String,
+        @Path("entryId") entryId: String,
+        @Body request: TimeEntryUpdate
+    ): DataResponse<TimeEntryRead>
+
+    @GET("api/stores/{storeId}/timesheets/summary")
+    suspend fun getTimesheetSummary(
+        @Path("storeId") storeId: String,
+        @Query("date_from") dateFrom: String,
+        @Query("date_to") dateTo: String
+    ): DataResponse<TimesheetSummaryResponse>
+
+    // ── Orders ──
+
+    @GET("api/stores/{storeId}/orders")
+    suspend fun listOrders(
+        @Path("storeId") storeId: String,
+        @Query("status") status: String? = null,
+        @Query("page") page: Int = 1,
+        @Query("page_size") pageSize: Int = 200
+    ): PaginatedResponse<Order>
 
     // ── Payroll ──
 

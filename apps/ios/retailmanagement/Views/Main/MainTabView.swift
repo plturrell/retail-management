@@ -52,6 +52,8 @@ struct MainTabView: View {
         case profile = "Profile"
         case settings = "Settings"
         case vendorReview = "Vendor Review"
+        case teamSchedule = "Team Schedule"
+        case timesheetApprovals = "Timesheet Approvals"
 
         var id: String { rawValue }
 
@@ -71,13 +73,15 @@ struct MainTabView: View {
             case .profile: return "person.crop.circle.fill"
             case .settings: return "gearshape.fill"
             case .vendorReview: return "doc.text.magnifyingglass"
+            case .teamSchedule: return "calendar.badge.clock"
+            case .timesheetApprovals: return "checkmark.seal.fill"
             }
         }
 
         /// Minimum role level required to see this tab.
         var minimumRoleLevel: Int {
             switch self {
-            case .employees: return UserRole.manager.level
+            case .employees, .teamSchedule, .timesheetApprovals: return UserRole.manager.level
             case .financials: return UserRole.owner.level
             case .inventory, .orders, .workflows: return UserRole.manager.level
             case .masterData, .vendorReview: return UserRole.owner.level
@@ -129,6 +133,10 @@ struct MainTabView: View {
                 StaffProfileView()
             case .settings:
                 SettingsView()
+            case .teamSchedule:
+                ManagerScheduleTabView()
+            case .timesheetApprovals:
+                ManagerTimesheetsTabView()
             case .none:
                 Text("Select an item from the sidebar.")
                     .font(.title3)
@@ -164,6 +172,14 @@ struct MainTabView: View {
                 }
 
             if currentRole.level >= UserRole.manager.level {
+                ManagerScheduleTabView()
+                    .tabItem {
+                        Label("Team Sched", systemImage: "calendar.badge.clock")
+                    }
+                ManagerTimesheetsTabView()
+                    .tabItem {
+                        Label("Approvals", systemImage: "checkmark.seal.fill")
+                    }
                 InventoryTabView()
                     .tabItem {
                         Label("Inventory", systemImage: "shippingbox.fill")

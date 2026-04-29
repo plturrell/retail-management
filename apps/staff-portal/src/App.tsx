@@ -12,6 +12,10 @@ import CommissionPage from "./pages/CommissionPage";
 import PerformancePage from "./pages/PerformancePage";
 import ProfilePage from "./pages/ProfilePage";
 import ManagerOpsPage from "./pages/ManagerOpsPage";
+import ManagerSchedulePage from "./pages/ManagerSchedulePage";
+import ManagerTimesheetsPage from "./pages/ManagerTimesheetsPage";
+import OrdersPage from "./pages/OrdersPage";
+import FinancialsPage from "./pages/FinancialsPage";
 import SupplierReviewPage from "./pages/SupplierReviewPage";
 import VaultPage from "./pages/VaultPage";
 import DataQualityPage from "./pages/DataQualityPage";
@@ -71,6 +75,38 @@ export default function App() {
               element={
                 <ManagerOnlyRoute>
                   <ManagerOpsPage />
+                </ManagerOnlyRoute>
+              }
+            />
+            <Route
+              path="manager/schedule"
+              element={
+                <ManagerOnlyRoute>
+                  <ManagerSchedulePage />
+                </ManagerOnlyRoute>
+              }
+            />
+            <Route
+              path="manager/timesheets"
+              element={
+                <ManagerOnlyRoute>
+                  <ManagerTimesheetsPage />
+                </ManagerOnlyRoute>
+              }
+            />
+            <Route
+              path="orders"
+              element={
+                <ManagerOnlyRoute>
+                  <OrdersPage />
+                </ManagerOnlyRoute>
+              }
+            />
+            <Route
+              path="financials"
+              element={
+                <ManagerOnlyRoute>
+                  <FinancialsPage />
                 </ManagerOnlyRoute>
               }
             />

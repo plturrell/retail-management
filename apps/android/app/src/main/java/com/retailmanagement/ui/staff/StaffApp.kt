@@ -29,6 +29,11 @@ sealed class StaffTab(val route: String, val label: String, val icon: ImageVecto
     object Performance : StaffTab("performance", "Performance", Icons.Default.TrendingUp)
     object Inventory : StaffTab("inventory", "Inventory", Icons.Default.Inventory2)
     object MasterData : StaffTab("master-data", "Master Data", Icons.Default.ListAlt)
+    object Employees : StaffTab("employees", "Employees", Icons.Default.People)
+    object TeamSchedule : StaffTab("team-schedule", "Team Sched", Icons.Default.EditCalendar)
+    object TimesheetApprovals : StaffTab("timesheet-approvals", "Approvals", Icons.Default.AssignmentTurnedIn)
+    object Orders : StaffTab("orders", "Orders", Icons.Default.ShoppingCart)
+    object Financials : StaffTab("financials", "Financials", Icons.Default.BarChart)
     object Profile : StaffTab("profile", "Profile", Icons.Default.Person)
 }
 
@@ -96,8 +101,13 @@ fun StaffApp(vm: StaffAppViewModel = viewModel()) {
                 StaffTab.Timesheet,
                 StaffTab.Pay,
                 StaffTab.Performance,
+                StaffTab.TeamSchedule,
+                StaffTab.TimesheetApprovals,
+                StaffTab.Orders,
+                StaffTab.Financials,
                 StaffTab.Inventory,
                 StaffTab.MasterData,
+                StaffTab.Employees,
                 StaffTab.Profile
             )
             "manager" -> listOf(
@@ -105,7 +115,12 @@ fun StaffApp(vm: StaffAppViewModel = viewModel()) {
                 StaffTab.Timesheet,
                 StaffTab.Pay,
                 StaffTab.Performance,
+                StaffTab.TeamSchedule,
+                StaffTab.TimesheetApprovals,
+                StaffTab.Orders,
+                StaffTab.Financials,
                 StaffTab.Inventory,
+                StaffTab.Employees,
                 StaffTab.Profile
             )
             else -> staffTabs
@@ -153,6 +168,11 @@ fun StaffApp(vm: StaffAppViewModel = viewModel()) {
             composable(StaffTab.Performance.route) { PerformanceScreen(storeId = sid, userId = uid) }
             composable(StaffTab.Inventory.route) { InventoryScreen(storeId = sid) }
             composable(StaffTab.MasterData.route) { MasterDataScreen(canEdit = role == "owner") }
+            composable(StaffTab.Employees.route) { com.retailmanagement.ui.EmployeesScreen(storeId = sid) }
+            composable(StaffTab.TeamSchedule.route) { com.retailmanagement.ui.ManagerScheduleScreen(storeId = sid) }
+            composable(StaffTab.TimesheetApprovals.route) { com.retailmanagement.ui.ManagerTimesheetsScreen(storeId = sid) }
+            composable(StaffTab.Orders.route) { com.retailmanagement.ui.ManagerOrdersScreen(storeId = sid) }
+            composable(StaffTab.Financials.route) { com.retailmanagement.ui.FinancialsScreen(storeId = sid) }
             composable(StaffTab.Profile.route) { ProfileScreen(userId = uid, onLogout = { vm.onLogout() }) }
         }
     }

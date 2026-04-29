@@ -123,6 +123,34 @@ export default function HomePage() {
               tone="blue"
             />
             <ActionCard
+              to="/manager/schedule"
+              icon="calendar-days"
+              title="Team Schedule"
+              body="Create weekly rotas, assign shifts, and manage coverage."
+              tone="amber"
+            />
+            <ActionCard
+              to="/manager/timesheets"
+              icon="clock"
+              title="Timesheet Approvals"
+              body="Review staff hours, breaks, and prep for payroll."
+              tone="green"
+            />
+            <ActionCard
+              to="/orders"
+              icon="receipt"
+              title="Orders"
+              body="Browse, filter, and inspect all sales orders."
+              tone="blue"
+            />
+            <ActionCard
+              to="/financials"
+              icon="document-text"
+              title="Financials"
+              body="Revenue summary, daily chart, and payment breakdown."
+              tone="slate"
+            />
+            <ActionCard
               to="/admin/users"
               icon="users"
               title="Users and access"
