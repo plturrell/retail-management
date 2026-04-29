@@ -15,10 +15,12 @@ from __future__ import annotations
 
 import json
 import logging
+import mimetypes
 from pathlib import Path
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException
+from fastapi.responses import FileResponse
 
 from app.auth.dependencies import RoleEnum, require_any_store_role
 
@@ -108,3 +110,44 @@ async def get_supplier_order(
     except (OSError, json.JSONDecodeError) as exc:
         logger.exception("supplier_review: failed to read %s", path)
         raise HTTPException(status_code=500, detail=f"Could not read order document: {exc}")
+
+
+@router.get("/{supplier_id}/artifacts/{file_path:path}")
+async def get_supplier_artifact(
+    supplier_id: str,
+    file_path: str,
+    _: dict = Depends(require_any_store_role(RoleEnum.manager)),
+) -> FileResponse:
+    """Stream a source artifact (e.g. invoice scan PNG) for a supplier.
+
+    ``file_path`` is the relative path recorded in the order document's
+    ``source_artifacts[].file`` field, e.g.
+    ``orders/order-364-365-2026-03-26-source.PNG``. Resolution is
+    constrained to the supplier's directory under ``docs/suppliers/`` to
+    prevent traversal outside that root.
+    """
+    index = _scan_orders()
+    bucket = index.get(supplier_id)
+    if not bucket:
+        raise HTTPException(status_code=404, detail=f"Unknown supplier {supplier_id!r}.")
+
+    # Any order file under this supplier shares the same supplier directory.
+    supplier_dir = next(iter(bucket.values())).parent.parent
+    target = (supplier_dir / file_path).resolve()
+    try:
+        target.relative_to(supplier_dir.resolve())
+    except ValueError:
+        logger.warning(
+            "supplier_review: rejected path traversal supplier=%s file=%r resolved=%s",
+            supplier_id, file_path, target,
+        )
+        raise HTTPException(status_code=400, detail="Artifact path escapes supplier directory.")
+    if not target.is_file():
+        raise HTTPException(status_code=404, detail=f"Artifact {file_path!r} not found.")
+
+    media_type, _enc = mimetypes.guess_type(target.name)
+    return FileResponse(
+        path=target,
+        media_type=media_type or "application/octet-stream",
+        filename=target.name,
+    )

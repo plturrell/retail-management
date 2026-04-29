@@ -110,6 +110,13 @@ actor NetworkService {
         return try await execute(request)
     }
 
+    /// Build a GET URLRequest with the configured Bearer token attached.
+    /// Useful for binary endpoints (e.g. image streams) that should not be
+    /// JSON-decoded but still need authentication.
+    func authenticatedGetRequest(endpoint: String) async throws -> URLRequest {
+        try await buildRequest(endpoint: endpoint, method: "GET")
+    }
+
     func get<T: Decodable>(endpoint: String, queryItems: [URLQueryItem]) async throws -> T {
         let request = try await buildRequest(endpoint: endpoint, queryItems: queryItems, method: "GET")
         return try await execute(request)

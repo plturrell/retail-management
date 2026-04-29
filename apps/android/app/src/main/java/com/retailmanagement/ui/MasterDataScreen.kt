@@ -48,6 +48,7 @@ import android.content.Intent
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import androidx.lifecycle.viewmodel.compose.viewModel
+import com.retailmanagement.BuildConfig
 import com.retailmanagement.data.api.RetrofitClient
 import com.retailmanagement.data.model.IngestCommitRequest
 import com.retailmanagement.data.model.IngestPreview
@@ -361,7 +362,8 @@ class MasterDataViewModel(application: Application) : AndroidViewModel(applicati
             return
         }
 
-        val builder = Uri.parse("http://localhost:8000/api/pos-labelling/print").buildUpon()
+        val base = BuildConfig.RETAILSG_API_URL.trimEnd('/')
+        val builder = Uri.parse("$base/api/pos-labelling/print").buildUpon()
         toPrint.forEach { row ->
             builder.appendQueryParameter("skus", row.product.skuCode)
             val priceStr = if (row.price.isNotBlank()) "S$${row.price}" else ""
