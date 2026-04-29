@@ -3,6 +3,7 @@ package com.retailmanagement.ui.staff
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.Logout
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -130,7 +131,7 @@ fun ProfileScreen(userId: String, onLogout: () -> Unit, vm: ProfileViewModel = v
                 modifier = Modifier.fillMaxWidth(),
                 colors = ButtonDefaults.outlinedButtonColors(contentColor = MaterialTheme.colorScheme.error)
             ) {
-                Icon(Icons.Default.Logout, null)
+                Icon(Icons.AutoMirrored.Filled.Logout, null)
                 Spacer(Modifier.width(8.dp))
                 Text("Sign Out")
             }

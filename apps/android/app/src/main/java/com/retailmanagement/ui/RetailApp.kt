@@ -32,6 +32,7 @@ fun RetailApp() {
     }
 }
 
+@Suppress("UNUSED_PARAMETER")
 @Composable
 fun RetailBottomNav(navController: NavHostController) {
     // Navigation bar implementation matching iOS MainTabView

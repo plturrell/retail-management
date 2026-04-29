@@ -2,6 +2,8 @@ package com.retailmanagement.ui.staff
 
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ListAlt
+import androidx.compose.material.icons.automirrored.filled.TrendingUp
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -26,9 +28,9 @@ sealed class StaffTab(val route: String, val label: String, val icon: ImageVecto
     object Schedule : StaffTab("schedule", "Schedule", Icons.Default.CalendarMonth)
     object Timesheet : StaffTab("timesheet", "Timesheet", Icons.Default.Timer)
     object Pay : StaffTab("pay", "Pay", Icons.Default.Payments)
-    object Performance : StaffTab("performance", "Performance", Icons.Default.TrendingUp)
+    object Performance : StaffTab("performance", "Performance", Icons.AutoMirrored.Filled.TrendingUp)
     object Inventory : StaffTab("inventory", "Inventory", Icons.Default.Inventory2)
-    object MasterData : StaffTab("master-data", "Master Data", Icons.Default.ListAlt)
+    object MasterData : StaffTab("master-data", "Master Data", Icons.AutoMirrored.Filled.ListAlt)
     object Employees : StaffTab("employees", "Employees", Icons.Default.People)
     object TeamSchedule : StaffTab("team-schedule", "Team Sched", Icons.Default.EditCalendar)
     object TimesheetApprovals : StaffTab("timesheet-approvals", "Approvals", Icons.Default.AssignmentTurnedIn)

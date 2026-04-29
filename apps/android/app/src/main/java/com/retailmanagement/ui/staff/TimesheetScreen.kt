@@ -4,8 +4,8 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Login
-import androidx.compose.material.icons.filled.Logout
+import androidx.compose.material.icons.automirrored.filled.Login
+import androidx.compose.material.icons.automirrored.filled.Logout
 import androidx.compose.material.icons.filled.Timer
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -128,7 +128,7 @@ fun TimesheetScreen(storeId: String, userId: String, vm: TimesheetViewModel = vi
                                  else ButtonDefaults.buttonColors(),
                         modifier = Modifier.fillMaxWidth().height(48.dp)
                     ) {
-                        Icon(if (isClockedIn) Icons.Default.Logout else Icons.Default.Login, null)
+                        Icon(if (isClockedIn) Icons.AutoMirrored.Filled.Logout else Icons.AutoMirrored.Filled.Login, null)
                         Spacer(Modifier.width(8.dp))
                         Text(if (isClockedIn) "Clock Out" else "Clock In")
                     }
