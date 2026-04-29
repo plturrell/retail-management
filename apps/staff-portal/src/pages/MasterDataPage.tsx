@@ -622,10 +622,26 @@ export default function MasterDataPage() {
       params.append("prices", r.draftPrice ? `S$${r.draftPrice}` : "");
       params.append("names", r.product.description || "");
     });
-    
+
+    // Open the print window synchronously, inside the click gesture, so Safari
+    // and Firefox don't treat it as a popup. Fill it once the labels HTML is
+    // back; close it on failure so the user doesn't end up with a blank tab.
+    const printWin = window.open("", "_blank");
+    if (printWin) {
+      printWin.document.open();
+      printWin.document.write(
+        '<!doctype html><title>Generating labels…</title>' +
+          '<body style="font-family:sans-serif;padding:2rem;color:#555">Generating labels…</body>',
+      );
+      printWin.document.close();
+    }
+
     try {
       const user = auth.currentUser;
-      if (!user) return;
+      if (!user) {
+        printWin?.close();
+        return;
+      }
       const token = await user.getIdToken();
       const BASE_URL = import.meta.env.VITE_API_URL || "http://localhost:8000/api";
       const res = await fetch(`${BASE_URL}/pos-labelling/print?${params.toString()}`, {
@@ -633,14 +649,14 @@ export default function MasterDataPage() {
       });
       if (!res.ok) throw new Error("Failed to load labels");
       const html = await res.text();
-      
-      const printWin = window.open("", "_blank");
+
       if (printWin) {
         printWin.document.open();
         printWin.document.write(html);
         printWin.document.close();
       }
     } catch (err) {
+      printWin?.close();
       alert("Error generating labels: " + (err as Error).message);
     }
   };
