@@ -6,6 +6,13 @@
 import Foundation
 import Observation
 
+nonisolated struct ShiftDayGroup: Identifiable, Sendable {
+    let date: String
+    let shifts: [Shift]
+
+    var id: String { date }
+}
+
 @MainActor
 @Observable
 final class ScheduleViewModel {
@@ -27,9 +34,9 @@ final class ScheduleViewModel {
     }
 
     /// Shifts grouped by date
-    var shiftsByDate: [(date: String, shifts: [Shift])] {
+    var shiftsByDate: [ShiftDayGroup] {
         let grouped = Dictionary(grouping: shifts, by: { $0.shiftDate })
-        return grouped.sorted { $0.key < $1.key }.map { (date: $0.key, shifts: $0.value) }
+        return grouped.sorted { $0.key < $1.key }.map { ShiftDayGroup(date: $0.key, shifts: $0.value) }
     }
 
     func fetchMyShifts(storeId: String) async {
