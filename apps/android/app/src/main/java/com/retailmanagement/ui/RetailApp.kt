@@ -24,6 +24,10 @@ fun RetailApp() {
             composable("financials") { FinancialsScreen() }
             composable("orders") { OrdersScreen() }
             composable("employees") { EmployeesScreen() }
+            
+            // Owner Supply Chain Routes
+            composable("owner_master_data") { MasterDataScreen(canEdit = true) }
+            composable("owner_ops") { com.retailmanagement.ui.owner.OwnerOpsScreen() }
         }
     }
 }

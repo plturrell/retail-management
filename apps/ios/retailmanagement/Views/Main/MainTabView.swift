@@ -51,6 +51,7 @@ struct MainTabView: View {
         case financials = "Financials"
         case profile = "Profile"
         case settings = "Settings"
+        case vendorReview = "Vendor Review"
 
         var id: String { rawValue }
 
@@ -69,6 +70,7 @@ struct MainTabView: View {
             case .financials: return "dollarsign.circle.fill"
             case .profile: return "person.crop.circle.fill"
             case .settings: return "gearshape.fill"
+            case .vendorReview: return "doc.text.magnifyingglass"
             }
         }
 
@@ -78,7 +80,7 @@ struct MainTabView: View {
             case .employees: return UserRole.manager.level
             case .financials: return UserRole.owner.level
             case .inventory, .orders, .workflows: return UserRole.manager.level
-            case .masterData: return UserRole.owner.level
+            case .masterData, .vendorReview: return UserRole.owner.level
             default: return 0
             }
         }
@@ -113,6 +115,8 @@ struct MainTabView: View {
                 InventoryTabView()
             case .masterData:
                 MasterDataView(canEdit: currentRole == .owner)
+            case .vendorReview:
+                VendorReviewTabView()
             case .orders:
                 OrdersTabView()
             case .workflows:
@@ -169,6 +173,10 @@ struct MainTabView: View {
                 MasterDataView(canEdit: currentRole == .owner)
                     .tabItem {
                         Label("Master Data", systemImage: "list.bullet.rectangle.portrait")
+                    }
+                VendorReviewTabView()
+                    .tabItem {
+                        Label("Vendor Review", systemImage: "doc.text.magnifyingglass")
                     }
             }
 
