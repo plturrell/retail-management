@@ -1,3 +1,6 @@
+# ─── Nested working repos (not submodules) ───────────────────
+docs/ocbc/taxes/
+
 # ─── Secrets (NEVER commit) ───────────────────────────────────
 .env
 *.env

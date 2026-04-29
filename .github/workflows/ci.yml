@@ -33,7 +33,7 @@ jobs:
 
   ios-macos-build:
     name: SwiftUI app build (macOS + iOS Simulator)
-    runs-on: macos-14
+    runs-on: macos-15
     defaults:
       run:
         working-directory: apps/ios
