@@ -1,6 +1,12 @@
 import { useEffect, useState } from "react";
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from "recharts";
+import { Gem } from "lucide-react";
 import { api } from "../lib/api";
+import { formatMoney, formatMoneyCompact } from "../lib/format";
+import { PageHeader } from "../components/ui/PageHeader";
+import { Card } from "../components/ui/Card";
+import { Skeleton } from "../components/ui/Skeleton";
+import { EmptyState } from "../components/ui/EmptyState";
 
 interface UserMe {
   id: string;
@@ -44,10 +50,6 @@ interface MonthData {
   commission: number;
 }
 
-function fmt(n: number) {
-  return `$${n.toFixed(2)}`;
-}
-
 export default function CommissionPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -63,7 +65,11 @@ export default function CommissionPage() {
         const me = await api.get<{ data: UserMe }>("/users/me");
         const userId = me.data.id;
         const storeId = me.data.store_roles?.[0]?.store_id;
-        if (!storeId) { setError("No store assigned"); setLoading(false); return; }
+        if (!storeId) {
+          setError("No store assigned");
+          setLoading(false);
+          return;
+        }
 
         const [runsRes, rulesRes, profileRes] = await Promise.allSettled([
           api.get<{ data: PayrollRun[] }>(`/stores/${storeId}/payroll`),
@@ -84,7 +90,6 @@ export default function CommissionPage() {
             .filter((r) => r.status === "approved" || r.status === "calculated")
             .sort((a, b) => b.period_end.localeCompare(a.period_end));
 
-          // Build monthly history (last 6 months)
           const monthMap = new Map<string, MonthData>();
           for (const run of runs) {
             const d = new Date(run.period_end + "T00:00:00");
@@ -94,7 +99,11 @@ export default function CommissionPage() {
             const sales = mySlips.reduce((t, s) => t + s.commission_sales, 0);
             const comm = mySlips.reduce((t, s) => t + s.commission_amount, 0);
             const existing = monthMap.get(key) || { month: label, sales: 0, commission: 0 };
-            monthMap.set(key, { month: label, sales: existing.sales + sales, commission: existing.commission + comm });
+            monthMap.set(key, {
+              month: label,
+              sales: existing.sales + sales,
+              commission: existing.commission + comm,
+            });
           }
           const sorted = [...monthMap.entries()]
             .sort(([a], [b]) => a.localeCompare(b))
@@ -102,7 +111,6 @@ export default function CommissionPage() {
             .map(([, v]) => v);
           setHistory(sorted);
 
-          // Current period = most recent run
           if (runs.length > 0) {
             const latest = runs[0];
             const mySlips = (latest.payslips || []).filter((s) => s.user_id === userId);
@@ -118,65 +126,130 @@ export default function CommissionPage() {
     })();
   }, []);
 
-  if (loading) return <div className="flex items-center justify-center py-20 text-gray-400">Loading commission data…</div>;
-  if (error) return <div className="rounded-lg bg-red-50 p-4 text-sm text-red-600">{error}</div>;
-
   return (
-    <div>
-      <h1 className="text-xl font-bold text-gray-800">Commission</h1>
-      <p className="mt-1 text-sm text-gray-500">Your sales commission earnings and rules.</p>
+    <div className="space-y-6">
+      <PageHeader title="Commission" description="Sales-driven earnings and rules." />
 
-      {/* Current period summary */}
-      <div className="mt-4 grid grid-cols-2 gap-3">
-        <div className="rounded-lg border border-gray-200 bg-white p-4">
-          <p className="text-xs font-medium text-gray-400 uppercase">Total Sales</p>
-          <p className="mt-1 text-2xl font-bold text-gray-800">{fmt(currentSales)}</p>
-        </div>
-        <div className="rounded-lg border border-gray-200 bg-white p-4">
-          <p className="text-xs font-medium text-gray-400 uppercase">Commission Earned</p>
-          <p className="mt-1 text-2xl font-bold text-green-700">{fmt(currentCommission)}</p>
-        </div>
-      </div>
-
-      {/* Historical chart */}
-      {history.length > 0 && (
-        <div className="mt-6 rounded-lg border border-gray-200 bg-white p-4">
-          <h2 className="text-sm font-semibold text-gray-700 mb-3">Commission History (Last 6 Months)</h2>
-          <ResponsiveContainer width="100%" height={220}>
-            <BarChart data={history} margin={{ top: 5, right: 5, left: -10, bottom: 5 }}>
-              <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
-              <XAxis dataKey="month" tick={{ fontSize: 11 }} />
-              <YAxis tick={{ fontSize: 11 }} tickFormatter={(v: number) => `$${v}`} />
-              <Tooltip formatter={(v: number) => fmt(v)} />
-              <Bar dataKey="commission" fill="#16a34a" radius={[4, 4, 0, 0]} name="Commission" />
-            </BarChart>
-          </ResponsiveContainer>
+      {error && (
+        <div className="rounded-xl border border-[var(--color-negative-600)]/15 bg-[var(--color-negative-50)] p-3 text-sm text-[var(--color-negative-700)]">
+          {error}
         </div>
       )}
 
-      {/* Commission rules */}
-      <div className="mt-6 rounded-lg border border-gray-200 bg-white p-4">
-        <h2 className="text-sm font-semibold text-gray-700 mb-3">Commission Rules</h2>
+      {/* Summary cards */}
+      {loading ? (
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+          <Skeleton className="h-24" />
+          <Skeleton className="h-24" />
+        </div>
+      ) : (
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+          <Card padding="lg">
+            <p className="text-xs font-semibold uppercase tracking-wide text-[var(--color-ink-muted)]">
+              Total Sales
+            </p>
+            <p className="tabular mt-1 text-3xl font-bold tracking-tight text-[var(--color-ink-primary)]">
+              {formatMoney(currentSales)}
+            </p>
+            <p className="mt-1 text-xs text-[var(--color-ink-muted)]">Most recent payroll period</p>
+          </Card>
+          <Card
+            padding="lg"
+            className="bg-gradient-to-br from-[var(--color-positive-50)] to-[var(--color-surface)] border-[var(--color-positive-600)]/20"
+          >
+            <p className="text-xs font-semibold uppercase tracking-wide text-[var(--color-positive-700)]/80">
+              Commission Earned
+            </p>
+            <p className="tabular mt-1 text-3xl font-bold tracking-tight text-[var(--color-positive-700)]">
+              {formatMoney(currentCommission)}
+            </p>
+            <p className="mt-1 text-xs text-[var(--color-ink-muted)]">Most recent payroll period</p>
+          </Card>
+        </div>
+      )}
+
+      {/* History chart */}
+      {!loading && history.length > 0 && (
+        <Card padding="lg">
+          <div className="mb-4 flex items-center justify-between">
+            <div>
+              <h2 className="text-base font-semibold text-[var(--color-ink-primary)]">
+                Commission history
+              </h2>
+              <p className="text-xs text-[var(--color-ink-muted)]">Last 6 months</p>
+            </div>
+          </div>
+          <div className="h-56">
+            <ResponsiveContainer width="100%" height="100%">
+              <BarChart data={history} margin={{ top: 8, right: 8, left: -12, bottom: 0 }}>
+                <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" vertical={false} />
+                <XAxis
+                  dataKey="month"
+                  tick={{ fontSize: 12, fill: "#64748b" }}
+                  axisLine={false}
+                  tickLine={false}
+                />
+                <YAxis
+                  tick={{ fontSize: 12, fill: "#64748b" }}
+                  tickFormatter={(v: number) => formatMoneyCompact(v)}
+                  axisLine={false}
+                  tickLine={false}
+                />
+                <Tooltip
+                  formatter={(v: number) => [formatMoney(v), "Commission"]}
+                  contentStyle={{
+                    fontSize: 13,
+                    borderRadius: 12,
+                    border: "1px solid #e2e8f0",
+                    boxShadow: "0 10px 30px -8px rgba(15,23,42,0.18)",
+                  }}
+                  cursor={{ fill: "rgba(59,130,246,0.06)" }}
+                />
+                <Bar
+                  dataKey="commission"
+                  fill="var(--color-positive-600)"
+                  radius={[6, 6, 0, 0]}
+                  name="Commission"
+                />
+              </BarChart>
+            </ResponsiveContainer>
+          </div>
+        </Card>
+      )}
+
+      {/* Rules */}
+      <Card padding="lg">
+        <h2 className="text-base font-semibold text-[var(--color-ink-primary)]">
+          Commission rules
+        </h2>
+        <p className="mt-0.5 text-xs text-[var(--color-ink-muted)]">
+          How your commission is calculated
+        </p>
+
         {rules.length > 0 ? (
-          <div className="space-y-4">
+          <div className="mt-4 space-y-5">
             {rules.map((rule) => (
               <div key={rule.id}>
-                <p className="text-sm font-medium text-gray-800">{rule.name}</p>
-                <div className="mt-1 overflow-x-auto">
-                  <table className="w-full text-xs">
+                <p className="text-sm font-semibold text-[var(--color-ink-primary)]">{rule.name}</p>
+                <div className="mt-2 overflow-hidden rounded-xl border border-[var(--color-border)]">
+                  <table className="w-full text-sm">
                     <thead>
-                      <tr className="border-b border-gray-100 text-gray-400">
-                        <th className="py-1 text-left font-medium">Sales Range</th>
-                        <th className="py-1 text-right font-medium">Rate</th>
+                      <tr className="border-b border-[var(--color-border)] bg-[var(--color-surface-muted)] text-xs uppercase tracking-wide text-[var(--color-ink-muted)]">
+                        <th className="px-3 py-2 text-left font-semibold">Sales range</th>
+                        <th className="px-3 py-2 text-right font-semibold">Rate</th>
                       </tr>
                     </thead>
                     <tbody>
                       {rule.tiers.map((tier, i) => (
-                        <tr key={i} className="border-b border-gray-50">
-                          <td className="py-1.5 text-gray-700">
-                            ${tier.min.toLocaleString()} – {tier.max != null ? `$${tier.max.toLocaleString()}` : "∞"}
+                        <tr
+                          key={i}
+                          className="border-b border-[var(--color-border)] last:border-0"
+                        >
+                          <td className="tabular px-3 py-2 text-[var(--color-ink-secondary)]">
+                            {formatMoneyCompact(tier.min)} –{" "}
+                            {tier.max != null ? formatMoneyCompact(tier.max) : "∞"}
                           </td>
-                          <td className="py-1.5 text-right text-gray-700 font-medium">
+                          <td className="tabular px-3 py-2 text-right font-semibold text-[var(--color-ink-primary)]">
                             {(tier.rate * 100).toFixed(1)}%
                           </td>
                         </tr>
@@ -188,13 +261,25 @@ export default function CommissionPage() {
             ))}
           </div>
         ) : flatRate != null ? (
-          <p className="text-sm text-gray-600">
-            Flat commission rate: <span className="font-semibold text-gray-800">{flatRate}%</span> on all attributed sales.
-          </p>
+          <div className="mt-4 rounded-xl bg-[var(--color-brand-50)] p-4">
+            <p className="text-sm text-[var(--color-ink-secondary)]">
+              Flat commission rate of{" "}
+              <span className="font-bold text-[var(--color-brand-700)]">{flatRate}%</span> on all
+              attributed sales.
+            </p>
+          </div>
+        ) : loading ? (
+          <Skeleton className="mt-4 h-12 w-full" />
         ) : (
-          <p className="text-sm text-gray-400">No commission rules configured for your store.</p>
+          <div className="mt-4">
+            <EmptyState
+              icon={<Gem size={20} />}
+              title="No rules set"
+              description="No commission rules are configured for your store yet."
+            />
+          </div>
         )}
-      </div>
+      </Card>
     </div>
   );
 }

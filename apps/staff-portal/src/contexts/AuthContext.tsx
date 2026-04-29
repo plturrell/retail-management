@@ -16,11 +16,15 @@ interface AuthContextValue {
 
 const AuthContext = createContext<AuthContextValue | undefined>(undefined);
 
+const PREVIEW_AUTH = import.meta.env.VITE_PREVIEW_AUTH === "1";
+const PREVIEW_USER = { email: "preview@retailsg.com", uid: "preview-user-id" } as unknown as User;
+
 export function AuthProvider({ children }: { children: ReactNode }) {
-  const [user, setUser] = useState<User | null>(null);
-  const [loading, setLoading] = useState(true);
+  const [user, setUser] = useState<User | null>(PREVIEW_AUTH ? PREVIEW_USER : null);
+  const [loading, setLoading] = useState(!PREVIEW_AUTH);
 
   useEffect(() => {
+    if (PREVIEW_AUTH) return;
     const unsub = onAuthStateChanged(auth, (u) => {
       setUser(u);
       setLoading(false);

@@ -1,16 +1,22 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { ChevronLeft, ChevronRight, CalendarOff, StickyNote } from "lucide-react";
 import { api } from "../lib/api";
+import { classNames, formatTimeFromHMS } from "../lib/format";
+import { PageHeader } from "../components/ui/PageHeader";
+import { Card } from "../components/ui/Card";
+import { IconButton } from "../components/ui/Button";
+import { EmptyState } from "../components/ui/EmptyState";
+import { Skeleton } from "../components/ui/Skeleton";
+import { Badge } from "../components/ui/Badge";
 
 const STORE_ID = import.meta.env.VITE_STORE_ID as string;
-
-// ---- helpers ----
 
 interface Shift {
   id: string;
   schedule_id: string;
   user_id: string;
-  shift_date: string; // "YYYY-MM-DD"
-  start_time: string; // "HH:MM:SS"
+  shift_date: string;
+  start_time: string;
   end_time: string;
   break_minutes: number;
   notes: string | null;
@@ -19,7 +25,7 @@ interface Shift {
 
 function startOfWeek(d: Date): Date {
   const day = d.getDay();
-  const diff = d.getDate() - day + (day === 0 ? -6 : 1); // Monday
+  const diff = d.getDate() - day + (day === 0 ? -6 : 1);
   const mon = new Date(d);
   mon.setDate(diff);
   mon.setHours(0, 0, 0, 0);
@@ -32,21 +38,11 @@ function addDays(d: Date, n: number): Date {
   return r;
 }
 
-function fmtDate(d: Date): string {
+function fmtDateKey(d: Date): string {
   return d.toISOString().slice(0, 10);
 }
 
-function fmtTime(t: string): string {
-  // "HH:MM:SS" → "HH:MM AM/PM"
-  const [h, m] = t.split(":").map(Number);
-  const ampm = h >= 12 ? "PM" : "AM";
-  const h12 = h % 12 || 12;
-  return `${h12}:${String(m).padStart(2, "0")} ${ampm}`;
-}
-
 const DAY_LABELS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
-
-// ---- component ----
 
 export default function SchedulePage() {
   const [weekStart, setWeekStart] = useState(() => startOfWeek(new Date()));
@@ -58,8 +54,8 @@ export default function SchedulePage() {
     setLoading(true);
     setError(null);
     try {
-      const from = fmtDate(weekStart);
-      const to = fmtDate(addDays(weekStart, 6));
+      const from = fmtDateKey(weekStart);
+      const to = fmtDateKey(addDays(weekStart, 6));
       const res = await api.get<{ data: Shift[] }>(
         `/stores/${STORE_ID}/schedules/my-shifts?from=${from}&to=${to}`,
       );
@@ -75,125 +71,174 @@ export default function SchedulePage() {
     fetchShifts();
   }, [fetchShifts]);
 
-  const today = fmtDate(new Date());
+  const today = fmtDateKey(new Date());
 
-  // group shifts by date
-  const shiftsByDate = new Map<string, Shift[]>();
-  for (const s of shifts) {
-    const arr = shiftsByDate.get(s.shift_date) ?? [];
-    arr.push(s);
-    shiftsByDate.set(s.shift_date, arr);
-  }
+  const shiftsByDate = useMemo(() => {
+    const map = new Map<string, Shift[]>();
+    for (const s of shifts) {
+      const arr = map.get(s.shift_date) ?? [];
+      arr.push(s);
+      map.set(s.shift_date, arr);
+    }
+    return map;
+  }, [shifts]);
 
-  const weekLabel = `${addDays(weekStart, 0).toLocaleDateString("en-SG", { month: "short", day: "numeric" })} – ${addDays(weekStart, 6).toLocaleDateString("en-SG", { month: "short", day: "numeric", year: "numeric" })}`;
+  const totalHours = useMemo(
+    () => shifts.reduce((sum, s) => sum + (s.hours ?? 0), 0),
+    [shifts],
+  );
+
+  const weekLabel = `${addDays(weekStart, 0).toLocaleDateString("en-SG", {
+    month: "short",
+    day: "numeric",
+  })} – ${addDays(weekStart, 6).toLocaleDateString("en-SG", {
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+  })}`;
 
   return (
-    <div>
-      <h1 className="text-xl font-bold text-gray-800">Schedule</h1>
-      <p className="mt-1 text-sm text-gray-500">Your weekly shifts</p>
+    <div className="space-y-6">
+      <PageHeader title="Schedule" description="Your weekly shifts at a glance." />
 
       {/* Week navigation */}
-      <div className="mt-4 flex items-center justify-between rounded-lg bg-white px-4 py-3 shadow-sm">
-        <button
+      <Card padding="sm" className="flex items-center justify-between">
+        <IconButton
+          label="Previous week"
           onClick={() => setWeekStart(addDays(weekStart, -7))}
-          className="rounded-md p-2 text-gray-600 hover:bg-gray-100"
-          aria-label="Previous week"
         >
-          ◀
-        </button>
-        <div className="text-center">
-          <p className="text-sm font-semibold text-gray-800">{weekLabel}</p>
+          <ChevronLeft size={20} />
+        </IconButton>
+        <div className="flex flex-col items-center text-center">
+          <p className="text-sm font-semibold text-[var(--color-ink-primary)]">{weekLabel}</p>
           <button
             onClick={() => setWeekStart(startOfWeek(new Date()))}
-            className="mt-0.5 text-xs text-blue-600 hover:underline"
+            className="mt-0.5 rounded-md px-2 py-0.5 text-xs font-semibold text-[var(--color-brand-600)] hover:bg-[var(--color-brand-50)]"
           >
-            Today
+            Jump to today
           </button>
         </div>
-        <button
-          onClick={() => setWeekStart(addDays(weekStart, 7))}
-          className="rounded-md p-2 text-gray-600 hover:bg-gray-100"
-          aria-label="Next week"
-        >
-          ▶
-        </button>
-      </div>
+        <IconButton label="Next week" onClick={() => setWeekStart(addDays(weekStart, 7))}>
+          <ChevronRight size={20} />
+        </IconButton>
+      </Card>
 
-      {/* Loading / Error */}
-      {loading && (
-        <div className="mt-6 text-center text-sm text-gray-400">Loading shifts…</div>
+      {/* Week summary */}
+      {!loading && !error && (
+        <Card padding="md" className="flex items-center justify-between">
+          <div>
+            <p className="text-xs font-semibold uppercase tracking-wide text-[var(--color-ink-muted)]">
+              Week total
+            </p>
+            <p className="tabular mt-0.5 text-2xl font-bold text-[var(--color-ink-primary)]">
+              {totalHours.toFixed(1)}
+              <span className="ml-1 text-base font-medium text-[var(--color-ink-muted)]">hrs</span>
+            </p>
+          </div>
+          <Badge tone="brand">{shifts.length} shifts</Badge>
+        </Card>
       )}
+
+      {/* Error */}
       {error && (
-        <div className="mt-4 rounded-lg bg-red-50 p-3 text-sm text-red-700">{error}</div>
+        <div className="rounded-xl border border-[var(--color-negative-600)]/15 bg-[var(--color-negative-50)] p-3 text-sm text-[var(--color-negative-700)]">
+          {error}
+        </div>
       )}
 
-      {/* Week grid */}
-      {!loading && (
-        <div className="mt-4 space-y-2">
+      {/* Loading skeleton */}
+      {loading && (
+        <div className="space-y-2">
+          {Array.from({ length: 4 }).map((_, i) => (
+            <Skeleton key={i} className="h-20 w-full" />
+          ))}
+        </div>
+      )}
+
+      {/* Day cards */}
+      {!loading && !error && (
+        <div className="space-y-2">
           {Array.from({ length: 7 }, (_, i) => {
             const dayDate = addDays(weekStart, i);
-            const dateStr = fmtDate(dayDate);
+            const dateStr = fmtDateKey(dayDate);
             const isToday = dateStr === today;
             const dayShifts = shiftsByDate.get(dateStr) ?? [];
 
             return (
-              <div
+              <Card
                 key={dateStr}
-                className={`rounded-lg border bg-white p-3 transition-colors ${
-                  isToday
-                    ? "border-blue-400 bg-blue-50 ring-1 ring-blue-200"
-                    : "border-gray-200"
-                }`}
+                padding="md"
+                className={classNames(
+                  "transition-all duration-200",
+                  isToday &&
+                    "ring-2 ring-[var(--color-brand-500)]/30 border-[var(--color-brand-500)]/40",
+                )}
               >
-                {/* Day header */}
-                <div className="flex items-center gap-2">
-                  <span
-                    className={`flex h-8 w-8 items-center justify-center rounded-full text-sm font-bold ${
+                <div className="flex items-center gap-3">
+                  <div
+                    className={classNames(
+                      "flex h-10 w-10 flex-col items-center justify-center rounded-xl text-xs font-bold",
                       isToday
-                        ? "bg-blue-600 text-white"
-                        : "bg-gray-100 text-gray-700"
-                    }`}
+                        ? "bg-[var(--color-brand-600)] text-white"
+                        : "bg-[var(--color-surface-subtle)] text-[var(--color-ink-secondary)]",
+                    )}
                   >
-                    {dayDate.getDate()}
-                  </span>
-                  <span className={`text-sm font-medium ${isToday ? "text-blue-700" : "text-gray-600"}`}>
-                    {DAY_LABELS[i]}
-                  </span>
-                  {isToday && (
-                    <span className="ml-1 rounded-full bg-blue-600 px-2 py-0.5 text-[10px] font-semibold uppercase text-white">
-                      Today
+                    <span className="text-[10px] font-medium tracking-wide opacity-80">
+                      {DAY_LABELS[i]}
                     </span>
-                  )}
+                    <span className="text-base font-bold leading-none">{dayDate.getDate()}</span>
+                  </div>
+                  <div className="flex-1">
+                    {isToday && (
+                      <Badge tone="brand" className="mb-0.5">
+                        Today
+                      </Badge>
+                    )}
+                  </div>
                 </div>
 
-                {/* Shifts */}
                 {dayShifts.length === 0 ? (
-                  <p className="mt-2 text-xs text-gray-400 italic">No shifts</p>
+                  <p className="mt-2 pl-13 text-xs text-[var(--color-ink-muted)]">No shifts</p>
                 ) : (
-                  <div className="mt-2 space-y-2">
+                  <div className="mt-3 space-y-2">
                     {dayShifts.map((shift) => (
                       <div
                         key={shift.id}
-                        className="flex items-start justify-between rounded-md bg-gray-50 px-3 py-2"
+                        className="flex items-start justify-between gap-3 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface-muted)] px-3 py-2.5"
                       >
-                        <div>
-                          <p className="text-sm font-semibold text-gray-800">
-                            {fmtTime(shift.start_time)} – {fmtTime(shift.end_time)}
+                        <div className="min-w-0">
+                          <p className="tabular text-sm font-semibold text-[var(--color-ink-primary)]">
+                            {formatTimeFromHMS(shift.start_time)} –{" "}
+                            {formatTimeFromHMS(shift.end_time)}
                           </p>
-                          <p className="mt-0.5 text-xs text-gray-500">
-                            {shift.hours}h ({shift.break_minutes}min break)
+                          <p className="mt-0.5 text-xs text-[var(--color-ink-muted)]">
+                            {shift.hours.toFixed(1)}h · {shift.break_minutes}m break
                           </p>
                           {shift.notes && (
-                            <p className="mt-1 text-xs text-gray-500">📝 {shift.notes}</p>
+                            <p className="mt-1.5 flex items-start gap-1.5 text-xs text-[var(--color-ink-secondary)]">
+                              <StickyNote
+                                size={12}
+                                className="mt-0.5 shrink-0 text-[var(--color-ink-muted)]"
+                              />
+                              <span>{shift.notes}</span>
+                            </p>
                           )}
                         </div>
                       </div>
                     ))}
                   </div>
                 )}
-              </div>
+              </Card>
             );
           })}
+
+          {shifts.length === 0 && (
+            <EmptyState
+              icon={<CalendarOff size={20} />}
+              title="No shifts this week"
+              description="Your schedule for this week hasn't been published yet."
+            />
+          )}
         </div>
       )}
     </div>

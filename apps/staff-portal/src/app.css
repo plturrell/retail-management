@@ -1,1 +1,130 @@
 @import "tailwindcss";
+
+@theme {
+  --color-brand-50: #eff6ff;
+  --color-brand-100: #dbeafe;
+  --color-brand-500: #3b82f6;
+  --color-brand-600: #2563eb;
+  --color-brand-700: #1d4ed8;
+
+  --color-positive-50: #ecfdf5;
+  --color-positive-600: #059669;
+  --color-positive-700: #047857;
+
+  --color-negative-50: #fef2f2;
+  --color-negative-600: #dc2626;
+  --color-negative-700: #b91c1c;
+
+  --color-warning-50: #fffbeb;
+  --color-warning-600: #d97706;
+  --color-warning-700: #b45309;
+
+  --color-surface: #ffffff;
+  --color-surface-muted: #f8fafc;
+  --color-surface-subtle: #f1f5f9;
+
+  --color-ink-primary: #0f172a;
+  --color-ink-secondary: #475569;
+  --color-ink-muted: #64748b;
+  --color-ink-disabled: #94a3b8;
+
+  --color-border: #e2e8f0;
+  --color-border-strong: #cbd5e1;
+
+  --shadow-card: 0 1px 2px 0 rgb(15 23 42 / 0.04), 0 1px 3px 0 rgb(15 23 42 / 0.06);
+  --shadow-elevated: 0 4px 6px -1px rgb(15 23 42 / 0.06), 0 10px 20px -4px rgb(15 23 42 / 0.08);
+  --shadow-floating: 0 10px 30px -8px rgb(15 23 42 / 0.18);
+
+  --radius-card: 14px;
+
+  --ease-spring: cubic-bezier(0.32, 0.72, 0, 1);
+}
+
+@layer base {
+  html {
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    text-rendering: optimizeLegibility;
+  }
+
+  body {
+    font-family:
+      -apple-system, BlinkMacSystemFont, "SF Pro Text", "Inter", "Segoe UI",
+      Roboto, "Helvetica Neue", Arial, sans-serif;
+    font-feature-settings: "cv11", "ss01", "ss03";
+    color: var(--color-ink-primary);
+    background: var(--color-surface-muted);
+  }
+
+  *:focus-visible {
+    outline: 2px solid var(--color-brand-600);
+    outline-offset: 2px;
+    border-radius: 6px;
+  }
+
+  button,
+  [role="button"] {
+    -webkit-tap-highlight-color: transparent;
+  }
+
+  /* Tabular numerals for money/time */
+  .tabular {
+    font-variant-numeric: tabular-nums;
+    font-feature-settings: "tnum";
+  }
+}
+
+@layer utilities {
+  .safe-bottom {
+    padding-bottom: env(safe-area-inset-bottom);
+  }
+  .safe-top {
+    padding-top: env(safe-area-inset-top);
+  }
+
+  .animate-fade-in {
+    animation: fade-in 240ms var(--ease-spring) both;
+  }
+  .animate-rise {
+    animation: rise 320ms var(--ease-spring) both;
+  }
+  .animate-shimmer {
+    background: linear-gradient(
+      90deg,
+      var(--color-surface-subtle) 0%,
+      var(--color-surface-muted) 50%,
+      var(--color-surface-subtle) 100%
+    );
+    background-size: 200% 100%;
+    animation: shimmer 1.6s linear infinite;
+  }
+}
+
+@keyframes fade-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes rise {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes shimmer {
+  from {
+    background-position: 200% 0;
+  }
+  to {
+    background-position: -200% 0;
+  }
+}

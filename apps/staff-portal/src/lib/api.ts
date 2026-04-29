@@ -1,6 +1,8 @@
 import { auth } from "./firebase";
+import { previewMatch } from "./preview-fixtures";
 
 const BASE_URL = import.meta.env.VITE_API_URL || "http://localhost:8000/api";
+const PREVIEW = import.meta.env.VITE_PREVIEW_AUTH === "1";
 
 async function getAuthHeaders(): Promise<HeadersInit> {
   const user = auth.currentUser;
@@ -13,6 +15,13 @@ async function getAuthHeaders(): Promise<HeadersInit> {
 }
 
 export async function apiFetch<T>(path: string, options: RequestInit = {}): Promise<T> {
+  if (PREVIEW) {
+    const fixture = previewMatch(path, (options.method as string) ?? "GET");
+    if (fixture !== undefined) {
+      await new Promise((r) => setTimeout(r, 300));
+      return fixture as T;
+    }
+  }
   const headers = await getAuthHeaders();
   const res = await fetch(`${BASE_URL}${path}`, {
     ...options,
