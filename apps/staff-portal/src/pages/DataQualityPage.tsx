@@ -543,7 +543,7 @@ export default function DataQualityPage() {
 
   const downloadNecExport = async () => {
     setExporting(true);
-    setSaveMsg("");
+    setSaveMsg(null);
     try {
       const user = auth.currentUser;
       if (!user) throw new Error("Not authenticated");
@@ -572,9 +572,9 @@ export default function DataQualityPage() {
       link.click();
       link.remove();
       window.URL.revokeObjectURL(objectUrl);
-      setSaveMsg(`Downloaded ${filename}`);
+      setSaveMsg({ text: `Downloaded ${filename}`, kind: "success" });
     } catch (err) {
-      setSaveMsg(err instanceof Error ? err.message : "Export failed");
+      setSaveMsg({ text: err instanceof Error ? err.message : "Export failed", kind: "error" });
     } finally {
       setExporting(false);
     }
@@ -582,13 +582,16 @@ export default function DataQualityPage() {
 
   const downloadCagTxtBundle = async () => {
     if (!cagStoreId.trim()) {
-      setSaveMsg("Enter the 5-digit NEC Store ID before downloading the CAG TXT bundle");
+      setSaveMsg({
+        text: "Enter the 5-digit NEC Store ID before downloading the CAG TXT bundle",
+        kind: "error",
+      });
       return;
     }
     localStorage.setItem("cag_nec_store_id", cagStoreId.trim());
     localStorage.setItem("cag_nec_airside", cagAirside ? "1" : "0");
     setExportingTxt(true);
-    setSaveMsg("");
+    setSaveMsg(null);
     try {
       const user = auth.currentUser;
       if (!user) throw new Error("Not authenticated");
@@ -617,9 +620,15 @@ export default function DataQualityPage() {
       link.click();
       link.remove();
       window.URL.revokeObjectURL(url);
-      setSaveMsg(`Downloaded ${filename}${counts ? ` — ${counts}` : ""}`);
+      setSaveMsg({
+        text: `Downloaded ${filename}${counts ? ` — ${counts}` : ""}`,
+        kind: "success",
+      });
     } catch (err) {
-      setSaveMsg(err instanceof Error ? err.message : "CAG TXT export failed");
+      setSaveMsg({
+        text: err instanceof Error ? err.message : "CAG TXT export failed",
+        kind: "error",
+      });
     } finally {
       setExportingTxt(false);
     }
@@ -627,12 +636,15 @@ export default function DataQualityPage() {
 
   const previewPluPlan = async () => {
     setPluLoading(true);
-    setSaveMsg("");
+    setSaveMsg(null);
     try {
       const res = await api.get<PluBulkPlan>("/data-quality/plus/bulk-preview");
       setPluPlan(res);
     } catch (err) {
-      setSaveMsg(err instanceof Error ? `PLU preview failed: ${err.message}` : "PLU preview failed");
+      setSaveMsg({
+        text: err instanceof Error ? `PLU preview failed: ${err.message}` : "PLU preview failed",
+        kind: "error",
+      });
     } finally {
       setPluLoading(false);
     }
@@ -642,7 +654,7 @@ export default function DataQualityPage() {
     if (!pluPlan) return;
     if (
       !confirm(
-        `Generate / repair ${pluPlan.summary.total} PLU code(s)?\n\n` +
+        `Generate / repair ${pluPlan.summary.total ?? 0} PLU code(s)?\n\n` +
           `• missing: ${pluPlan.summary.missing ?? 0}\n` +
           `• invalid: ${pluPlan.summary.invalid ?? 0}\n` +
           `• misaligned: ${pluPlan.summary.misaligned ?? 0}\n\n` +
@@ -654,10 +666,16 @@ export default function DataQualityPage() {
     try {
       const res = await api.post<PluBulkPlan>("/data-quality/plus/bulk-apply", {});
       setPluPlan(res);
-      setSaveMsg(`PLU bulk-assign applied — ${res.summary.total ?? 0} row(s) updated.`);
+      setSaveMsg({
+        text: `PLU bulk-assign applied — ${res.summary.total ?? 0} row(s) updated.`,
+        kind: "success",
+      });
       void load();
     } catch (err) {
-      setSaveMsg(err instanceof Error ? `PLU apply failed: ${err.message}` : "PLU apply failed");
+      setSaveMsg({
+        text: err instanceof Error ? `PLU apply failed: ${err.message}` : "PLU apply failed",
+        kind: "error",
+      });
     } finally {
       setPluApplying(false);
     }
@@ -665,14 +683,17 @@ export default function DataQualityPage() {
 
   const runNecPreview = async () => {
     setPreviewLoading(true);
-    setSaveMsg("");
+    setSaveMsg(null);
     try {
       const params = new URLSearchParams({ taxable: cagAirside ? "false" : "true" });
       if (cagStoreId.trim()) params.set("nec_store_id", cagStoreId.trim());
       const res = await api.get<NecPreview>(`/cag/export/preview?${params.toString()}`);
       setPreview(res);
     } catch (err) {
-      setSaveMsg(err instanceof Error ? `Preview failed: ${err.message}` : "Preview failed");
+      setSaveMsg({
+        text: err instanceof Error ? `Preview failed: ${err.message}` : "Preview failed",
+        kind: "error",
+      });
     } finally {
       setPreviewLoading(false);
     }
@@ -680,14 +701,14 @@ export default function DataQualityPage() {
 
   const pushCagBundleToSftp = async () => {
     if (!cagStoreId.trim()) {
-      setSaveMsg("Enter the 5-digit NEC Store ID before pushing");
+      setSaveMsg({ text: "Enter the 5-digit NEC Store ID before pushing", kind: "error" });
       return;
     }
     if (!confirm("Push the master TXT bundle to the CAG SFTP Inbound/Working folder?")) return;
     localStorage.setItem("cag_nec_store_id", cagStoreId.trim());
     localStorage.setItem("cag_nec_airside", cagAirside ? "1" : "0");
     setPushingSftp(true);
-    setSaveMsg("");
+    setSaveMsg(null);
     try {
       const user = auth.currentUser;
       if (!user) throw new Error("Not authenticated");
@@ -705,11 +726,15 @@ export default function DataQualityPage() {
       const counts = Object.entries(body.counts ?? {})
         .map(([k, v]) => `${k}=${v}`)
         .join(", ");
-      setSaveMsg(
-        `SFTP push OK — ${body.files_uploaded.length} files, ${body.bytes_uploaded} bytes (${counts}).`,
-      );
+      setSaveMsg({
+        text: `SFTP push OK — ${body.files_uploaded.length} files, ${body.bytes_uploaded} bytes (${counts}).`,
+        kind: "success",
+      });
     } catch (err) {
-      setSaveMsg(err instanceof Error ? `SFTP push failed: ${err.message}` : "SFTP push failed");
+      setSaveMsg({
+        text: err instanceof Error ? `SFTP push failed: ${err.message}` : "SFTP push failed",
+        kind: "error",
+      });
     } finally {
       setPushingSftp(false);
     }
@@ -856,7 +881,15 @@ export default function DataQualityPage() {
       </div>
 
       {saveMsg && (
-        <div className="rounded-lg border border-green-200 bg-green-50 px-4 py-2 text-sm text-green-700">{saveMsg}</div>
+        <div
+          className={
+            saveMsg.kind === "error"
+              ? "rounded-lg border border-red-200 bg-red-50 px-4 py-2 text-sm text-red-700"
+              : "rounded-lg border border-green-200 bg-green-50 px-4 py-2 text-sm text-green-700"
+          }
+        >
+          {saveMsg.text}
+        </div>
       )}
 
       {preview && (
