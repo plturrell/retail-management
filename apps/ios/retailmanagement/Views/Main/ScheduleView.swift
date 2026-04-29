@@ -77,17 +77,22 @@ struct ScheduleView: View {
     private var shiftsList: some View {
         List {
             ForEach(viewModel.shiftsByDate) { dayGroup in
-                Section {
-                    ForEach(dayGroup.shifts) { shift in
-                        shiftRow(shift)
-                    }
-                } header: {
-                    Text(formattedDayHeader(dayGroup.date))
-                        .font(.subheadline.weight(.semibold))
-                }
+                section(for: dayGroup)
             }
         }
         .insetGroupedListStyleCompat()
+    }
+
+    @ViewBuilder
+    private func section(for dayGroup: ShiftDayGroup) -> some View {
+        Section {
+            ForEach(dayGroup.shifts) { shift in
+                shiftRow(shift)
+            }
+        } header: {
+            Text(formattedDayHeader(dayGroup.date))
+                .font(.subheadline.weight(.semibold))
+        }
     }
 
     private func shiftRow(_ shift: Shift) -> some View {
