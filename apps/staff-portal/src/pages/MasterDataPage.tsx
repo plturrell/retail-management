@@ -3,6 +3,8 @@ import {
   masterDataApi,
   type ExportResult,
   type IngestPreview,
+  type LabelsExportResult,
+  type PosStatusResponse,
   type PriceRecommendationsResponse,
   type ProductRow,
   type Stats,
@@ -50,10 +52,15 @@ export default function MasterDataPage() {
   const [globalError, setGlobalError] = useState<string | null>(null);
   const [search, setSearch] = useState("");
   const [supplierFilter, setSupplierFilter] = useState<string>("all");
+  const [sourcingFilter, setSourcingFilter] = useState<string>("all");
   const [needsPriceOnly, setNeedsPriceOnly] = useState(true);
   const [purchasedOnly, setPurchasedOnly] = useState(true);
   const [exporting, setExporting] = useState(false);
   const [lastExport, setLastExport] = useState<ExportResult | null>(null);
+  const [posStatus, setPosStatus] = useState<PosStatusResponse | null>(null);
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [labelsExporting, setLabelsExporting] = useState(false);
+  const [lastLabelsExport, setLastLabelsExport] = useState<LabelsExportResult | null>(null);
   const [ingestState, setIngestState] = useState<
     | { kind: "idle" }
     | { kind: "uploading"; filename: string }
@@ -74,15 +81,18 @@ export default function MasterDataPage() {
     setLoading(true);
     setGlobalError(null);
     try {
-      const [statsRes, productsRes] = await Promise.all([
+      const [statsRes, productsRes, posRes] = await Promise.all([
         masterDataApi.stats(),
         masterDataApi.listProducts({
           launch_only: true,
           needs_price: needsPriceOnly,
           purchased_only: purchasedOnly,
+          sourcing_strategy: sourcingFilter !== "all" ? sourcingFilter : undefined,
         }),
+        masterDataApi.posStatus().catch(() => null),
       ]);
       setStats(statsRes);
+      setPosStatus(posRes);
       setRows(
         productsRes.products.map((p) => ({
           product: p,
@@ -92,12 +102,18 @@ export default function MasterDataPage() {
           save: "idle",
         })),
       );
+      setSelected((prev) => {
+        const visible = new Set(productsRes.products.map((p) => p.sku_code));
+        const next = new Set<string>();
+        for (const sku of prev) if (visible.has(sku)) next.add(sku);
+        return next;
+      });
     } catch (e) {
       setGlobalError(`Couldn't reach the backend master-data API. (${(e as Error).message})`);
     } finally {
       setLoading(false);
     }
-  }, [needsPriceOnly, purchasedOnly]);
+  }, [needsPriceOnly, purchasedOnly, sourcingFilter]);
 
   useEffect(() => {
     void loadAll();
@@ -131,6 +147,23 @@ export default function MasterDataPage() {
     const codes = Array.from(new Set(rows.map((r) => r.product.supplier_id || "(none)"))).sort();
     return codes;
   }, [rows]);
+
+  const sourcingOptions = useMemo(() => {
+    const codes = Array.from(
+      new Set(rows.map((r) => r.product.sourcing_strategy || "(unset)")),
+    ).sort();
+    return codes;
+  }, [rows]);
+
+  const posLookup = useCallback(
+    (plu: string | null | undefined): "live" | "no-price" | "missing" => {
+      if (!plu || !posStatus) return "missing";
+      const entry = posStatus.plus[String(plu)];
+      if (!entry) return "missing";
+      return entry.has_current_price ? "live" : "no-price";
+    },
+    [posStatus],
+  );
 
   const updateRow = (sku: string, fn: (r: RowState) => RowState) => {
     setRows((prev) => prev.map((r) => (r.product.sku_code === sku ? fn(r) : r)));
@@ -331,6 +364,68 @@ export default function MasterDataPage() {
 
   const cancelAi = () => setAiState({ kind: "idle" });
 
+  const toggleSelected = (sku: string) => {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(sku)) next.delete(sku);
+      else next.add(sku);
+      return next;
+    });
+  };
+
+  const allVisibleSelected =
+    filteredRows.length > 0 && filteredRows.every((r) => selected.has(r.product.sku_code));
+
+  const toggleAllVisible = () => {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (allVisibleSelected) {
+        for (const r of filteredRows) next.delete(r.product.sku_code);
+      } else {
+        for (const r of filteredRows) next.add(r.product.sku_code);
+      }
+      return next;
+    });
+  };
+
+  const clearSelection = () => setSelected(new Set());
+
+  const exportLabelsForSelected = async (includeBox: boolean) => {
+    if (!isOwner) return;
+    const skus = Array.from(selected);
+    if (skus.length === 0) return;
+    setLabelsExporting(true);
+    setLastLabelsExport(null);
+    try {
+      const suffix = includeBox ? "item_box" : "item";
+      const res = await masterDataApi.exportLabels({
+        skus,
+        include_box: includeBox,
+        output_name: `ptouch_${suffix}_${skus.length}.xlsx`,
+      });
+      setLastLabelsExport(res);
+      if (res.ok && res.download_url) {
+        const filename = res.download_url.split("/").pop() || "ptouch_labels.xlsx";
+        const blob = await masterDataApi.downloadExport(filename);
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement("a");
+        link.href = url;
+        link.download = filename;
+        link.click();
+        URL.revokeObjectURL(url);
+      }
+    } catch (e) {
+      setLastLabelsExport({
+        ok: false,
+        exit_code: -1,
+        stdout: "",
+        stderr: (e as Error).message,
+      });
+    } finally {
+      setLabelsExporting(false);
+    }
+  };
+
   const printPosLabels = async () => {
     if (!isOwner) return;
     const toPrint = filteredRows.filter((r) => r.saleReady);
@@ -459,6 +554,21 @@ export default function MasterDataPage() {
               </option>
             ))}
           </select>
+          <select
+            value={sourcingFilter}
+            onChange={(e) => setSourcingFilter(e.target.value)}
+            className="rounded-md border border-gray-300 px-3 py-1.5 text-sm"
+            title="Filter by sourcing strategy (supplier-purchased vs in-house manufactured)"
+          >
+            <option value="all">All sourcing</option>
+            <option value="supplier_premade">Supplier (pre-made)</option>
+            <option value="manufactured">Manufactured (in-house)</option>
+            {sourcingOptions
+              .filter((s) => s !== "supplier_premade" && !s.startsWith("manufactured") && s !== "(unset)")
+              .map((s) => (
+                <option key={s} value={s}>{s}</option>
+              ))}
+          </select>
           <label className="flex items-center gap-1.5 text-sm text-gray-700" title="Show only SKUs from real POs / invoices (skip catalog-only rows)">
             <input
               type="checkbox"
@@ -511,8 +621,19 @@ export default function MasterDataPage() {
           <table className="w-full text-sm">
             <thead className="sticky top-0 z-10 bg-gray-100 text-left text-xs uppercase tracking-wide text-gray-600">
               <tr>
+                <th className="px-2 py-2">
+                  <input
+                    type="checkbox"
+                    aria-label="Select all visible"
+                    checked={allVisibleSelected}
+                    onChange={toggleAllVisible}
+                    disabled={!isOwner || filteredRows.length === 0}
+                  />
+                </th>
                 <th className="sticky left-0 z-20 bg-gray-100 px-3 py-2">SKU</th>
                 <th className="px-3 py-2">Barcode (PLU)</th>
+                <th className="px-3 py-2">Live POS</th>
+                <th className="px-3 py-2">Sourcing</th>
                 <th className="px-3 py-2">Internal</th>
                 <th className="px-3 py-2">Description</th>
                 <th className="px-3 py-2">Type</th>
@@ -530,14 +651,14 @@ export default function MasterDataPage() {
             <tbody className="divide-y divide-gray-100">
               {loading && (
                 <tr>
-                  <td colSpan={14} className="px-3 py-8 text-center text-gray-400">
+                  <td colSpan={17} className="px-3 py-8 text-center text-gray-400">
                     Loading…
                   </td>
                 </tr>
               )}
               {!loading && filteredRows.length === 0 && !globalError && (
                 <tr>
-                  <td colSpan={14} className="px-3 py-8 text-center text-gray-400">
+                  <td colSpan={17} className="px-3 py-8 text-center text-gray-400">
                     Nothing to show with these filters.
                   </td>
                 </tr>
@@ -546,10 +667,33 @@ export default function MasterDataPage() {
                 const p = r.product;
                 const priceNum = Number.parseFloat(r.draftPrice);
                 const margin = marginPct(p.cost_price, Number.isFinite(priceNum) ? priceNum : null);
+                const posState = posLookup(p.nec_plu);
+                const isSelected = selected.has(p.sku_code);
                 return (
-                  <tr key={p.sku_code} className="hover:bg-blue-50/30">
-                    <td className="sticky left-0 z-10 bg-white px-3 py-2 font-mono text-xs text-gray-700 hover:bg-blue-50/30">{p.sku_code}</td>
+                  <tr key={p.sku_code} className={isSelected ? "bg-blue-50/40" : "hover:bg-blue-50/30"}>
+                    <td className="px-2 py-2">
+                      <input
+                        type="checkbox"
+                        aria-label={`Select ${p.sku_code}`}
+                        checked={isSelected}
+                        onChange={() => toggleSelected(p.sku_code)}
+                        disabled={!isOwner}
+                      />
+                    </td>
+                    <td className={`sticky left-0 z-10 px-3 py-2 font-mono text-xs text-gray-700 ${isSelected ? "bg-blue-50" : "bg-white hover:bg-blue-50/30"}`}>{p.sku_code}</td>
                     <td className="px-3 py-2 font-mono text-xs text-gray-700">{p.nec_plu || "—"}</td>
+                    <td className="px-3 py-2 text-xs">
+                      {posState === "live" && <span className="rounded bg-green-100 px-1.5 py-0.5 text-green-800">Live</span>}
+                      {posState === "no-price" && <span className="rounded bg-amber-100 px-1.5 py-0.5 text-amber-800" title="In Firestore plus collection but no current price doc">No price</span>}
+                      {posState === "missing" && <span className="text-gray-400">—</span>}
+                    </td>
+                    <td className="px-3 py-2 text-xs text-gray-600">
+                      {p.sourcing_strategy === "supplier_premade"
+                        ? "Supplier"
+                        : p.sourcing_strategy?.startsWith("manufactured")
+                          ? "Manufactured"
+                          : (p.sourcing_strategy || "—")}
+                    </td>
                     <td className="px-3 py-2 font-mono text-xs text-gray-500">{p.internal_code || "—"}</td>
                     <td className="px-3 py-2 max-w-md truncate text-gray-700" title={p.description ?? ""}>
                       {p.description}
@@ -615,6 +759,55 @@ export default function MasterDataPage() {
           retail price is a 60% target margin (cost ÷ 0.4 rounded to S$5) — overwrite as needed.
         </p>
       </div>
+
+      {isOwner && selected.size > 0 && (
+        <div className="fixed inset-x-0 bottom-0 z-20 border-t border-gray-200 bg-white shadow-[0_-4px_12px_rgba(0,0,0,0.08)]">
+          <div className="mx-auto flex max-w-[1400px] items-center justify-between gap-3 px-4 py-3">
+            <div className="text-sm text-gray-700">
+              <span className="font-semibold">{selected.size}</span> selected
+              {lastLabelsExport && !lastLabelsExport.ok && (
+                <span className="ml-3 text-red-700">
+                  Export failed: {lastLabelsExport.stderr || `exit ${lastLabelsExport.exit_code}`}
+                </span>
+              )}
+              {lastLabelsExport && lastLabelsExport.ok && (
+                <span className="ml-3 text-green-700">
+                  Generated {lastLabelsExport.plu_count ?? 0} labels.
+                  {lastLabelsExport.skus_no_plu && lastLabelsExport.skus_no_plu.length > 0 && (
+                    <span className="ml-2 text-amber-700">
+                      ({lastLabelsExport.skus_no_plu.length} skipped — no PLU)
+                    </span>
+                  )}
+                </span>
+              )}
+            </div>
+            <div className="flex items-center gap-2">
+              <button
+                onClick={clearSelection}
+                className="rounded-md border border-gray-300 px-3 py-1.5 text-sm hover:bg-gray-50"
+              >
+                Clear
+              </button>
+              <button
+                onClick={() => void exportLabelsForSelected(false)}
+                disabled={labelsExporting}
+                className="rounded-md border border-blue-300 bg-white px-4 py-1.5 text-sm font-semibold text-blue-800 shadow-sm hover:bg-blue-50 disabled:bg-gray-200"
+                title="Generate ItemLabels only (description + price + barcode for each unit)"
+              >
+                {labelsExporting ? "Generating…" : "Item labels only"}
+              </button>
+              <button
+                onClick={() => void exportLabelsForSelected(true)}
+                disabled={labelsExporting}
+                className="rounded-md bg-blue-600 px-4 py-1.5 text-sm font-semibold text-white shadow-sm hover:bg-blue-700 disabled:bg-gray-400"
+                title="Generate ItemLabels + BoxLabels (also includes box/drawer tags with qty and location)"
+              >
+                {labelsExporting ? "Generating…" : "Item + Box labels"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {isOwner && ingestState.kind === "error" && (
         <div className="fixed inset-0 z-30 flex items-center justify-center bg-black/40 p-4">

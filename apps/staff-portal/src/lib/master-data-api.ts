@@ -28,6 +28,30 @@ export interface ProductRow {
   needs_review?: boolean;
   stocking_location?: string | null;
   nec_plu?: string | null;
+  sourcing_strategy?: string | null;
+  inventory_type?: string | null;
+}
+
+export interface PosStatusEntry {
+  in_plus: boolean;
+  has_current_price: boolean;
+}
+
+export interface PosStatusResponse {
+  as_of: string;
+  plus: Record<string, PosStatusEntry>;
+}
+
+export interface ExportLabelsRequest {
+  skus: string[];
+  output_name?: string;
+  include_box?: boolean;
+}
+
+export interface LabelsExportResult extends ExportResult {
+  missing_skus?: string[];
+  skus_no_plu?: string[];
+  plu_count?: number;
 }
 
 export interface ProductPatch {
@@ -164,6 +188,7 @@ export const masterDataApi = {
       needs_price?: boolean;
       supplier?: string;
       purchased_only?: boolean;
+      sourcing_strategy?: string;
     } = {},
   ) => {
     const q = new URLSearchParams();
@@ -171,6 +196,7 @@ export const masterDataApi = {
     if (params.needs_price !== undefined) q.set("needs_price", String(params.needs_price));
     if (params.purchased_only !== undefined) q.set("purchased_only", String(params.purchased_only));
     if (params.supplier) q.set("supplier", params.supplier);
+    if (params.sourcing_strategy) q.set("sourcing_strategy", params.sourcing_strategy);
     return request<{ count: number; products: ProductRow[] }>(`/products?${q.toString()}`);
   },
   patchProduct: (sku: string, patch: ProductPatch) =>
@@ -179,6 +205,12 @@ export const masterDataApi = {
       body: JSON.stringify(patch),
     }),
   exportNecJewel: () => request<ExportResult>(`/export/nec_jewel`, { method: "POST" }),
+  exportLabels: (req: ExportLabelsRequest) =>
+    request<LabelsExportResult>(`/export/labels`, {
+      method: "POST",
+      body: JSON.stringify(req),
+    }),
+  posStatus: () => request<PosStatusResponse>(`/pos-status`),
   downloadExport: (filename: string) => requestFile(`/exports/${encodeURIComponent(filename)}`),
   ingestInvoice: async (file: File): Promise<IngestPreview> => {
     const user = auth.currentUser;

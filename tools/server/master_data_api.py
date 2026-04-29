@@ -47,6 +47,7 @@ MASTER_JSON = REPO_ROOT / "data" / "master_product_list.json"
 EXPORT_DIR = REPO_ROOT / "data" / "exports"
 UPLOAD_DIR = REPO_ROOT / "data" / "uploads" / "invoices"
 EXPORT_SCRIPT = REPO_ROOT / "tools" / "scripts" / "export_nec_jewel.py"
+LABELS_EXPORT_SCRIPT = REPO_ROOT / "tools" / "scripts" / "export_labels.py"
 
 # Make tools/scripts importable so we can reuse identifier_utils + the
 # entry-shaping helpers that add_hengwei_skus_to_master.py uses today.
@@ -145,9 +146,16 @@ def _matches_filters(
     needs_price: bool,
     supplier: Optional[str],
     purchased_only: bool,
+    sourcing_strategy: Optional[str] = None,
 ) -> bool:
     if supplier and (p.get("supplier_id") or "") != supplier:
         return False
+    if sourcing_strategy:
+        if sourcing_strategy == "manufactured":
+            if not str(p.get("sourcing_strategy") or "").startswith("manufactured"):
+                return False
+        elif (p.get("sourcing_strategy") or "") != sourcing_strategy:
+            return False
     has_price = bool(p.get("retail_price") or p.get("price_incl_tax"))
     if needs_price and has_price:
         return False
@@ -216,10 +224,14 @@ def list_products(
     needs_price: bool = Query(False, description="Only those without a retail_price"),
     supplier: Optional[str] = Query(None),
     purchased_only: bool = Query(True, description="Only products from real POs/invoices (skip catalog-only rows)"),
+    sourcing_strategy: Optional[str] = Query(None, description="Filter by sourcing_strategy. Pass 'manufactured' to match any manufactured_* value."),
 ) -> dict:
     data = _read_master()
     products = data.get("products", [])
-    rows = [p for p in products if _matches_filters(p, launch_only, needs_price, supplier, purchased_only)]
+    rows = [
+        p for p in products
+        if _matches_filters(p, launch_only, needs_price, supplier, purchased_only, sourcing_strategy)
+    ]
     rows.sort(key=lambda p: ((p.get("supplier_id") or "zzz"), (p.get("product_type") or ""), (p.get("sku_code") or "")))
     return {"count": len(rows), "products": rows}
 
@@ -285,6 +297,80 @@ def export_nec_jewel(store: str = "JEWEL-01") -> dict:
         "stdout": proc.stdout[-4000:],
         "stderr": proc.stderr[-2000:],
     }
+
+
+class ExportLabelsRequest(BaseModel):
+    skus: list[str] = Field(default_factory=list, description="SKU codes to include. Empty = all sale-ready products with a PLU.")
+    output_name: Optional[str] = Field(default=None, description="Override output filename (must end in .xlsx).")
+    include_box: bool = Field(default=True, description="Include the BoxLabels sheet (storage/drawer tags). Set false for item-only labels.")
+
+
+def export_labels(req: ExportLabelsRequest) -> dict:
+    """Generate a Brother P-touch XLSX for a chosen set of SKU codes.
+
+    Reads master JSON to map sku_code -> nec_plu, then invokes
+    tools/scripts/export_labels.py --from-json --only-plus <plu,plu,...>.
+    Mirrors the export_nec_jewel() return shape so the frontend can reuse the
+    same download flow."""
+    EXPORT_DIR.mkdir(parents=True, exist_ok=True)
+    data = _read_master()
+    products = data.get("products", [])
+    by_sku = {(p.get("sku_code") or ""): p for p in products}
+
+    plus_codes: list[str] = []
+    missing_skus: list[str] = []
+    skus_no_plu: list[str] = []
+    for sku in req.skus:
+        prod = by_sku.get(sku)
+        if not prod:
+            missing_skus.append(sku)
+            continue
+        plu = prod.get("nec_plu") or prod.get("plu_code")
+        if not plu:
+            skus_no_plu.append(sku)
+            continue
+        plus_codes.append(str(plu))
+
+    output_name = req.output_name or "ptouch_labels.xlsx"
+    if not re.fullmatch(r"[A-Za-z0-9._-]+\.xlsx", output_name):
+        raise HTTPException(status_code=400, detail="output_name must match [A-Za-z0-9._-]+.xlsx")
+    output = EXPORT_DIR / output_name
+
+    cmd = [sys.executable, str(LABELS_EXPORT_SCRIPT), "--from-json", "--output", str(output)]
+    if not req.include_box:
+        cmd.append("--no-box")
+    if plus_codes:
+        cmd += ["--only-plus", ",".join(plus_codes)]
+    elif req.skus:
+        return {
+            "ok": False,
+            "exit_code": -1,
+            "output_path": None,
+            "download_url": None,
+            "stdout": "",
+            "stderr": f"None of the requested SKUs have a PLU. missing_skus={missing_skus} skus_no_plu={skus_no_plu}",
+            "missing_skus": missing_skus,
+            "skus_no_plu": skus_no_plu,
+            "plu_count": 0,
+        }
+
+    proc = subprocess.run(cmd, capture_output=True, text=True, cwd=str(REPO_ROOT))
+    return {
+        "ok": proc.returncode == 0 and output.exists(),
+        "exit_code": proc.returncode,
+        "output_path": str(output) if output.exists() else None,
+        "download_url": f"/api/exports/{output.name}" if output.exists() else None,
+        "stdout": proc.stdout[-4000:],
+        "stderr": proc.stderr[-2000:],
+        "missing_skus": missing_skus,
+        "skus_no_plu": skus_no_plu,
+        "plu_count": len(plus_codes),
+    }
+
+
+@app.post("/api/export/labels")
+def export_labels_endpoint(req: ExportLabelsRequest) -> dict:
+    return export_labels(req)
 
 
 @app.get("/api/exports/{filename}")

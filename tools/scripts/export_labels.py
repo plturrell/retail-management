@@ -263,11 +263,13 @@ def build_labels_workbook(
     wb: openpyxl.Workbook,
     products: list[dict[str, Any]],
     per_unit: bool = False,
+    include_box: bool = True,
 ) -> tuple[int, int]:
-    """Build ItemLabels + BoxLabels sheets. Returns (item_rows, box_rows).
+    """Build ItemLabels (+ optionally BoxLabels) sheets. Returns (item_rows, box_rows).
 
     ItemLabels: one row per physical unit if ``per_unit`` else one per SKU.
-    BoxLabels : always one row per SKU (the unit of 'a storage box').
+    BoxLabels : one row per SKU (the unit of 'a storage box'); skipped if
+    ``include_box=False``.
     """
     # Drop the default blank sheet; we manage sheets explicitly.
     if wb.active and wb.active.title == "Sheet":
@@ -292,18 +294,19 @@ def build_labels_workbook(
     _style_header(item_ws)
     _auto_width(item_ws)
 
-    box_ws = wb.create_sheet("BoxLabels")
-    box_ws.append(BOX_LABEL_COLUMNS)
     box_rows = 0
-    for p in products:
-        if not p.get("sku_code") or not (p.get("nec_plu") or p.get("plu_code")):
-            continue
-        # A "box" only makes sense if there's at least one unit of stock.
-        # Still emit a row if qty is 0 so user can tag an empty display box.
-        box_ws.append(_box_label_row(p))
-        box_rows += 1
-    _style_header(box_ws)
-    _auto_width(box_ws)
+    if include_box:
+        box_ws = wb.create_sheet("BoxLabels")
+        box_ws.append(BOX_LABEL_COLUMNS)
+        for p in products:
+            if not p.get("sku_code") or not (p.get("nec_plu") or p.get("plu_code")):
+                continue
+            # A "box" only makes sense if there's at least one unit of stock.
+            # Still emit a row if qty is 0 so user can tag an empty display box.
+            box_ws.append(_box_label_row(p))
+            box_rows += 1
+        _style_header(box_ws)
+        _auto_width(box_ws)
     return item_rows, box_rows
 
 
@@ -473,8 +476,22 @@ def main() -> None:
         "--per-unit", action="store_true",
         help="Emit one row per physical unit at --inv-store (uses qty_on_hand)"
     )
+    parser.add_argument(
+        "--no-box", action="store_true",
+        help="Skip the BoxLabels sheet (item-only export)"
+    )
+    parser.add_argument(
+        "--only-plus", default=None,
+        help="Comma-separated list of PLU/barcode values to keep (matches nec_plu/plu_code)"
+    )
     parser.add_argument("--db-url", default=DEFAULT_DATABASE_URL, help="[DB mode] Database URL")
     args = parser.parse_args()
+
+    only_plus = (
+        {p.strip() for p in args.only_plus.split(",") if p.strip()}
+        if args.only_plus
+        else None
+    )
 
     def _repo_path(p: str) -> Path:
         path = Path(p)
@@ -484,8 +501,11 @@ def main() -> None:
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
     # ── Load products ──────────────────────────────────────────────────────
+    # When --only-plus is given, bypass the sale_ready filter so the explicit
+    # PLU set is always honoured (e.g. test labels for not-yet-priced SKUs).
+    effective_all_with_plu = args.all_with_plu or bool(only_plus)
     if args.from_json:
-        products = load_from_json(_repo_path(args.input), args.all_with_plu)
+        products = load_from_json(_repo_path(args.input), effective_all_with_plu)
     else:
         print(f"Connecting to database...")
         print(f"  Brand     : {args.brand}")
@@ -496,7 +516,7 @@ def main() -> None:
                 database_url=args.db_url,
                 brand_name=args.brand,
                 inv_store_code=args.inv_store,
-                all_with_plu=args.all_with_plu,
+                all_with_plu=effective_all_with_plu,
             ))
         except Exception as e:
             print(f"\nERROR connecting to database: {e}")
@@ -504,6 +524,19 @@ def main() -> None:
             print(f"Or use JSON mode:  python export_labels.py --from-json")
             sys.exit(1)
         print(f"  SKUs with PLU: {len(products)}")
+
+    # Explicit PLU allowlist (e.g. small test batch for P-touch labels)
+    if only_plus:
+        before = len(products)
+        products = [
+            p for p in products
+            if str(p.get("nec_plu") or p.get("plu_code") or "") in only_plus
+        ]
+        matched = {str(p.get("nec_plu") or p.get("plu_code")) for p in products}
+        missing = sorted(only_plus - matched)
+        print(f"  --only-plus filter: {before} -> {len(products)} products")
+        if missing:
+            print(f"  PLUs not found in source: {', '.join(missing)}")
 
     # Supplier filter (by internal_code ↔ supplier_item_code)
     if args.supplier:
@@ -531,7 +564,9 @@ def main() -> None:
 
     # ── Build workbook ──────────────────────────────────────────────────────
     wb = openpyxl.Workbook()
-    item_rows, box_rows = build_labels_workbook(wb, products, per_unit=args.per_unit)
+    item_rows, box_rows = build_labels_workbook(
+        wb, products, per_unit=args.per_unit, include_box=not args.no_box,
+    )
     wb.save(str(output_path))
 
     # ── Summary ─────────────────────────────────────────────────────────────
@@ -541,7 +576,10 @@ def main() -> None:
     print(f"  Output        : {output_path}")
     print(f"  SKUs          : {len(products)}")
     print(f"  ItemLabels    : {item_rows} rows  {'(one per physical unit)' if args.per_unit else '(one per SKU)'}")
-    print(f"  BoxLabels     : {box_rows} rows  (one per SKU \u2014 storage/shipping box tag)")
+    if args.no_box:
+        print(f"  BoxLabels     : (skipped \u2014 --no-box)")
+    else:
+        print(f"  BoxLabels     : {box_rows} rows  (one per SKU \u2014 storage/shipping box tag)")
     print(f"\n  Open in Brother P-touch Editor -> File -> Database -> Connect")
     print(f"  Pick the 'ItemLabels' sheet for small product tags, 'BoxLabels' for larger box tags.")
     print(f"{'='*60}\n")
