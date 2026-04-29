@@ -41,6 +41,14 @@ sealed class StaffTab(val route: String, val label: String, val icon: ImageVecto
 
 private val staffTabs = listOf(StaffTab.Schedule, StaffTab.Timesheet, StaffTab.Pay, StaffTab.Performance, StaffTab.Profile)
 
+// Mirrors backend allowlist (settings.MASTER_DATA_PUBLISHER_EMAILS in
+// backend/app/config.py). Server is the source of truth — non-allowlisted
+// users get 403 from /publish_price even if this client copy drifts.
+private val MASTER_DATA_PUBLISHER_ALLOWLIST: Set<String> = setOf(
+    "craig@victoriaenso.com",
+    "irina@victoriaenso.com"
+)
+
 class StaffAppViewModel : ViewModel() {
     private val _userId = MutableStateFlow<String?>(null)
     val userId = _userId.asStateFlow()
@@ -162,6 +170,8 @@ fun StaffApp(vm: StaffAppViewModel = viewModel()) {
     ) { padding ->
         val sid = storeId ?: ""
         val uid = userId ?: ""
+        val email = FirebaseAuth.getInstance().currentUser?.email?.lowercase()
+        val canPublishPrice = role == "owner" && email != null && email in MASTER_DATA_PUBLISHER_ALLOWLIST
 
         NavHost(navController, startDestination = StaffTab.Schedule.route, Modifier.padding(padding)) {
             composable(StaffTab.Schedule.route) { ScheduleScreen(storeId = sid) }
@@ -169,7 +179,9 @@ fun StaffApp(vm: StaffAppViewModel = viewModel()) {
             composable(StaffTab.Pay.route) { PayScreen(storeId = sid, userId = uid) }
             composable(StaffTab.Performance.route) { PerformanceScreen(storeId = sid, userId = uid) }
             composable(StaffTab.Inventory.route) { InventoryScreen(storeId = sid) }
-            composable(StaffTab.MasterData.route) { MasterDataScreen(canEdit = role == "owner") }
+            composable(StaffTab.MasterData.route) {
+                MasterDataScreen(canEdit = role == "owner", canPublishPrice = canPublishPrice)
+            }
             composable(StaffTab.Employees.route) { com.retailmanagement.ui.EmployeesScreen(storeId = sid) }
             composable(StaffTab.TeamSchedule.route) { com.retailmanagement.ui.ManagerScheduleScreen(storeId = sid) }
             composable(StaffTab.TimesheetApprovals.route) { com.retailmanagement.ui.ManagerTimesheetsScreen(storeId = sid) }

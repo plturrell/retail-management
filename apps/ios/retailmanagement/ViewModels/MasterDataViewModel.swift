@@ -15,6 +15,13 @@ enum MasterDataSaveState: Equatable, Sendable {
     case error(String)
 }
 
+enum MasterDataPublishState: Equatable, Sendable {
+    case idle
+    case publishing
+    case published
+    case error(String)
+}
+
 struct MasterDataRowDraft: Identifiable, Sendable {
     let id: String          // sku_code
     var product: MasterDataProductRow
@@ -22,6 +29,7 @@ struct MasterDataRowDraft: Identifiable, Sendable {
     var draftNotes: String
     var saleReady: Bool
     var save: MasterDataSaveState
+    var publish: MasterDataPublishState
 
     init(product: MasterDataProductRow) {
         self.id = product.skuCode
@@ -31,6 +39,7 @@ struct MasterDataRowDraft: Identifiable, Sendable {
         self.draftNotes = product.retailPriceNote ?? ""
         self.saleReady = product.saleReady ?? false
         self.save = .idle
+        self.publish = .idle
     }
 }
 
@@ -158,6 +167,37 @@ final class MasterDataViewModel {
         } catch {
             if let i = rows.firstIndex(where: { $0.id == sku }) {
                 rows[i].save = .error(error.localizedDescription)
+            }
+        }
+    }
+
+    /// Publish *sku*'s draft retail price to Firestore so the POS can ring it
+    /// up. Server enforces the publisher email allowlist; on a 403 (or any
+    /// other failure) the row's publish state surfaces the error.
+    func publishRow(id sku: String) async {
+        guard let idx = rows.firstIndex(where: { $0.id == sku }) else { return }
+        let row = rows[idx]
+        guard let price = Double(row.draftPrice), price > 0 else {
+            rows[idx].publish = .error("Enter a price first")
+            return
+        }
+        guard let plu = row.product.necPlu, !plu.isEmpty else {
+            rows[idx].publish = .error("SKU has no PLU")
+            return
+        }
+        rows[idx].publish = .publishing
+        do {
+            let result = try await service.publishPrice(
+                sku: sku,
+                request: MasterDataPublishPriceRequest(retailPrice: price)
+            )
+            if let i = rows.firstIndex(where: { $0.id == sku }) {
+                if let updated = result.product { rows[i].product = updated }
+                rows[i].publish = .published
+            }
+        } catch {
+            if let i = rows.firstIndex(where: { $0.id == sku }) {
+                rows[i].publish = .error(error.localizedDescription)
             }
         }
     }

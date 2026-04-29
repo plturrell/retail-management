@@ -5,8 +5,8 @@ import android.content.Context
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.google.gson.Gson
+import com.retailmanagement.data.api.RetrofitClient
 import com.retailmanagement.data.owner.*
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -51,32 +51,16 @@ class VendorReviewViewModel(application: Application) : AndroidViewModel(applica
         _workspace.value = ws.copy() // trigger recomposition
     }
 
-    fun loadMockData() {
+    /**
+     * Fetch a single supplier order from the live FastAPI endpoint.
+     * Defaults to the Hengwei Craft 364-365 invoice currently under review.
+     */
+    fun loadOrder(supplierId: String = "CN-001", orderNumber: String = "364-365") {
         viewModelScope.launch {
             _isLoading.value = true
-            delay(500) // Simulate network
-
-            val mockJSON = """
-            {
-              "order_number": "364-365",
-              "order_date": "2026-03-26",
-              "supplier_id": "CN-001",
-              "supplier_name": "Hengwei Craft",
-              "currency": "CNY",
-              "source_document_total_amount": 11046,
-              "document_payment_status": "cash_paid",
-              "item_reconciliation_status": "needs_follow_up",
-              "line_items": [
-                { "source_line_number": 1, "supplier_item_code": "A339A", "unit_cost_cny": 120, "quantity": 5, "line_total_cny": 600, "size": "8*8*10", "material_description": "Copper, Natural mineral stone" },
-                { "source_line_number": 2, "supplier_item_code": "A339B", "unit_cost_cny": 105, "quantity": 5, "line_total_cny": 525, "size": "11.5*11.5*6", "material_description": "Copper, Natural mineral stone" },
-                { "source_line_number": 3, "supplier_item_code": "H1444A", "unit_cost_cny": 360, "quantity": 2, "line_total_cny": 720, "size": "18*18*14", "material_description": "Copper, Natural brown crystal marble" },
-                { "source_line_number": 10, "supplier_item_code": null, "display_name": "Guardian artwork", "unit_cost_cny": 2000, "quantity": 1, "line_total_cny": 2000, "material_description": "Malachite Tin" }
-              ]
-            }
-            """.trimIndent()
-
+            _error.value = null
             try {
-                val record = gson.fromJson(mockJSON, VendorReviewOrderRecord::class.java)
+                val record = RetrofitClient.api.getSupplierReviewOrder(supplierId, orderNumber)
                 _order.value = record
 
                 val currentWs = _workspace.value
@@ -94,7 +78,7 @@ class VendorReviewViewModel(application: Application) : AndroidViewModel(applica
                     saveWorkspace(currentWs)
                 }
             } catch (e: Exception) {
-                _error.value = e.message
+                _error.value = "Failed to load supplier order $orderNumber: ${e.message}"
             }
             _isLoading.value = false
         }

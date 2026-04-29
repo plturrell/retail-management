@@ -18,6 +18,7 @@ struct VendorReviewOrderRecord: Codable, Identifiable {
     let documentPaymentStatus: String
     let itemReconciliationStatus: String?
     let lineItems: [VendorReviewLineItem]
+    let sourceArtifacts: [VendorReviewSourceArtifact]?
 
     enum CodingKeys: String, CodingKey {
         case orderNumber = "order_number"
@@ -29,7 +30,13 @@ struct VendorReviewOrderRecord: Codable, Identifiable {
         case documentPaymentStatus = "document_payment_status"
         case itemReconciliationStatus = "item_reconciliation_status"
         case lineItems = "line_items"
+        case sourceArtifacts = "source_artifacts"
     }
+}
+
+struct VendorReviewSourceArtifact: Codable {
+    let type: String
+    let file: String
 }
 
 struct VendorReviewLineItem: Codable, Identifiable {

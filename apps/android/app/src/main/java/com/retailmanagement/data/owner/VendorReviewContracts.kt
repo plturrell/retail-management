@@ -11,7 +11,13 @@ data class VendorReviewOrderRecord(
     @SerializedName("source_document_total_amount") val sourceDocumentTotalAmount: Double,
     @SerializedName("document_payment_status") val documentPaymentStatus: String,
     @SerializedName("item_reconciliation_status") val itemReconciliationStatus: String?,
-    @SerializedName("line_items") val lineItems: List<VendorReviewLineItem>
+    @SerializedName("line_items") val lineItems: List<VendorReviewLineItem>,
+    @SerializedName("source_artifacts") val sourceArtifacts: List<VendorReviewSourceArtifact> = emptyList()
+)
+
+data class VendorReviewSourceArtifact(
+    val type: String,
+    val file: String
 )
 
 data class VendorReviewLineItem(

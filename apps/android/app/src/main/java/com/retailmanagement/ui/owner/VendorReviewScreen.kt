@@ -13,8 +13,11 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.platform.LocalContext
 import androidx.lifecycle.viewmodel.compose.viewModel
+import coil.ImageLoader
 import coil.compose.AsyncImage
+import com.retailmanagement.data.api.RetrofitClient
 import com.retailmanagement.data.owner.ReviewLineStatus
 import com.retailmanagement.data.owner.VendorReviewLineItem
 
@@ -28,7 +31,7 @@ fun VendorReviewScreen(vm: VendorReviewViewModel = viewModel()) {
     var selectedLineKey by remember { mutableStateOf<String?>("1") }
 
     LaunchedEffect(Unit) {
-        vm.loadMockData()
+        vm.loadOrder()
     }
 
     if (isLoading) {
@@ -47,6 +50,21 @@ fun VendorReviewScreen(vm: VendorReviewViewModel = viewModel()) {
 
     val currentOrder = order ?: return
 
+    val context = LocalContext.current
+    val imageLoader = remember {
+        ImageLoader.Builder(context)
+            .okHttpClient(RetrofitClient.okHttpClient)
+            .build()
+    }
+    val invoiceImageUrl = remember(currentOrder) {
+        val artifact = currentOrder.sourceArtifacts.firstOrNull { it.type == "scan_image" }
+            ?: currentOrder.sourceArtifacts.firstOrNull()
+        artifact?.file?.let { rel ->
+            val base = RetrofitClient.baseUrl.trimEnd('/')
+            "$base/api/supplier-review/${currentOrder.supplierId}/artifacts/$rel"
+        }
+    }
+
     Column(Modifier.fillMaxSize()) {
         // Top Half: Image Viewer (simplified for demo)
         Box(
@@ -56,14 +74,19 @@ fun VendorReviewScreen(vm: VendorReviewViewModel = viewModel()) {
                 .background(Color.DarkGray),
             contentAlignment = Alignment.Center
         ) {
-            AsyncImage(
-                model = "http://localhost:5173/docs/suppliers/hengweicraft/orders/order-364-365-2026-03-26-source.PNG",
-                contentDescription = "Invoice",
-                contentScale = ContentScale.Fit,
-                modifier = Modifier.fillMaxSize()
-            )
+            if (invoiceImageUrl != null) {
+                AsyncImage(
+                    model = invoiceImageUrl,
+                    imageLoader = imageLoader,
+                    contentDescription = "Invoice",
+                    contentScale = ContentScale.Fit,
+                    modifier = Modifier.fillMaxSize()
+                )
+            } else {
+                Text("No invoice scan attached.", color = Color.White)
+            }
             // Note: In a fully productionized version, we would implement an interactive
-            // Transformable canvas here that translates the 1056x4026 native coordinates 
+            // Transformable canvas here that translates the 1056x4026 native coordinates
             // into the scaled screen coordinates.
             Text("Crop Regions highlighted natively in iOS. Android canvas omitted for brevity.", color = Color.White, modifier = Modifier.align(Alignment.BottomCenter).padding(8.dp))
         }

@@ -85,9 +85,11 @@ async def analyze_inventory(req: InventoryHealthRequest):
 async def ingest_vault_document(req: VaultDocumentIngestRequest):
     """Ingest reviewed vault document JSON into Snowflake"""
     if not snowpark_session:
-        # Note: Depending on where this is hosted, we might just log and return success for testing
-        logger.error("No snowpark session. Assuming testing environment.")
-        return {"status": "success", "message": f"Simulated Snowflake insert for {req.document_id}", "records": len(req.payload.get('data', []))}
+        logger.error("Refusing vault ingest for %s: no active Snowpark session.", req.document_id)
+        raise HTTPException(
+            status_code=503,
+            detail="Snowpark session is not bound. Vault ingestion requires a live Snowflake context (run inside SPCS or set SNOWFLAKE creds).",
+        )
         
     try:
         # Depending on type (sales vs stock), write to correct snowflake table
@@ -120,9 +122,11 @@ class MergeRequest(BaseModel):
 async def trigger_stage_merge(req: MergeRequest):
     """Merges data from Staging Vault tables into core Fact tables"""
     if not snowpark_session:
-        # Note: If no snowpark session is available, we simulate success for local routing
-        logger.info("Simulating merge since no Snowpark session is active.")
-        return {"status": "success", "message": f"Simulated Snowflake FACT merge for {req.table_type}"}
+        logger.error("Refusing stage-merge for %s: no active Snowpark session.", req.table_type)
+        raise HTTPException(
+            status_code=503,
+            detail="Snowpark session is not bound. STG→FACT merge requires a live Snowflake context.",
+        )
 
     try:
         if req.table_type == "sales":

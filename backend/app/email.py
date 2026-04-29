@@ -93,7 +93,26 @@ class SendGridBackend(_Backend):
 def _pick_backend() -> _Backend:
     key = os.environ.get("SENDGRID_API_KEY", "").strip()
     if key:
+        log.info("Email backend: SendGrid (live HTTP delivery).")
         return SendGridBackend(key)
+
+    # No real provider configured. In any non-development environment this
+    # silently swallows password-reset / invite emails — make that loud so
+    # operators notice before users do.
+    env = os.environ.get("RETAILSG_ENV", os.environ.get("ENV", "")).lower()
+    is_prod_like = env in {"prod", "production", "staging", "stage"}
+    if is_prod_like:
+        log.error(
+            "EMAIL BACKEND MISCONFIGURED: SENDGRID_API_KEY is not set in env=%r — "
+            "transactional emails (invites, password resets, security alerts) "
+            "will only be written to logs. Set SENDGRID_API_KEY before going live.",
+            env,
+        )
+    else:
+        log.warning(
+            "Email backend: ConsoleBackend (no SENDGRID_API_KEY set; messages "
+            "will only appear in application logs).",
+        )
     return ConsoleBackend()
 
 

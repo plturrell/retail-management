@@ -6,6 +6,11 @@
 //
 
 import SwiftUI
+#if canImport(UIKit)
+import UIKit
+#elseif canImport(AppKit)
+import AppKit
+#endif
 
 struct VendorReviewTabView: View {
     @State private var vm = VendorReviewViewModel()
@@ -53,7 +58,7 @@ struct VendorReviewTabView: View {
             }
             .navigationTitle("Vendor Review")
             .task {
-                await vm.loadMockData()
+                await vm.loadOrder()
             }
         }
     }
@@ -62,26 +67,20 @@ struct VendorReviewTabView: View {
     private var imageViewer: some View {
         ZStack {
             Color(white: 0.1).edgesIgnoringSafeArea(.all)
-            
+
             GeometryReader { geo in
                 ScrollView([.horizontal, .vertical], showsIndicators: true) {
                     ZStack(alignment: .topLeading) {
-                        // The raw invoice image
-                        // Note: In production this would be downloaded/cached. Here we point to the local Vite dev server or use a placeholder if unavailable.
-                        AsyncImage(url: URL(string: "http://localhost:5173/docs/suppliers/hengweicraft/orders/order-364-365-2026-03-26-source.PNG")) { phase in
-                            switch phase {
-                            case .empty:
-                                ProgressView().frame(width: imageWidth, height: imageHeight)
-                            case .success(let image):
-                                image.resizable().scaledToFit()
-                            case .failure:
-                                Rectangle()
-                                    .fill(Color.gray.opacity(0.3))
-                                    .overlay(Text("Invoice Image Unreachable").foregroundStyle(.white))
-                            @unknown default:
-                                EmptyView()
-                            }
-                        }
+                        // The raw invoice image. Fetched via the authenticated
+                        // /api/supplier-review/{supplier_id}/artifacts/{file}
+                        // endpoint based on the order's source_artifacts.
+                        AuthenticatedInvoiceImage(
+                            supplierId: vm.order?.supplierId,
+                            relativePath: vm.order?.sourceArtifacts?.first(where: { $0.type == "scan_image" })?.file
+                                ?? vm.order?.sourceArtifacts?.first?.file,
+                            width: imageWidth,
+                            height: imageHeight
+                        )
                         .frame(width: imageWidth, height: imageHeight)
 
                         // Overlays
@@ -109,18 +108,18 @@ struct VendorReviewTabView: View {
         List(order.lineItems, selection: $selectedLineKey) { line in
             let key = String(line.sourceLineNumber)
             let state = vm.workspace.orders[order.orderNumber]?.lines[key] ?? ReviewLineState(status: .unreviewed, note: "", targetSkuId: "", updatedAt: nil)
-            
+
             VStack(alignment: .leading, spacing: 8) {
                 HStack(alignment: .top) {
                     VStack(alignment: .leading, spacing: 4) {
                         Text("Line \(line.sourceLineNumber)")
                             .font(.caption.monospaced())
                             .foregroundStyle(.secondary)
-                        
+
                         Text(line.displayName ?? line.materialDescription ?? "Unknown Item")
                             .font(.headline)
                             .lineLimit(2)
-                        
+
                         if let size = line.size {
                             Text(size).font(.caption2).padding(4).background(Color.secondary.opacity(0.1)).cornerRadius(4)
                         }
@@ -136,14 +135,14 @@ struct VendorReviewTabView: View {
                         }
                     }
                 }
-                
+
                 HStack {
                     Text("Target SKU: \(line.supplierItemCode ?? "UNMAPPED")")
                         .font(.caption.monospaced())
                         .foregroundStyle(line.supplierItemCode == nil ? .red : .green)
-                    
+
                     Spacer()
-                    
+
                     Picker("Status", selection: Binding(
                         get: { state.status },
                         set: { newStatus in
@@ -168,12 +167,86 @@ struct VendorReviewTabView: View {
         }
         .listStyle(.plain)
     }
-    
+
     private func statusColor(_ status: ReviewLineStatus) -> Color {
         switch status {
         case .unreviewed: return .secondary
         case .verified: return .green
         case .needsFollowUp: return .orange
+        }
+    }
+}
+
+
+// MARK: - Authenticated invoice image loader
+
+/// Streams a supplier scan PNG from the authenticated supplier-review
+/// artifacts endpoint. SwiftUI's built-in `AsyncImage` can't attach a Bearer
+/// token, so we fetch via `NetworkService` and hand the bytes to `Image`.
+private struct AuthenticatedInvoiceImage: View {
+    let supplierId: String?
+    let relativePath: String?
+    let width: CGFloat
+    let height: CGFloat
+
+    @State private var phase: Phase = .empty
+
+    private enum Phase {
+        case empty
+        case loading
+        case loaded(PlatformImage)
+        case failed(String)
+    }
+
+    #if canImport(UIKit)
+    typealias PlatformImage = UIImage
+    #else
+    typealias PlatformImage = NSImage
+    #endif
+
+    var body: some View {
+        Group {
+            switch phase {
+            case .empty, .loading:
+                ProgressView().frame(width: width, height: height)
+            case .loaded(let img):
+                #if canImport(UIKit)
+                Image(uiImage: img).resizable().scaledToFit()
+                #else
+                Image(nsImage: img).resizable().scaledToFit()
+                #endif
+            case .failed(let msg):
+                Rectangle()
+                    .fill(Color.gray.opacity(0.3))
+                    .overlay(Text(msg).foregroundStyle(.white).padding())
+            }
+        }
+        .task(id: cacheKey) { await load() }
+    }
+
+    private var cacheKey: String { "\(supplierId ?? "")|\(relativePath ?? "")" }
+
+    private func load() async {
+        guard let supplierId, let relativePath else {
+            phase = .failed("No invoice scan attached.")
+            return
+        }
+        phase = .loading
+        do {
+            let endpoint = "/api/supplier-review/\(supplierId)/artifacts/\(relativePath)"
+            let request = try await NetworkService.shared.authenticatedGetRequest(endpoint: endpoint)
+            let (data, response) = try await URLSession.shared.data(for: request)
+            if let http = response as? HTTPURLResponse, !(200..<300).contains(http.statusCode) {
+                phase = .failed("Invoice unavailable (HTTP \(http.statusCode))")
+                return
+            }
+            if let img = PlatformImage(data: data) {
+                phase = .loaded(img)
+            } else {
+                phase = .failed("Could not decode invoice image.")
+            }
+        } catch {
+            phase = .failed("Invoice image unreachable.")
         }
     }
 }

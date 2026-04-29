@@ -30,8 +30,12 @@ JOB_TYPES = {
     "ocr_receipt",
     "ocr_invoice",
     "ocr_sales_ledger",
-    "embedding_generation",
     "bulk_pricing_review",
+    # NOTE: ``embedding_generation`` was previously listed here but the
+    # underlying provider integration was never built. Re-add it (and a
+    # corresponding handler in ``_execute_job``) once the embedding
+    # service is wired up; until then it is intentionally absent so the
+    # dispatcher rejects scheduling attempts up-front.
 }
 
 # Cloud Tasks queue (production only)
@@ -142,15 +146,13 @@ async def _execute_job(job_type: str, payload: dict) -> dict:
         return await _job_catalog_enrichment(payload)
     elif job_type in ("ocr_receipt", "ocr_invoice", "ocr_sales_ledger"):
         return await _job_ocr(job_type, payload)
-    elif job_type == "embedding_generation":
-        return await _job_embeddings(payload)
     elif job_type == "bulk_pricing_review":
         return await _job_bulk_pricing(payload)
     else:
-        return {"status": "no_handler"}
+        raise ValueError(f"No handler registered for job_type={job_type!r}")
 
 
-# ── Job implementations (stubs — fill in per pipeline) ───────────
+# ── Job implementations ──────────────────────────────────────────
 
 async def _job_catalog_enrichment(payload: dict) -> dict:
     """Enrich SKU catalog with AI-generated descriptions and tags."""
@@ -189,12 +191,6 @@ async def _job_ocr(job_type: str, payload: dict) -> dict:
         gcs_uri=gcs_uri,
         payload=input_payload,
     )
-
-
-async def _job_embeddings(payload: dict) -> dict:
-    """Generate embeddings for product search (placeholder)."""
-    logger.info("Embedding generation — integration pending")
-    return {"status": "embeddings_not_yet_implemented"}
 
 
 async def _job_bulk_pricing(payload: dict) -> dict:

@@ -114,6 +114,62 @@ struct MasterDataProductsResponse: Codable, Sendable {
     let products: [MasterDataProductRow]
 }
 
+// MARK: - Publish price to POS (Firestore prices/* doc)
+
+struct MasterDataPublishPriceRequest: Codable, Sendable {
+    let retailPrice: Double
+    let storeCode: String
+    let currency: String
+    let taxCode: String
+    let expectedActivePriceId: String?
+
+    init(
+        retailPrice: Double,
+        storeCode: String = "JEWEL-01",
+        currency: String = "SGD",
+        taxCode: String = "G",
+        expectedActivePriceId: String? = nil
+    ) {
+        self.retailPrice = retailPrice
+        self.storeCode = storeCode
+        self.currency = currency
+        self.taxCode = taxCode
+        self.expectedActivePriceId = expectedActivePriceId
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case retailPrice = "retail_price"
+        case storeCode = "store_code"
+        case currency
+        case taxCode = "tax_code"
+        case expectedActivePriceId = "expected_active_price_id"
+    }
+}
+
+struct MasterDataPublishResult: Codable, Sendable {
+    let ok: Bool
+    let sku: String
+    let pluCode: String
+    let priceId: String
+    let retailPrice: Double
+    let validFrom: String
+    let validTo: String
+    let supersededPriceIds: [String]?
+    let product: MasterDataProductRow?
+
+    enum CodingKeys: String, CodingKey {
+        case ok
+        case sku
+        case pluCode = "plu_code"
+        case priceId = "price_id"
+        case retailPrice = "retail_price"
+        case validFrom = "valid_from"
+        case validTo = "valid_to"
+        case supersededPriceIds = "superseded_price_ids"
+        case product
+    }
+}
+
 // MARK: - Invoice ingest (DeepSeek OCR preview / commit)
 
 struct IngestPreviewItem: Codable, Hashable, Sendable, Identifiable {

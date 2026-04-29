@@ -48,6 +48,7 @@ import android.content.Intent
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import androidx.lifecycle.viewmodel.compose.viewModel
+import com.retailmanagement.BuildConfig
 import com.retailmanagement.data.api.RetrofitClient
 import com.retailmanagement.data.model.IngestCommitRequest
 import com.retailmanagement.data.model.IngestPreview
@@ -55,6 +56,7 @@ import com.retailmanagement.data.model.IngestPreviewItem
 import com.retailmanagement.data.model.MasterDataExportResult
 import com.retailmanagement.data.model.MasterDataProductPatch
 import com.retailmanagement.data.model.MasterDataProductRow
+import com.retailmanagement.data.model.MasterDataPublishPriceRequest
 import com.retailmanagement.data.model.MasterDataStats
 import com.retailmanagement.data.model.PriceRecommendation
 import com.retailmanagement.data.model.PriceRecommendationsResponse
@@ -71,7 +73,8 @@ data class MasterDataDraft(
     val price: String = product.retailPrice?.toString() ?: "",
     val notes: String = product.retailPriceNote ?: "",
     val saleReady: Boolean = product.saleReady,
-    val status: String = ""
+    val status: String = "",
+    val publishStatus: String = ""
 )
 
 data class IngestPreviewUi(
@@ -149,6 +152,36 @@ class MasterDataViewModel(application: Application) : AndroidViewModel(applicati
                 _stats.value = RetrofitClient.api.getMasterDataStats()
             } catch (e: Exception) {
                 _rows.value = _rows.value.map { if (it.product.skuCode == sku) it.copy(status = e.message ?: "Save failed") else it }
+            }
+        }
+    }
+
+    fun publish(sku: String) {
+        val row = _rows.value.firstOrNull { it.product.skuCode == sku } ?: return
+        val price = row.price.toDoubleOrNull()
+        if (price == null || price <= 0.0) {
+            _rows.value = _rows.value.map { if (it.product.skuCode == sku) it.copy(publishStatus = "Enter a price first") else it }
+            return
+        }
+        if (row.product.necPlu.isNullOrBlank()) {
+            _rows.value = _rows.value.map { if (it.product.skuCode == sku) it.copy(publishStatus = "SKU has no PLU") else it }
+            return
+        }
+        viewModelScope.launch {
+            _rows.value = _rows.value.map { if (it.product.skuCode == sku) it.copy(publishStatus = "Publishing...") else it }
+            try {
+                val result = RetrofitClient.api.publishMasterDataPrice(
+                    sku,
+                    MasterDataPublishPriceRequest(retailPrice = price)
+                )
+                _rows.value = _rows.value.map {
+                    if (it.product.skuCode == sku) {
+                        val refreshed = result.product ?: it.product
+                        it.copy(product = refreshed, publishStatus = "Live")
+                    } else it
+                }
+            } catch (e: Exception) {
+                _rows.value = _rows.value.map { if (it.product.skuCode == sku) it.copy(publishStatus = e.message ?: "Publish failed") else it }
             }
         }
     }
@@ -329,7 +362,8 @@ class MasterDataViewModel(application: Application) : AndroidViewModel(applicati
             return
         }
 
-        val builder = Uri.parse("http://localhost:8000/api/pos-labelling/print").buildUpon()
+        val base = BuildConfig.RETAILSG_API_URL.trimEnd('/')
+        val builder = Uri.parse("$base/api/pos-labelling/print").buildUpon()
         toPrint.forEach { row ->
             builder.appendQueryParameter("skus", row.product.skuCode)
             val priceStr = if (row.price.isNotBlank()) "S$${row.price}" else ""
@@ -343,7 +377,11 @@ class MasterDataViewModel(application: Application) : AndroidViewModel(applicati
 }
 
 @Composable
-fun MasterDataScreen(canEdit: Boolean = false, vm: MasterDataViewModel = viewModel()) {
+fun MasterDataScreen(
+    canEdit: Boolean = false,
+    canPublishPrice: Boolean = false,
+    vm: MasterDataViewModel = viewModel()
+) {
     val context = LocalContext.current
     val stats by vm.stats.collectAsState()
     val rows by vm.rows.collectAsState()
@@ -445,7 +483,9 @@ fun MasterDataScreen(canEdit: Boolean = false, vm: MasterDataViewModel = viewMod
                 onNotes = { vm.updateNotes(row.product.skuCode, it) },
                 onSaleReady = { vm.updateSaleReady(row.product.skuCode, it) },
                 onSave = { vm.save(row.product.skuCode) },
-                canEdit = canEdit
+                onPublish = { vm.publish(row.product.skuCode) },
+                canEdit = canEdit,
+                canPublishPrice = canPublishPrice
             )
         }
         item { Spacer(Modifier.height(80.dp)) }
@@ -550,7 +590,9 @@ private fun MasterDataRowCard(
     onNotes: (String) -> Unit,
     onSaleReady: (Boolean) -> Unit,
     onSave: () -> Unit,
-    canEdit: Boolean
+    onPublish: () -> Unit,
+    canEdit: Boolean,
+    canPublishPrice: Boolean
 ) {
     Card(Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)) {
         Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -583,6 +625,40 @@ private fun MasterDataRowCard(
                     Button(onClick = onSave) {
                         Icon(Icons.Default.Save, null)
                         Text("Save")
+                    }
+                }
+            }
+            if (canEdit && !row.product.necPlu.isNullOrBlank()) {
+                Row(
+                    Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    val publishing = row.publishStatus == "Publishing..."
+                    val live = row.publishStatus == "Live"
+                    val publishErr = row.publishStatus.isNotBlank() && !publishing && !live
+                    Text(
+                        row.publishStatus,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = when {
+                            live -> MaterialTheme.colorScheme.primary
+                            publishErr -> MaterialTheme.colorScheme.error
+                            else -> MaterialTheme.colorScheme.onSurfaceVariant
+                        }
+                    )
+                    if (canPublishPrice) {
+                        Button(
+                            onClick = onPublish,
+                            enabled = !publishing && (row.price.toDoubleOrNull() ?: 0.0) > 0.0
+                        ) {
+                            Text(if (live) "Update POS" else "Publish to POS")
+                        }
+                    } else {
+                        Text(
+                            "Owner-restricted",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
                     }
                 }
             }

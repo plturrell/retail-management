@@ -74,6 +74,15 @@ final class MasterDataService: @unchecked Sendable {
         return try await network.patch(endpoint: "/api/master-data/products/\(escaped)", body: patch)
     }
 
+    /// Publish *sku*'s retail price to Firestore so the POS barcode lookup
+    /// can ring it up. Restricted on the server to the publisher email
+    /// allowlist (settings.MASTER_DATA_PUBLISHER_EMAILS); non-allowlisted
+    /// callers get a 403 surfaced as MasterDataServiceError.badStatus.
+    func publishPrice(sku: String, request: MasterDataPublishPriceRequest) async throws -> MasterDataPublishResult {
+        let escaped = sku.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? sku
+        return try await network.post(endpoint: "/api/master-data/products/\(escaped)/publish_price", body: request)
+    }
+
     func exportNecJewel() async throws -> MasterDataExportResult {
         return try await network.post(endpoint: "/api/master-data/export/nec_jewel", body: EmptyBody())
     }

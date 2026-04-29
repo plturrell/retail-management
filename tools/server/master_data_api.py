@@ -731,6 +731,612 @@ def commit_invoice(req: IngestCommitRequest) -> dict:
     }
 
 
+# ── Manual product create (no invoice) ────────────────────────────────────────
+#
+# Companion to /api/ingest/invoice/commit for the case where a staff member
+# wants to add a one-off SKU without a supplier document — e.g. a hand-made
+# piece, a gift item, or a SKU from a supplier that doesn't issue invoices.
+# Mirrors the entry shape commit_invoice() writes so downstream NEC export and
+# Firestore publish-price treat manual rows identically to OCR'd ones.
+
+# Reverse lookup: human label → (3-char abbrev, label) for the same set of
+# product types the OCR ingest understands. Built off _OCR_TYPE_TO_ABBR so we
+# never drift between manual and OCR entries.
+_TYPE_LABEL_TO_ABBR: dict[str, tuple[str, str]] = {
+    label.lower(): (abbr, label) for abbr, label in _OCR_TYPE_TO_ABBR.values()
+}
+
+
+# ── Sourcing-origin taxonomy (server-owned) ──────────────────────────────────
+#
+# The frontend renders these as the inventory-creation origin choices. Adding
+# a new value here automatically surfaces it in the staff-portal modal, which
+# is why the list lives on the server rather than being hardcoded client-side.
+#
+# `inventory_type` is the implied default for downstream stock accounting:
+# "purchased" rows count as bought-in, "finished" rows as in-house assembled.
+_SOURCING_OPTIONS: list[dict[str, Any]] = [
+    {
+        "value": "manufactured_in_house",
+        "label": "Manufactured by Victoria Enso",
+        "description": "Built in our workshop from raw materials we hold.",
+        "requires_supplier": False,
+        "inventory_type": "finished",
+    },
+    {
+        "value": "supplier_premade",
+        "label": "Bought from supplier (as-is)",
+        "description": "Purchased finished from a supplier with no modification.",
+        "requires_supplier": True,
+        "inventory_type": "purchased",
+    },
+    {
+        "value": "supplier_modified",
+        "label": "Bought from supplier, then modified in-house",
+        "description": "Sourced from a supplier and finished/assembled by us.",
+        "requires_supplier": True,
+        "inventory_type": "finished",
+    },
+]
+_SOURCING_OPTIONS_BY_VALUE: dict[str, dict[str, Any]] = {
+    o["value"]: o for o in _SOURCING_OPTIONS
+}
+
+
+def list_sourcing_options() -> dict[str, Any]:
+    return {"options": _SOURCING_OPTIONS}
+
+
+@app.get("/api/sourcing-options")
+def sourcing_options_endpoint() -> dict[str, Any]:
+    return list_sourcing_options()
+
+
+# ── Supplier catalog (read + extend on the fly) ──────────────────────────────
+#
+# Each `docs/suppliers/<slug>/catalog_products.json` is a structured snapshot
+# of the supplier's price list. The manual-create flow lets staff browse it
+# when picking a supplier-sourced item, and append a new entry when the row
+# they're about to create isn't there yet.
+
+_SUPPLIERS_DIR = REPO_ROOT / "docs" / "suppliers"
+
+
+def _supplier_catalog_path(slug: str) -> Path:
+    safe = re.sub(r"[^A-Za-z0-9_-]+", "", slug)
+    if not safe:
+        raise HTTPException(status_code=400, detail="invalid supplier slug")
+    return _SUPPLIERS_DIR / safe / "catalog_products.json"
+
+
+def _load_supplier_catalog(slug: str) -> dict[str, Any]:
+    path = _supplier_catalog_path(slug)
+    if not path.exists():
+        return {
+            "schema_version": 1,
+            "supplier_id": None,
+            "supplier_name": None,
+            "catalog_sources": [],
+            "products": [],
+        }
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
+def list_suppliers() -> dict[str, Any]:
+    """Scan docs/suppliers/* for any folder that has a catalog_products.json
+    and surface the (supplier_id, supplier_name, slug, product_count) tuple."""
+    suppliers: list[dict[str, Any]] = []
+    if not _SUPPLIERS_DIR.exists():
+        return {"suppliers": suppliers}
+    for child in sorted(_SUPPLIERS_DIR.iterdir()):
+        if not child.is_dir():
+            continue
+        catalog_path = child / "catalog_products.json"
+        if not catalog_path.exists():
+            # Surface even un-structured supplier folders so staff can pick
+            # them — they just won't have a browsable catalog yet.
+            suppliers.append(
+                {
+                    "slug": child.name,
+                    "supplier_id": None,
+                    "supplier_name": child.name.replace("_", " ").title(),
+                    "product_count": 0,
+                    "has_catalog": False,
+                }
+            )
+            continue
+        try:
+            data = json.loads(catalog_path.read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, OSError):
+            continue
+        suppliers.append(
+            {
+                "slug": child.name,
+                "supplier_id": data.get("supplier_id"),
+                "supplier_name": data.get("supplier_name") or child.name,
+                "product_count": len(data.get("products", []) or []),
+                "has_catalog": True,
+            }
+        )
+    return {"suppliers": suppliers}
+
+
+@app.get("/api/suppliers")
+def suppliers_endpoint() -> dict[str, Any]:
+    return list_suppliers()
+
+
+def list_supplier_catalog(
+    slug: str,
+    *,
+    query: Optional[str] = None,
+    limit: int = 50,
+) -> dict[str, Any]:
+    data = _load_supplier_catalog(slug)
+    products = list(data.get("products", []) or [])
+    if query:
+        q = query.lower().strip()
+        if q:
+            def _hit(p: dict[str, Any]) -> bool:
+                hay = " ".join(
+                    str(p.get(k) or "")
+                    for k in (
+                        "primary_supplier_item_code",
+                        "raw_model",
+                        "display_name",
+                        "materials",
+                        "size",
+                        "color",
+                    )
+                ).lower()
+                if q in hay:
+                    return True
+                for code in p.get("supplier_item_codes", []) or []:
+                    if q in str(code).lower():
+                        return True
+                return False
+
+            products = [p for p in products if _hit(p)]
+    products = products[: max(0, min(limit, 200))]
+    return {
+        "slug": slug,
+        "supplier_id": data.get("supplier_id"),
+        "supplier_name": data.get("supplier_name"),
+        "count": len(products),
+        "products": products,
+    }
+
+
+@app.get("/api/suppliers/{slug}/catalog")
+def supplier_catalog_endpoint(
+    slug: str,
+    query: Optional[str] = Query(None, description="Free-text filter across code, model, materials, size."),
+    limit: int = Query(50, ge=1, le=200),
+) -> dict[str, Any]:
+    return list_supplier_catalog(slug, query=query, limit=limit)
+
+
+class SupplierCatalogEntryAdd(BaseModel):
+    """Body for appending a new entry to a supplier's catalog snapshot."""
+
+    supplier_item_code: str = Field(min_length=1, max_length=64)
+    display_name: Optional[str] = None
+    materials: Optional[str] = None
+    size: Optional[str] = None
+    color: Optional[str] = None
+    unit_price_cny: Optional[float] = Field(default=None, ge=0)
+    notes: Optional[str] = None
+
+
+def add_supplier_catalog_entry(
+    slug: str,
+    req: SupplierCatalogEntryAdd,
+    *,
+    created_by: str = "master_data_api",
+) -> dict[str, Any]:
+    path = _supplier_catalog_path(slug)
+    if not path.parent.exists():
+        path.parent.mkdir(parents=True, exist_ok=True)
+
+    code = req.supplier_item_code.strip()
+    if not code:
+        raise HTTPException(status_code=400, detail="supplier_item_code required")
+
+    with _lock:
+        if path.exists():
+            data = json.loads(path.read_text(encoding="utf-8"))
+        else:
+            data = {
+                "schema_version": 1,
+                "supplier_id": None,
+                "supplier_name": slug.replace("_", " ").title(),
+                "catalog_sources": [],
+                "products": [],
+            }
+        products = data.setdefault("products", [])
+        for p in products:
+            if code in (p.get("supplier_item_codes") or []) or p.get("primary_supplier_item_code") == code:
+                raise HTTPException(
+                    status_code=409,
+                    detail=f"supplier_item_code {code} already in {slug} catalog",
+                )
+
+        entry = {
+            "catalog_product_id": f"{slug}:manual:{code}",
+            "catalog_file": None,
+            "sheet_name": None,
+            "source_block_row": None,
+            "source_value_column": None,
+            "raw_model": code,
+            "supplier_item_codes": [code],
+            "primary_supplier_item_code": code,
+            "display_name": (req.display_name or "").strip() or None,
+            "size": (req.size or "").strip() or None,
+            "materials": (req.materials or "").strip() or None,
+            "color": (req.color or "").strip() or None,
+            "price_label": "unit_price",
+            "price_options_cny": [float(req.unit_price_cny)] if req.unit_price_cny is not None else [],
+            "raw_price": str(req.unit_price_cny) if req.unit_price_cny is not None else None,
+            "added_via": f"manual_create/{created_by}",
+            "added_at": _now(),
+            "notes": (req.notes or "").strip() or None,
+        }
+        products.append(entry)
+
+        tmp = path.with_suffix(path.suffix + ".tmp")
+        tmp.write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
+        os.replace(tmp, path)
+
+    return entry
+
+
+@app.post("/api/suppliers/{slug}/catalog")
+def add_supplier_catalog_entry_endpoint(
+    slug: str,
+    req: SupplierCatalogEntryAdd,
+) -> dict[str, Any]:
+    return add_supplier_catalog_entry(slug, req)
+
+
+# ── DeepSeek V3 description assist ───────────────────────────────────────────
+#
+# The staff portal calls this once the user has picked a product type, material,
+# size and (optionally) a supplier-catalog hit. We ask DeepSeek-chat (V3) to
+# draft a short retail-facing description + long description; the user is free
+# to edit before saving. Falls back to the deterministic synth helpers when
+# the AI gateway is unavailable so the create flow never blocks on it.
+
+class AiDescribeProductRequest(BaseModel):
+    product_type: str = Field(min_length=1)
+    material: str = Field(min_length=1)
+    size: Optional[str] = None
+    supplier_name: Optional[str] = None
+    supplier_item_code: Optional[str] = None
+    supplier_catalog_hint: Optional[str] = Field(
+        default=None,
+        description="Free-text catalog row text (display_name, raw_model, color) to bias the AI.",
+    )
+    sourcing_strategy: Optional[str] = None
+
+
+class AiDescribeProductResponse(BaseModel):
+    description: str
+    long_description: str
+    is_fallback: bool
+    model: Optional[str] = None
+
+
+async def ai_describe_product(req: AiDescribeProductRequest) -> AiDescribeProductResponse:
+    """Use DeepSeek V3 (chat) to draft retail copy for a new SKU."""
+    from add_hengwei_skus_to_master import (
+        detect_material,
+        synth_description,
+        synth_long_description,
+    )
+
+    type_label_input = req.product_type.strip()
+    type_hit = _TYPE_LABEL_TO_ABBR.get(type_label_input.lower())
+    type_label = type_hit[1] if type_hit else type_label_input
+    _, mat_label = detect_material(req.material)
+    size = req.size or ""
+
+    fallback = AiDescribeProductResponse(
+        description=synth_description(type_label, mat_label, size, req.supplier_item_code or "NEW"),
+        long_description=synth_long_description(type_label, mat_label, size, req.material),
+        is_fallback=True,
+        model=None,
+    )
+
+    try:
+        from app.services.ai_gateway import AIRequest, invoke
+    except Exception:
+        return fallback
+
+    sourcing_label = ""
+    if req.sourcing_strategy:
+        opt = _SOURCING_OPTIONS_BY_VALUE.get(req.sourcing_strategy)
+        if opt:
+            sourcing_label = opt["label"]
+
+    catalog_hint = (req.supplier_catalog_hint or "").strip()
+    supplier_block = ""
+    if req.supplier_name or req.supplier_item_code:
+        supplier_block = (
+            f"Supplier: {req.supplier_name or 'unspecified'}"
+            + (f" (item code {req.supplier_item_code})" if req.supplier_item_code else "")
+        )
+
+    prompt = (
+        "You write retail copy for a Singapore-based home-decor and jewellery boutique "
+        "(Victoria Enso). Produce JSON with keys 'description' (max 110 chars, suitable "
+        "for an in-store label) and 'long_description' (2 short sentences, listing material "
+        "and size, no marketing fluff). British English. No emoji.\n\n"
+        f"Product type: {type_label}\n"
+        f"Material: {mat_label} (raw: {req.material})\n"
+        f"Size: {size or 'unspecified'}\n"
+        f"Origin: {sourcing_label or req.sourcing_strategy or 'unspecified'}\n"
+        f"{supplier_block}\n"
+        f"Catalog hint: {catalog_hint or 'none'}\n\n"
+        'Return ONLY a JSON object: {"description": "...", "long_description": "..."}'
+    )
+
+    ai_req = AIRequest(
+        prompt=prompt,
+        model="deepseek-chat",  # DeepSeek V3
+        purpose="master_data.describe_product",
+        temperature=0.4,
+        max_output_tokens=400,
+        response_mime_type="application/json",
+    )
+    resp = await invoke(ai_req, fallback_text='{"error": "ai_unavailable"}')
+    if resp.is_fallback:
+        return fallback
+    try:
+        parsed = json.loads(resp.text)
+        desc = str(parsed.get("description") or "").strip()
+        long_desc = str(parsed.get("long_description") or "").strip()
+    except (json.JSONDecodeError, TypeError):
+        return fallback
+    if not desc or not long_desc:
+        return fallback
+    return AiDescribeProductResponse(
+        description=desc[:120],
+        long_description=long_desc,
+        is_fallback=False,
+        model=resp.model,
+    )
+
+
+@app.post("/api/ai/describe_product")
+async def ai_describe_product_endpoint(
+    req: AiDescribeProductRequest,
+) -> AiDescribeProductResponse:
+    return await ai_describe_product(req)
+
+
+class ManualProductCreateRequest(BaseModel):
+    """Request body for the manual inventory-creation flow.
+
+    SKU code and NEC PLU are **never** caller-supplied — they are always
+    auto-allocated from the shared sequence so SKU/PLU pairs cannot drift.
+    The legacy override fields were removed deliberately; do not re-add them.
+    """
+
+    description: str = Field(min_length=1, max_length=120)
+    long_description: Optional[str] = None
+    product_type: str = Field(min_length=1, description="Display label, e.g. 'Bookend'")
+    material: str = Field(min_length=1, description="Display label or supplier text, e.g. 'Crystal'")
+    size: Optional[str] = None
+    supplier_id: Optional[str] = Field(
+        default=None,
+        description="Required when sourcing_strategy starts with 'supplier_'.",
+    )
+    supplier_name: Optional[str] = None
+    supplier_item_code: Optional[str] = Field(
+        default=None,
+        description=(
+            "Supplier's own catalog code (e.g. Hengwei 'A003A'). Optional but "
+            "strongly recommended when sourcing from a supplier — links the row "
+            "to the supplier catalog so re-orders auto-match."
+        ),
+    )
+    internal_code: Optional[str] = Field(
+        default=None,
+        description="Internal/legacy code; auto-set to supplier_item_code when not given.",
+    )
+    cost_price: Optional[float] = Field(default=None, ge=0)
+    cost_currency: Optional[str] = Field(default="SGD")
+    qty_on_hand: Optional[int] = Field(default=None, ge=0)
+    sourcing_strategy: str = Field(
+        default="supplier_premade",
+        description=(
+            "Origin of the inventory. One of: manufactured_in_house, "
+            "supplier_premade, supplier_modified. See list_sourcing_options()."
+        ),
+    )
+    inventory_type: Optional[str] = Field(
+        default=None,
+        description="Auto-derived from sourcing_strategy when omitted.",
+    )
+    notes: Optional[str] = None
+
+
+def create_product(req: ManualProductCreateRequest, *, created_by: str = "master_data_api") -> dict:
+    """Append a hand-entered SKU to master_product_list.json.
+
+    Mirrors commit_invoice()'s entry shape so manual rows and OCR'd rows look
+    identical to downstream tooling. SKU+PLU are **always** auto-allocated
+    using the shared 7-digit sequence (see identifier_utils) — callers can
+    never override them, which is why the legacy sku_code/nec_plu inputs were
+    removed."""
+    from identifier_utils import allocate_identifier_pair, max_sku_sequence
+    from add_hengwei_skus_to_master import (
+        STOCKING_LOCATION,
+        detect_material,
+        synth_description,
+        synth_long_description,
+    )
+
+    description = req.description.strip()
+    if not description:
+        raise HTTPException(status_code=400, detail="description is required")
+
+    sourcing = (req.sourcing_strategy or "").strip()
+    sourcing_meta = _SOURCING_OPTIONS_BY_VALUE.get(sourcing)
+    if sourcing_meta is None:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"Unknown sourcing_strategy '{sourcing}'. "
+                f"Pick one of: {sorted(_SOURCING_OPTIONS_BY_VALUE.keys())}"
+            ),
+        )
+    inventory_type = (req.inventory_type or sourcing_meta["inventory_type"]).strip()
+
+    is_supplier_origin = sourcing.startswith("supplier_")
+    supplier_id = (req.supplier_id or "").strip() or None
+    if is_supplier_origin and not supplier_id:
+        raise HTTPException(
+            status_code=400,
+            detail="supplier_id is required when sourcing_strategy is supplier_*",
+        )
+    if not is_supplier_origin and not supplier_id:
+        # In-house manufacture still tags the row to a supplier-of-record so
+        # the existing UI filters keep working; default to the Victoria Enso
+        # workshop pseudo-supplier.
+        supplier_id = "VE-WORKSHOP"
+    supplier_name = (req.supplier_name or "").strip() or (
+        "Victoria Enso Workshop" if supplier_id == "VE-WORKSHOP" else None
+    )
+
+    type_label_input = req.product_type.strip()
+    type_hit = _TYPE_LABEL_TO_ABBR.get(type_label_input.lower())
+    if not type_hit:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"Unknown product_type '{type_label_input}'. "
+                f"Pick one of: {sorted({lbl for _a, lbl in _TYPE_LABEL_TO_ABBR.values()})}"
+            ),
+        )
+    type_abbr, type_label = type_hit
+
+    material_input = req.material.strip()
+    mat_abbr, mat_label = detect_material(material_input)
+
+    with _lock:
+        data = _read_master()
+        products = data.setdefault("products", [])
+        existing_skus = {str(p["sku_code"]).strip() for p in products if p.get("sku_code")}
+        existing_codes = {str(p["internal_code"]).strip() for p in products if p.get("internal_code")}
+        existing_plus: set[str] = set()
+        for p in products:
+            for f in ("nec_plu", "plu_code"):
+                v = p.get(f)
+                if v:
+                    existing_plus.add(str(v).strip())
+
+        supplier_item_code = (req.supplier_item_code or "").strip() or None
+        internal_code = (req.internal_code or "").strip() or supplier_item_code
+
+        if internal_code and internal_code in existing_codes:
+            raise HTTPException(
+                status_code=409,
+                detail=f"internal_code {internal_code} already exists",
+            )
+
+        next_seq = max(max_sku_sequence(existing_skus), 0) + 1
+
+        def _sku_factory(seq: int, _ta=type_abbr, _ma=mat_abbr) -> str:
+            return f"VE{_ta}{_ma}{seq:07d}"
+
+        sku_code, plu_code, _next_seq = allocate_identifier_pair(
+            _sku_factory, existing_skus, existing_plus, next_seq
+        )
+
+        size = req.size or ""
+        long_desc = (
+            req.long_description.strip()
+            if req.long_description and req.long_description.strip()
+            else synth_long_description(type_label, mat_label, size, material_input)
+        )
+
+        # Use the user's explicit description when present; only fall through
+        # to the synth helper if they didn't supply one (the modal makes it
+        # required, but the API accepts either).
+        if not description:
+            description = synth_description(type_label, mat_label, size, internal_code or sku_code)
+
+        cost_price = float(req.cost_price) if req.cost_price is not None else None
+        cost_currency = (req.cost_currency or ("SGD" if cost_price is not None else None))
+        if cost_price is not None and cost_currency:
+            cost_basis = {
+                "source_currency": cost_currency,
+                "source_amount": cost_price,
+            }
+        else:
+            cost_basis = None
+
+        entry_id_seed = (internal_code or sku_code).lower()
+        entry = {
+            "id": f"{supplier_id.lower()}-{entry_id_seed}",
+            "internal_code": internal_code,
+            "sku_code": sku_code,
+            "description": description[:120],
+            "long_description": long_desc,
+            "material": mat_label,
+            "product_type": type_label,
+            "category": "Home Decor",
+            "amazon_sku": f"VE-{mat_abbr}-{sku_code[2:5]}-{internal_code}" if internal_code else None,
+            "google_product_id": f"online:en:SG:{sku_code}",
+            "google_product_category": "Home & Garden > Decor",
+            "nec_plu": plu_code,
+            "cost_price": cost_price,
+            "cost_currency": cost_currency,
+            "cost_basis": cost_basis,
+            "retail_price": None,
+            "retail_price_note": req.notes,
+            "qty_on_hand": req.qty_on_hand,
+            "supplier_id": supplier_id,
+            "supplier_name": supplier_name,
+            "supplier_item_code": supplier_item_code or internal_code,
+            "source_orders": [],
+            "sources": [f"manual_entry:{created_by}"],
+            "raw_names": [description],
+            "mention_count": 1,
+            "inventory_type": inventory_type,
+            "sourcing_strategy": sourcing,
+            "inventory_category": "finished_for_sale",
+            "sale_ready": False,
+            "block_sales": False,
+            "stocking_status": "in_stock",
+            "stocking_location": STOCKING_LOCATION,
+            "use_stock": True,
+            "size": size,
+            "added_at": _now(),
+            "added_via": f"master_data_api/manual_create/{created_by}",
+            "needs_review": False,
+            "needs_retail_price": True,
+        }
+        products.append(entry)
+
+        meta = data.setdefault("metadata", {})
+        meta["last_modified"] = _now()
+        meta["last_modified_by"] = f"master_data_api/manual_create/{created_by}"
+        _atomic_write_master(data)
+
+    return entry
+
+
+@app.post("/api/products")
+def create_product_endpoint(req: ManualProductCreateRequest) -> dict:
+    """Standalone (LAN) endpoint for the manual create flow.
+
+    The auth-protected backend exposes the same operation under
+    /api/master-data/products via app/routers/master_data.py."""
+    return create_product(req)
+
+
 # ── AI price recommender (DeepSeek reasoner → chat) ──────────────────────────
 #
 # Treats the user's already-priced items as training data: for each unpriced

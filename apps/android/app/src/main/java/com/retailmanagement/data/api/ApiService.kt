@@ -310,6 +310,12 @@ interface ApiService {
         @Body patch: MasterDataProductPatch
     ): MasterDataProductRow
 
+    @POST("api/master-data/products/{sku}/publish_price")
+    suspend fun publishMasterDataPrice(
+        @Path("sku") sku: String,
+        @Body request: MasterDataPublishPriceRequest
+    ): MasterDataPublishResult
+
     @POST("api/master-data/export/nec_jewel")
     suspend fun exportNecJewel(
         @Body body: Map<String, @JvmSuppressWildcards Any> = emptyMap()
@@ -330,4 +336,12 @@ interface ApiService {
     suspend fun recommendPrices(
         @Body request: RecommendPricesRequest = RecommendPricesRequest()
     ): PriceRecommendationsResponse
+
+    // ── Supplier (Vendor) Review ──
+
+    @GET("api/supplier-review/{supplierId}/orders/{orderNumber}")
+    suspend fun getSupplierReviewOrder(
+        @Path("supplierId") supplierId: String,
+        @Path("orderNumber") orderNumber: String
+    ): com.retailmanagement.data.owner.VendorReviewOrderRecord
 }
