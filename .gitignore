@@ -46,6 +46,13 @@ data/mangle_facts/
 mangle_facts/
 mangle_facts_test/
 ocr_outputs/
+data/exports/
+data/preprocessed_materials/
+data/preprocessed_stockcheck/
+data/temp_test_input/
+
+# ─── Ad-hoc local scripts with embedded secrets ──────────────
+backend/test_deepseek.py
 
 # ─── Node ─────────────────────────────────────────────────────
 node_modules/
