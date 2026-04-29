@@ -1,0 +1,296 @@
+{
+  "order_number": "369",
+  "order_date": "2026-03-30",
+  "supplier_id": "CN-001",
+  "supplier_name": "Hengwei Craft",
+  "currency": "CNY",
+  "source_document_total_amount": 34125,
+  "document_payment_status": "unpaid",
+  "item_reconciliation_status": "catalog_matched",
+  "item_reconciliation_notes": [
+    "The coded invoice lines are catalog-matched, but they still need live RetailSG SKU mapping before import.",
+    "Item reconciliation is separate from the payment dispute on this order."
+  ],
+  "financial_reconciliation_status": "disputed",
+  "financial_reconciliation_issue": "scan_conflicts_with_reported_reference",
+  "financial_reconciliation_notes": [
+    "The source scan shows order 369 totaling 34,125 CNY and marks the invoice as unpaid.",
+    "An earlier reported external reference says order 149 totaling 34,123 CNY was settled later via Alipay and Bank of China Hong Kong transfers."
+  ],
+  "reported_external_reference": {
+    "reference_number": "149",
+    "reported_total_amount_cny": 34123,
+    "reported_payment_breakdown": [
+      {
+        "method": "alipay",
+        "currency": "CNY",
+        "amount": 500
+      },
+      {
+        "method": "bank_transfer",
+        "currency": "HKD",
+        "amount": 15015,
+        "bank_name": "Bank of China",
+        "bank_location": "Hong Kong",
+        "account_number": "01271020007591",
+        "swift_code": "BKCHHKHH"
+      },
+      {
+        "method": "bank_transfer",
+        "currency": "HKD",
+        "amount": 23550,
+        "bank_name": "Bank of China",
+        "bank_location": "Hong Kong",
+        "account_number": "01271020007591",
+        "swift_code": "BKCHHKHH"
+      }
+    ]
+  },
+  "charges": [
+    {
+      "description": "Cost of wooden frame",
+      "currency": "CNY",
+      "amount": 1300
+    }
+  ],
+  "line_items": [
+    {
+      "source_line_number": 1,
+      "supplier_item_code": "A008",
+      "unit_cost_cny": 240,
+      "quantity": 2,
+      "line_total_cny": 480,
+      "size": "38*11*49",
+      "material_description": "Copper, green fluorite"
+    },
+    {
+      "source_line_number": 2,
+      "supplier_item_code": "H489A",
+      "unit_cost_cny": 188,
+      "quantity": 5,
+      "line_total_cny": 940,
+      "size": "12*12*48",
+      "material_description": "Copper, natural crystal, K9 crystal"
+    },
+    {
+      "source_line_number": 3,
+      "supplier_item_code": "H489B",
+      "unit_cost_cny": 188,
+      "quantity": 5,
+      "line_total_cny": 940,
+      "size": "12*12*40",
+      "material_description": "Copper, natural crystal, K9 crystal"
+    },
+    {
+      "source_line_number": 4,
+      "supplier_item_code": "H489C",
+      "unit_cost_cny": 188,
+      "quantity": 5,
+      "line_total_cny": 940,
+      "size": "12*12*34",
+      "material_description": "Copper, natural crystal"
+    },
+    {
+      "source_line_number": 5,
+      "supplier_item_code": "H552",
+      "unit_cost_cny": 195,
+      "quantity": 5,
+      "line_total_cny": 975,
+      "size": "20*8*14 left/right",
+      "material_description": "Natural green fluorite"
+    },
+    {
+      "source_line_number": 7,
+      "supplier_item_code": "H677紫晶",
+      "unit_cost_cny": 238,
+      "quantity": 5,
+      "line_total_cny": 1190,
+      "size": "13*10*16 single side",
+      "material_description": "Purple crystal, marble, copper"
+    },
+    {
+      "source_line_number": 9,
+      "supplier_item_code": "H762",
+      "unit_cost_cny": 250,
+      "quantity": 5,
+      "line_total_cny": 1250,
+      "size": "26*10*16",
+      "material_description": "Natural green fluorite marble"
+    },
+    {
+      "source_line_number": 10,
+      "line_position": "a",
+      "supplier_item_code": "H870A",
+      "unit_cost_cny": 238,
+      "quantity": 5,
+      "line_total_cny": 1190,
+      "size": "25*13*15",
+      "material_description": "Natural blue crystal marble"
+    },
+    {
+      "source_line_number": 10,
+      "line_position": "b",
+      "supplier_item_code": "H870B",
+      "unit_cost_cny": 225,
+      "quantity": 5,
+      "line_total_cny": 1125,
+      "size": "21*11*12",
+      "material_description": "Natural blue crystal marble"
+    },
+    {
+      "source_line_number": 11,
+      "supplier_item_code": "H883",
+      "unit_cost_cny": 245,
+      "quantity": 5,
+      "line_total_cny": 1225,
+      "size": "26*10*16",
+      "material_description": "Natural crystal, copper, K9 crystal"
+    },
+    {
+      "source_line_number": 12,
+      "supplier_item_code": "H904A",
+      "unit_cost_cny": 188,
+      "quantity": 10,
+      "line_total_cny": 1880,
+      "size": "13*13*20",
+      "material_description": "Natural brown crystal, copper, K9 base"
+    },
+    {
+      "source_line_number": 13,
+      "supplier_item_code": "H904B",
+      "unit_cost_cny": 175,
+      "quantity": 10,
+      "line_total_cny": 1750,
+      "size": "13*13*16",
+      "material_description": "Natural brown crystal, copper, K9 base"
+    },
+    {
+      "source_line_number": 14,
+      "supplier_item_code": "H904C",
+      "unit_cost_cny": 163,
+      "quantity": 10,
+      "line_total_cny": 1630,
+      "size": "13*13*10",
+      "material_description": "Natural brown crystal, copper, K9 base"
+    },
+    {
+      "source_line_number": 15,
+      "supplier_item_code": "H905",
+      "unit_cost_cny": 238,
+      "quantity": 10,
+      "line_total_cny": 2380,
+      "size": "27*10*16",
+      "material_description": "Natural brown crystal, copper, K9 base"
+    },
+    {
+      "source_line_number": 16,
+      "supplier_item_code": "H1063",
+      "unit_cost_cny": 300,
+      "quantity": 2,
+      "line_total_cny": 600,
+      "size": "26*10*16",
+      "material_description": "Copper, Natural white crystal marble"
+    },
+    {
+      "source_line_number": 17,
+      "supplier_item_code": "H1327B",
+      "unit_cost_cny": 500,
+      "quantity": 5,
+      "line_total_cny": 2500,
+      "size": "26*12*28",
+      "material_description": "Copper, Natural mineral stone"
+    },
+    {
+      "source_line_number": 18,
+      "supplier_item_code": "H1445A",
+      "unit_cost_cny": 215,
+      "quantity": 5,
+      "line_total_cny": 1075,
+      "size": "9*9*20",
+      "material_description": "Copper, Natural brown crystal marble"
+    },
+    {
+      "source_line_number": 19,
+      "supplier_item_code": "H1445B",
+      "unit_cost_cny": 200,
+      "quantity": 5,
+      "line_total_cny": 1000,
+      "size": "9*9*17",
+      "material_description": "Copper, Natural brown crystal marble"
+    },
+    {
+      "source_line_number": 20,
+      "supplier_item_code": "H1445C",
+      "unit_cost_cny": 188,
+      "quantity": 5,
+      "line_total_cny": 940,
+      "size": "9*9*10",
+      "material_description": "Copper, Natural brown crystal marble"
+    },
+    {
+      "source_line_number": 21,
+      "supplier_item_code": "H1637A",
+      "unit_cost_cny": 330,
+      "quantity": 5,
+      "line_total_cny": 1650,
+      "size": "16*8.5*50",
+      "material_description": "Copper, Natural mineral stone, K9 crystal"
+    },
+    {
+      "source_line_number": 23,
+      "supplier_item_code": "H1161",
+      "unit_cost_cny": 285,
+      "quantity": 10,
+      "line_total_cny": 2850,
+      "size": "16*16*10",
+      "material_description": "Natural blue crystal marble, copper",
+      "note": "This model starts from 10 pieces."
+    },
+    {
+      "source_line_number": 26,
+      "supplier_item_code": "A392",
+      "unit_cost_cny": 290,
+      "quantity": 5,
+      "line_total_cny": 1450,
+      "size": "43*5.5",
+      "material_description": "Copper, Natural white crystal"
+    },
+    {
+      "source_line_number": 27,
+      "supplier_item_code": "H1347",
+      "unit_cost_cny": 325,
+      "quantity": 5,
+      "line_total_cny": 1625,
+      "size": "26*10*16",
+      "material_description": "Natural brown crystal, copper, marble"
+    },
+    {
+      "source_line_number": 28,
+      "supplier_item_code": "A355绿",
+      "unit_cost_cny": 248,
+      "quantity": 5,
+      "line_total_cny": 1240,
+      "size": "15*15*8",
+      "material_description": "Copper, Shangri-la stone"
+    }
+  ],
+  "source_artifacts": [
+    {
+      "type": "scan_image",
+      "file": "orders/order-149-2025-01-15-source.PNG",
+      "original_source_filename": "1ef5751feb635b92294f8144d5d46e81.PNG",
+      "note": "The scan filename has been normalized, but the source document itself shows order 369 dated 2026-03-30."
+    }
+  ],
+  "verification": {
+    "source_of_truth": [
+      "source scan shows order number 369",
+      "source scan total reconciles to 34,125 CNY including the wooden-frame charge",
+      "user reported a conflicting external reference of order 149 totaling 34,123 CNY"
+    ],
+    "normalization_notes": [
+      "Do not treat the earlier 149 reference as canonical without a matching source document or bank-statement reconciliation.",
+      "The scan footer says unpaid, while the external report says settlement occurred later via Alipay and Bank of China Hong Kong transfers."
+    ]
+  }
+}

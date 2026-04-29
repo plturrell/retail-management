@@ -1,0 +1,125 @@
+{
+  "schema_version": 1,
+  "supplier": {
+    "id": "CN-001",
+    "name": "Hengwei Craft",
+    "name_local": "衡威工艺",
+    "country": "China",
+    "cities": [
+      "Guangzhou",
+      "Jiangmen"
+    ],
+    "category": "Decorative Arts",
+    "brand": "Hengwei Craft",
+    "default_currency": "CNY",
+    "payment_accounts": [
+      {
+        "type": "bank_transfer",
+        "bank_name": "Bank of China",
+        "bank_location": "Hong Kong",
+        "account_number": "01271020007591",
+        "swift_code": "BKCHHKHH"
+      },
+      {
+        "type": "alipay"
+      },
+      {
+        "type": "cash"
+      }
+    ]
+  },
+  "catalog_sources": [
+    {
+      "file": "catalog/衡威.爱达荷目录2026(英).xlsx",
+      "description": "English catalog source file."
+    },
+    {
+      "file": "catalog/衡威家居目录2026(英).xlsx",
+      "description": "English catalog source file."
+    }
+  ],
+  "locations": {
+    "breeze_by_the_east": {
+      "name": "Breeze by the East",
+      "roles": [
+        "home_base",
+        "temporary_warehouse"
+      ]
+    },
+    "jewel": {
+      "name": "Jewel",
+      "roles": [
+        "planned_retail_store"
+      ],
+      "planned_open_date": "2026-05-01"
+    }
+  },
+  "orders": [
+    {
+      "order_number": "369",
+      "order_date": "2026-03-30",
+      "currency": "CNY",
+      "source_document_total_amount": 34125,
+      "document_payment_status": "unpaid",
+      "item_reconciliation_status": "catalog_matched",
+      "financial_reconciliation_status": "disputed",
+      "financial_reconciliation_issue": "scan_conflicts_with_reported_reference",
+      "reported_external_reference_number": "149",
+      "reported_external_total_amount_cny": 34123,
+      "documents": [
+        {
+          "type": "scan_image",
+          "file": "orders/order-149-2025-01-15-source.PNG",
+          "original_source_filename": "1ef5751feb635b92294f8144d5d46e81.PNG"
+        }
+      ],
+      "order_record": "orders/369.json",
+      "line_items_status": "structured_from_scan",
+      "notes": [
+        "The source document is order 369 dated 2026-03-30.",
+        "Earlier references to order 149 and 34,123 CNY remain documented but are not canonical."
+      ]
+    },
+    {
+      "order_number": "364-365",
+      "order_date": "2026-03-26",
+      "currency": "CNY",
+      "source_document_total_amount": 11046,
+      "document_payment_status": "cash_paid",
+      "item_reconciliation_status": "needs_follow_up",
+      "financial_reconciliation_status": "paid",
+      "documents": [
+        {
+          "type": "scan_image",
+          "file": "orders/order-364-365-2026-03-26-source.PNG",
+          "original_source_filename": "149.PNG"
+        }
+      ],
+      "order_record": "orders/364-365.json",
+      "inventory_movement": {
+        "current_location": "Breeze by the East",
+        "current_location_roles": [
+          "home_base",
+          "temporary_warehouse"
+        ],
+        "current_state": "delivered_and_staged",
+        "planned_destination": "Jewel",
+        "planned_destination_open_date": "2026-05-01"
+      },
+      "line_items_status": "structured_from_scan",
+      "notes": [
+        "Treat 11,046 CNY as canonical unless a stronger source supersedes it."
+      ]
+    }
+  ],
+  "import_readiness": {
+    "supplier_record_ready": true,
+    "catalog_products_ready": true,
+    "order_line_items_extracted": true,
+    "product_candidates_ready": true,
+    "purchase_orders_ready": false,
+    "catalog_products_file": "catalog_products.json",
+    "product_candidates_file": "product_candidates.json",
+    "blocking_reason": "The scanned line items are structured, but they are not yet matched to real RetailSG SKU ids."
+  }
+}

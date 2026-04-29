@@ -1,0 +1,1644 @@
+{
+  "schema_version": 2,
+  "supplier_id": "CN-001",
+  "supplier_name": "Hengwei Craft",
+  "source_order_records": [
+    "orders/369.json",
+    "orders/364-365.json"
+  ],
+  "catalog_products_file": "catalog_products.json",
+  "matched_catalog_products": 39,
+  "unmatched_supplier_codes": [
+    "A355绿"
+  ],
+  "products": [
+    {
+      "supplier_item_code": "A008",
+      "supplier_name": "Hengwei Craft",
+      "supplier_id": "CN-001",
+      "inventory_type": "purchased",
+      "sourcing_strategy": "supplier_premade",
+      "default_unit_cost_cny": 240,
+      "material_descriptions": [
+        "Copper, green fluorite"
+      ],
+      "observed_sizes": [
+        "38*11*49"
+      ],
+      "source_orders": [
+        "369"
+      ],
+      "source_line_numbers": [
+        "369:1"
+      ],
+      "notes": [],
+      "catalog_matches": [
+        {
+          "catalog_product_id": "衡威.爱达荷目录2026(英):item:10:A",
+          "catalog_file": "catalog/衡威.爱达荷目录2026(英).xlsx",
+          "sheet_name": "摆件",
+          "display_name": "decoration",
+          "size": "38*11*49",
+          "materials": "copper/natural green fluorite",
+          "price_label": "special",
+          "price_options_cny": [
+            240.0
+          ],
+          "raw_model": "A008",
+          "match_strategy": "exact"
+        }
+      ],
+      "catalog_match_count": 1,
+      "import_status": "catalog_matched"
+    },
+    {
+      "supplier_item_code": "A010B",
+      "supplier_name": "Hengwei Craft",
+      "supplier_id": "CN-001",
+      "inventory_type": "purchased",
+      "sourcing_strategy": "supplier_premade",
+      "default_unit_cost_cny": 525,
+      "material_descriptions": [
+        "Copper, Natural mineral stone"
+      ],
+      "observed_sizes": [
+        "11*11*50"
+      ],
+      "source_orders": [
+        "364-365"
+      ],
+      "source_line_numbers": [
+        "364-365:13"
+      ],
+      "notes": [],
+      "catalog_matches": [
+        {
+          "catalog_product_id": "衡威.爱达荷目录2026(英):item:10:D",
+          "catalog_file": "catalog/衡威.爱达荷目录2026(英).xlsx",
+          "sheet_name": "摆件",
+          "display_name": null,
+          "size": "11*11*55/50/40/27",
+          "materials": "copper gypsum",
+          "price_label": "unit_price",
+          "price_options_cny": [
+            2200.0,
+            2100.0,
+            1950.0,
+            1450.0
+          ],
+          "raw_model": "A010 A B C D",
+          "match_strategy": "exact"
+        }
+      ],
+      "catalog_match_count": 1,
+      "import_status": "catalog_matched"
+    },
+    {
+      "supplier_item_code": "A010C",
+      "supplier_name": "Hengwei Craft",
+      "supplier_id": "CN-001",
+      "inventory_type": "purchased",
+      "sourcing_strategy": "supplier_premade",
+      "default_unit_cost_cny": 488,
+      "material_descriptions": [
+        "Copper, Natural mineral stone"
+      ],
+      "observed_sizes": [
+        "11*11*40"
+      ],
+      "source_orders": [
+        "364-365"
+      ],
+      "source_line_numbers": [
+        "364-365:14"
+      ],
+      "notes": [],
+      "catalog_matches": [
+        {
+          "catalog_product_id": "衡威.爱达荷目录2026(英):item:10:D",
+          "catalog_file": "catalog/衡威.爱达荷目录2026(英).xlsx",
+          "sheet_name": "摆件",
+          "display_name": null,
+          "size": "11*11*55/50/40/27",
+          "materials": "copper gypsum",
+          "price_label": "unit_price",
+          "price_options_cny": [
+            2200.0,
+            2100.0,
+            1950.0,
+            1450.0
+          ],
+          "raw_model": "A010 A B C D",
+          "match_strategy": "exact"
+        }
+      ],
+      "catalog_match_count": 1,
+      "import_status": "catalog_matched"
+    },
+    {
+      "supplier_item_code": "A336",
+      "supplier_name": "Hengwei Craft",
+      "supplier_id": "CN-001",
+      "inventory_type": "purchased",
+      "sourcing_strategy": "supplier_premade",
+      "default_unit_cost_cny": 600,
+      "material_descriptions": [
+        "Copper Malachite"
+      ],
+      "observed_sizes": [
+        "19*5.5*12"
+      ],
+      "source_orders": [
+        "364-365"
+      ],
+      "source_line_numbers": [
+        "364-365:11"
+      ],
+      "notes": [],
+      "catalog_matches": [
+        {
+          "catalog_product_id": "衡威.爱达荷目录2026(英):item:171:G",
+          "catalog_file": "catalog/衡威.爱达荷目录2026(英).xlsx",
+          "sheet_name": "摆件",
+          "display_name": null,
+          "size": "19*5.5*12",
+          "materials": "copper malachite",
+          "price_label": "unit_price",
+          "price_options_cny": [
+            2400.0
+          ],
+          "raw_model": "A336",
+          "match_strategy": "exact"
+        }
+      ],
+      "catalog_match_count": 1,
+      "import_status": "catalog_matched"
+    },
+    {
+      "supplier_item_code": "A339A",
+      "supplier_name": "Hengwei Craft",
+      "supplier_id": "CN-001",
+      "inventory_type": "purchased",
+      "sourcing_strategy": "supplier_premade",
+      "default_unit_cost_cny": 120,
+      "material_descriptions": [
+        "Copper, Natural mineral stone"
+      ],
+      "observed_sizes": [
+        "8*8*10"
+      ],
+      "source_orders": [
+        "364-365"
+      ],
+      "source_line_numbers": [
+        "364-365:1"
+      ],
+      "notes": [],
+      "catalog_matches": [
+        {
+          "catalog_product_id": "衡威.爱达荷目录2026(英):item:171:J",
+          "catalog_file": "catalog/衡威.爱达荷目录2026(英).xlsx",
+          "sheet_name": "摆件",
+          "display_name": null,
+          "size": "8*8*10/11.5*11.5*6",
+          "materials": "copper gypsum",
+          "price_label": "unit_price",
+          "price_options_cny": [
+            400.0,
+            350.0
+          ],
+          "raw_model": "A339AB",
+          "match_strategy": "exact"
+        }
+      ],
+      "catalog_match_count": 1,
+      "import_status": "catalog_matched"
+    },
+    {
+      "supplier_item_code": "A339B",
+      "supplier_name": "Hengwei Craft",
+      "supplier_id": "CN-001",
+      "inventory_type": "purchased",
+      "sourcing_strategy": "supplier_premade",
+      "default_unit_cost_cny": 105,
+      "material_descriptions": [
+        "Copper, Natural mineral stone"
+      ],
+      "observed_sizes": [
+        "11.5*11.5*6"
+      ],
+      "source_orders": [
+        "364-365"
+      ],
+      "source_line_numbers": [
+        "364-365:2"
+      ],
+      "notes": [],
+      "catalog_matches": [
+        {
+          "catalog_product_id": "衡威.爱达荷目录2026(英):item:171:J",
+          "catalog_file": "catalog/衡威.爱达荷目录2026(英).xlsx",
+          "sheet_name": "摆件",
+          "display_name": null,
+          "size": "8*8*10/11.5*11.5*6",
+          "materials": "copper gypsum",
+          "price_label": "unit_price",
+          "price_options_cny": [
+            400.0,
+            350.0
+          ],
+          "raw_model": "A339AB",
+          "match_strategy": "exact"
+        }
+      ],
+      "catalog_match_count": 1,
+      "import_status": "catalog_matched"
+    },
+    {
+      "supplier_item_code": "A355绿",
+      "supplier_name": "Hengwei Craft",
+      "supplier_id": "CN-001",
+      "inventory_type": "purchased",
+      "sourcing_strategy": "supplier_premade",
+      "default_unit_cost_cny": 248,
+      "material_descriptions": [
+        "Copper, Shangri-la stone"
+      ],
+      "observed_sizes": [
+        "15*15*8"
+      ],
+      "source_orders": [
+        "369"
+      ],
+      "source_line_numbers": [
+        "369:28"
+      ],
+      "notes": [],
+      "catalog_matches": [],
+      "catalog_match_count": 0,
+      "import_status": "needs_catalog_match"
+    },
+    {
+      "supplier_item_code": "A392",
+      "supplier_name": "Hengwei Craft",
+      "supplier_id": "CN-001",
+      "inventory_type": "purchased",
+      "sourcing_strategy": "supplier_premade",
+      "default_unit_cost_cny": 290,
+      "material_descriptions": [
+        "Copper, Natural white crystal"
+      ],
+      "observed_sizes": [
+        "43*5.5"
+      ],
+      "source_orders": [
+        "369"
+      ],
+      "source_line_numbers": [
+        "369:26"
+      ],
+      "notes": [],
+      "catalog_matches": [
+        {
+          "catalog_product_id": "衡威.爱达荷目录2026(英):item:269:G",
+          "catalog_file": "catalog/衡威.爱达荷目录2026(英).xlsx",
+          "sheet_name": "摆件",
+          "display_name": "hang decorations",
+          "size": "43*5.5",
+          "materials": "copper/natural crystal",
+          "price_label": "special",
+          "price_options_cny": [
+            290.0
+          ],
+          "raw_model": "A392",
+          "match_strategy": "exact"
+        }
+      ],
+      "catalog_match_count": 1,
+      "import_status": "catalog_matched"
+    },
+    {
+      "supplier_item_code": "A430B",
+      "supplier_name": "Hengwei Craft",
+      "supplier_id": "CN-001",
+      "inventory_type": "purchased",
+      "sourcing_strategy": "supplier_premade",
+      "default_unit_cost_cny": 475,
+      "material_descriptions": [
+        "Natural gypsum, copper"
+      ],
+      "observed_sizes": [
+        "33*11*27"
+      ],
+      "source_orders": [
+        "364-365"
+      ],
+      "source_line_numbers": [
+        "364-365:12"
+      ],
+      "notes": [],
+      "catalog_matches": [
+        {
+          "catalog_product_id": "衡威.爱达荷目录2026(英):item:304:A",
+          "catalog_file": "catalog/衡威.爱达荷目录2026(英).xlsx",
+          "sheet_name": "摆件",
+          "display_name": null,
+          "size": "33*11*27/33*11*27",
+          "materials": "gypsum，copper",
+          "price_label": "unit_price",
+          "price_options_cny": [
+            1900.0,
+            1900.0
+          ],
+          "raw_model": "A430AB",
+          "match_strategy": "exact"
+        }
+      ],
+      "catalog_match_count": 1,
+      "import_status": "catalog_matched"
+    },
+    {
+      "supplier_item_code": "A507",
+      "supplier_name": "Hengwei Craft",
+      "supplier_id": "CN-001",
+      "inventory_type": "purchased",
+      "sourcing_strategy": "supplier_premade",
+      "default_unit_cost_cny": 60,
+      "material_descriptions": [
+        "Copper, Natural blue crystal K9"
+      ],
+      "observed_sizes": [
+        "6*3*10"
+      ],
+      "source_orders": [
+        "364-365"
+      ],
+      "source_line_numbers": [
+        "364-365:16"
+      ],
+      "notes": [
+        "Napkin buckle"
+      ],
+      "catalog_matches": [
+        {
+          "catalog_product_id": "衡威.爱达荷目录2026(英):item:423:G",
+          "catalog_file": "catalog/衡威.爱达荷目录2026(英).xlsx",
+          "sheet_name": "摆件",
+          "display_name": "napkin ring",
+          "size": "6*3*10",
+          "materials": "copper natural blue crystal K9",
+          "price_label": "unit_price",
+          "price_options_cny": [
+            220.0
+          ],
+          "raw_model": "A507",
+          "match_strategy": "exact"
+        }
+      ],
+      "catalog_match_count": 1,
+      "import_status": "catalog_matched"
+    },
+    {
+      "supplier_item_code": "A508",
+      "supplier_name": "Hengwei Craft",
+      "supplier_id": "CN-001",
+      "inventory_type": "purchased",
+      "sourcing_strategy": "supplier_premade",
+      "default_unit_cost_cny": 60,
+      "material_descriptions": [
+        "Copper, Natural white crystal K9"
+      ],
+      "observed_sizes": [
+        "6*3*10"
+      ],
+      "source_orders": [
+        "364-365"
+      ],
+      "source_line_numbers": [
+        "364-365:17"
+      ],
+      "notes": [
+        "Napkin buckle"
+      ],
+      "catalog_matches": [
+        {
+          "catalog_product_id": "衡威.爱达荷目录2026(英):item:423:J",
+          "catalog_file": "catalog/衡威.爱达荷目录2026(英).xlsx",
+          "sheet_name": "摆件",
+          "display_name": "napkin ring",
+          "size": "6*3*10",
+          "materials": "copper natural white crystal K9",
+          "price_label": "unit_price",
+          "price_options_cny": [
+            240.0
+          ],
+          "raw_model": "A508",
+          "match_strategy": "exact"
+        }
+      ],
+      "catalog_match_count": 1,
+      "import_status": "catalog_matched"
+    },
+    {
+      "supplier_item_code": "A629B",
+      "supplier_name": "Hengwei Craft",
+      "supplier_id": "CN-001",
+      "inventory_type": "purchased",
+      "sourcing_strategy": "supplier_premade",
+      "default_unit_cost_cny": 525,
+      "material_descriptions": [
+        "Natural malachite acrylic"
+      ],
+      "observed_sizes": [
+        "10*10*14"
+      ],
+      "source_orders": [
+        "364-365"
+      ],
+      "source_line_numbers": [
+        "364-365:15"
+      ],
+      "notes": [],
+      "catalog_matches": [
+        {
+          "catalog_product_id": "衡威.爱达荷目录2026(英):item:444:J",
+          "catalog_file": "catalog/衡威.爱达荷目录2026(英).xlsx",
+          "sheet_name": "摆件",
+          "display_name": "decoration",
+          "size": "10*10*22/14",
+          "materials": "natural malachite acrylic",
+          "price_label": "unit_price",
+          "price_options_cny": [
+            2900.0,
+            2100.0
+          ],
+          "raw_model": "A629A/B",
+          "match_strategy": "exact"
+        }
+      ],
+      "catalog_match_count": 1,
+      "import_status": "catalog_matched"
+    },
+    {
+      "supplier_item_code": "H1063",
+      "supplier_name": "Hengwei Craft",
+      "supplier_id": "CN-001",
+      "inventory_type": "purchased",
+      "sourcing_strategy": "supplier_premade",
+      "default_unit_cost_cny": 300,
+      "material_descriptions": [
+        "Copper, Natural white crystal marble"
+      ],
+      "observed_sizes": [
+        "26*10*16"
+      ],
+      "source_orders": [
+        "369"
+      ],
+      "source_line_numbers": [
+        "369:16"
+      ],
+      "notes": [],
+      "catalog_matches": [
+        {
+          "catalog_product_id": "衡威家居目录2026(英):2:80:G",
+          "catalog_file": "catalog/衡威家居目录2026(英).xlsx",
+          "sheet_name": "铜、水晶系列2",
+          "display_name": "bookend",
+          "size": "26*10*16",
+          "materials": "natural crystal，copper，marble",
+          "price_label": "unit_price",
+          "price_options_cny": [
+            1200.0
+          ],
+          "raw_model": "H1063",
+          "match_strategy": "exact"
+        }
+      ],
+      "catalog_match_count": 1,
+      "import_status": "catalog_matched"
+    },
+    {
+      "supplier_item_code": "H1161",
+      "supplier_name": "Hengwei Craft",
+      "supplier_id": "CN-001",
+      "inventory_type": "purchased",
+      "sourcing_strategy": "supplier_premade",
+      "default_unit_cost_cny": 285,
+      "material_descriptions": [
+        "Natural blue crystal marble, copper"
+      ],
+      "observed_sizes": [
+        "16*16*10"
+      ],
+      "source_orders": [
+        "369"
+      ],
+      "source_line_numbers": [
+        "369:23"
+      ],
+      "notes": [
+        "This model starts from 10 pieces."
+      ],
+      "catalog_matches": [
+        {
+          "catalog_product_id": "衡威家居目录2026(英):item:51:D",
+          "catalog_file": "catalog/衡威家居目录2026(英).xlsx",
+          "sheet_name": "可订做产品",
+          "display_name": "storage box",
+          "size": "16*16*10",
+          "materials": "natural blue crystal，malachite",
+          "price_label": "unit_price",
+          "price_options_cny": [
+            950.0
+          ],
+          "raw_model": "H1161",
+          "match_strategy": "exact"
+        }
+      ],
+      "catalog_match_count": 1,
+      "import_status": "catalog_matched"
+    },
+    {
+      "supplier_item_code": "H1327B",
+      "supplier_name": "Hengwei Craft",
+      "supplier_id": "CN-001",
+      "inventory_type": "purchased",
+      "sourcing_strategy": "supplier_premade",
+      "default_unit_cost_cny": 500,
+      "material_descriptions": [
+        "Copper, Natural mineral stone"
+      ],
+      "observed_sizes": [
+        "26*12*28"
+      ],
+      "source_orders": [
+        "369"
+      ],
+      "source_line_numbers": [
+        "369:17"
+      ],
+      "notes": [],
+      "catalog_matches": [
+        {
+          "catalog_product_id": "衡威家居目录2026(英):3:17:J",
+          "catalog_file": "catalog/衡威家居目录2026(英).xlsx",
+          "sheet_name": "铜、水晶系列3",
+          "display_name": "decoration",
+          "size": "42*12*28",
+          "materials": "gypsum，copper",
+          "price_label": "unit_price",
+          "price_options_cny": [
+            1800.0
+          ],
+          "raw_model": "H1327B",
+          "match_strategy": "exact"
+        }
+      ],
+      "catalog_match_count": 1,
+      "import_status": "catalog_matched"
+    },
+    {
+      "supplier_item_code": "H1347",
+      "supplier_name": "Hengwei Craft",
+      "supplier_id": "CN-001",
+      "inventory_type": "purchased",
+      "sourcing_strategy": "supplier_premade",
+      "default_unit_cost_cny": 325,
+      "material_descriptions": [
+        "Natural brown crystal, copper, marble"
+      ],
+      "observed_sizes": [
+        "26*10*16"
+      ],
+      "source_orders": [
+        "369"
+      ],
+      "source_line_numbers": [
+        "369:27"
+      ],
+      "notes": [],
+      "catalog_matches": [
+        {
+          "catalog_product_id": "衡威家居目录2026(英):3:38:J",
+          "catalog_file": "catalog/衡威家居目录2026(英).xlsx",
+          "sheet_name": "铜、水晶系列3",
+          "display_name": "bookend",
+          "size": "26*10*16",
+          "materials": "natural crystal，marble",
+          "price_label": "unit_price",
+          "price_options_cny": [
+            1300.0
+          ],
+          "raw_model": "H1347",
+          "match_strategy": "exact"
+        }
+      ],
+      "catalog_match_count": 1,
+      "import_status": "catalog_matched"
+    },
+    {
+      "supplier_item_code": "H1405B",
+      "supplier_name": "Hengwei Craft",
+      "supplier_id": "CN-001",
+      "inventory_type": "purchased",
+      "sourcing_strategy": "supplier_premade",
+      "default_unit_cost_cny": 200,
+      "material_descriptions": [
+        "Copper, Natural white crystal, K9 crystal"
+      ],
+      "observed_sizes": [
+        "9*9*17"
+      ],
+      "source_orders": [
+        "364-365"
+      ],
+      "source_line_numbers": [
+        "364-365:8"
+      ],
+      "notes": [],
+      "catalog_matches": [
+        {
+          "catalog_product_id": "衡威家居目录2026(英):3:73:G",
+          "catalog_file": "catalog/衡威家居目录2026(英).xlsx",
+          "sheet_name": "铜、水晶系列3",
+          "display_name": "decoration",
+          "size": "9*9*20/9*9*17/12*12*10",
+          "materials": "natural crystal，copper，k9",
+          "price_label": "unit_price",
+          "price_options_cny": [
+            850.0,
+            800.0,
+            750.0
+          ],
+          "raw_model": "H1405ABC",
+          "match_strategy": "exact"
+        }
+      ],
+      "catalog_match_count": 1,
+      "import_status": "catalog_matched"
+    },
+    {
+      "supplier_item_code": "H1406A",
+      "supplier_name": "Hengwei Craft",
+      "supplier_id": "CN-001",
+      "inventory_type": "purchased",
+      "sourcing_strategy": "supplier_premade",
+      "default_unit_cost_cny": 200,
+      "material_descriptions": [
+        "Copper, Natural white crystal, K9 crystal"
+      ],
+      "observed_sizes": [
+        "12*12*48"
+      ],
+      "source_orders": [
+        "364-365"
+      ],
+      "source_line_numbers": [
+        "364-365:5"
+      ],
+      "notes": [],
+      "catalog_matches": [
+        {
+          "catalog_product_id": "衡威家居目录2026(英):3:73:J",
+          "catalog_file": "catalog/衡威家居目录2026(英).xlsx",
+          "sheet_name": "铜、水晶系列3",
+          "display_name": "decoration",
+          "size": "12*12*48/38/32",
+          "materials": "natural crystal，copper，k9",
+          "price_label": "unit_price",
+          "price_options_cny": [
+            800.0
+          ],
+          "raw_model": "H1406ABC",
+          "match_strategy": "exact"
+        }
+      ],
+      "catalog_match_count": 1,
+      "import_status": "catalog_matched"
+    },
+    {
+      "supplier_item_code": "H1406B",
+      "supplier_name": "Hengwei Craft",
+      "supplier_id": "CN-001",
+      "inventory_type": "purchased",
+      "sourcing_strategy": "supplier_premade",
+      "default_unit_cost_cny": 200,
+      "material_descriptions": [
+        "Copper, Natural white crystal, K9 crystal"
+      ],
+      "observed_sizes": [
+        "12*12*40"
+      ],
+      "source_orders": [
+        "364-365"
+      ],
+      "source_line_numbers": [
+        "364-365:6"
+      ],
+      "notes": [],
+      "catalog_matches": [
+        {
+          "catalog_product_id": "衡威家居目录2026(英):3:73:J",
+          "catalog_file": "catalog/衡威家居目录2026(英).xlsx",
+          "sheet_name": "铜、水晶系列3",
+          "display_name": "decoration",
+          "size": "12*12*48/38/32",
+          "materials": "natural crystal，copper，k9",
+          "price_label": "unit_price",
+          "price_options_cny": [
+            800.0
+          ],
+          "raw_model": "H1406ABC",
+          "match_strategy": "exact"
+        }
+      ],
+      "catalog_match_count": 1,
+      "import_status": "catalog_matched"
+    },
+    {
+      "supplier_item_code": "H1406C",
+      "supplier_name": "Hengwei Craft",
+      "supplier_id": "CN-001",
+      "inventory_type": "purchased",
+      "sourcing_strategy": "supplier_premade",
+      "default_unit_cost_cny": 200,
+      "material_descriptions": [
+        "Copper, Natural white crystal, K9 crystal"
+      ],
+      "observed_sizes": [
+        "12*12*34"
+      ],
+      "source_orders": [
+        "364-365"
+      ],
+      "source_line_numbers": [
+        "364-365:7"
+      ],
+      "notes": [],
+      "catalog_matches": [
+        {
+          "catalog_product_id": "衡威家居目录2026(英):3:73:J",
+          "catalog_file": "catalog/衡威家居目录2026(英).xlsx",
+          "sheet_name": "铜、水晶系列3",
+          "display_name": "decoration",
+          "size": "12*12*48/38/32",
+          "materials": "natural crystal，copper，k9",
+          "price_label": "unit_price",
+          "price_options_cny": [
+            800.0
+          ],
+          "raw_model": "H1406ABC",
+          "match_strategy": "exact"
+        }
+      ],
+      "catalog_match_count": 1,
+      "import_status": "catalog_matched"
+    },
+    {
+      "supplier_item_code": "H1444A",
+      "supplier_name": "Hengwei Craft",
+      "supplier_id": "CN-001",
+      "inventory_type": "purchased",
+      "sourcing_strategy": "supplier_premade",
+      "default_unit_cost_cny": 360,
+      "material_descriptions": [
+        "Copper, Natural brown crystal marble"
+      ],
+      "observed_sizes": [
+        "18*18*14"
+      ],
+      "source_orders": [
+        "364-365"
+      ],
+      "source_line_numbers": [
+        "364-365:3"
+      ],
+      "notes": [],
+      "catalog_matches": [
+        {
+          "catalog_product_id": "衡威家居目录2026(英):3:101:G",
+          "catalog_file": "catalog/衡威家居目录2026(英).xlsx",
+          "sheet_name": "铜、水晶系列3",
+          "display_name": "storage box",
+          "size": "18*18*14/14*14*14",
+          "materials": "natural crystal copper marble",
+          "price_label": "unit_price",
+          "price_options_cny": [
+            1200.0,
+            950.0
+          ],
+          "raw_model": "H1444AB",
+          "match_strategy": "exact"
+        }
+      ],
+      "catalog_match_count": 1,
+      "import_status": "catalog_matched"
+    },
+    {
+      "supplier_item_code": "H1444B",
+      "supplier_name": "Hengwei Craft",
+      "supplier_id": "CN-001",
+      "inventory_type": "purchased",
+      "sourcing_strategy": "supplier_premade",
+      "default_unit_cost_cny": 285,
+      "material_descriptions": [
+        "Copper, Natural brown crystal marble"
+      ],
+      "observed_sizes": [
+        "14*14*14"
+      ],
+      "source_orders": [
+        "364-365"
+      ],
+      "source_line_numbers": [
+        "364-365:4"
+      ],
+      "notes": [],
+      "catalog_matches": [
+        {
+          "catalog_product_id": "衡威家居目录2026(英):3:101:G",
+          "catalog_file": "catalog/衡威家居目录2026(英).xlsx",
+          "sheet_name": "铜、水晶系列3",
+          "display_name": "storage box",
+          "size": "18*18*14/14*14*14",
+          "materials": "natural crystal copper marble",
+          "price_label": "unit_price",
+          "price_options_cny": [
+            1200.0,
+            950.0
+          ],
+          "raw_model": "H1444AB",
+          "match_strategy": "exact"
+        }
+      ],
+      "catalog_match_count": 1,
+      "import_status": "catalog_matched"
+    },
+    {
+      "supplier_item_code": "H1445A",
+      "supplier_name": "Hengwei Craft",
+      "supplier_id": "CN-001",
+      "inventory_type": "purchased",
+      "sourcing_strategy": "supplier_premade",
+      "default_unit_cost_cny": 215,
+      "material_descriptions": [
+        "Copper, Natural brown crystal marble"
+      ],
+      "observed_sizes": [
+        "9*9*20"
+      ],
+      "source_orders": [
+        "369"
+      ],
+      "source_line_numbers": [
+        "369:18"
+      ],
+      "notes": [],
+      "catalog_matches": [
+        {
+          "catalog_product_id": "衡威家居目录2026(英):3:94:A",
+          "catalog_file": "catalog/衡威家居目录2026(英).xlsx",
+          "sheet_name": "铜、水晶系列3",
+          "display_name": "decoration",
+          "size": "9*9*20/17/10",
+          "materials": "natural crystal copper marble",
+          "price_label": "unit_price",
+          "price_options_cny": [
+            850.0,
+            800.0,
+            750.0
+          ],
+          "raw_model": "H1445ABC",
+          "match_strategy": "exact"
+        }
+      ],
+      "catalog_match_count": 1,
+      "import_status": "catalog_matched"
+    },
+    {
+      "supplier_item_code": "H1445B",
+      "supplier_name": "Hengwei Craft",
+      "supplier_id": "CN-001",
+      "inventory_type": "purchased",
+      "sourcing_strategy": "supplier_premade",
+      "default_unit_cost_cny": 200,
+      "material_descriptions": [
+        "Copper, Natural brown crystal marble"
+      ],
+      "observed_sizes": [
+        "9*9*17"
+      ],
+      "source_orders": [
+        "369"
+      ],
+      "source_line_numbers": [
+        "369:19"
+      ],
+      "notes": [],
+      "catalog_matches": [
+        {
+          "catalog_product_id": "衡威家居目录2026(英):3:94:A",
+          "catalog_file": "catalog/衡威家居目录2026(英).xlsx",
+          "sheet_name": "铜、水晶系列3",
+          "display_name": "decoration",
+          "size": "9*9*20/17/10",
+          "materials": "natural crystal copper marble",
+          "price_label": "unit_price",
+          "price_options_cny": [
+            850.0,
+            800.0,
+            750.0
+          ],
+          "raw_model": "H1445ABC",
+          "match_strategy": "exact"
+        }
+      ],
+      "catalog_match_count": 1,
+      "import_status": "catalog_matched"
+    },
+    {
+      "supplier_item_code": "H1445C",
+      "supplier_name": "Hengwei Craft",
+      "supplier_id": "CN-001",
+      "inventory_type": "purchased",
+      "sourcing_strategy": "supplier_premade",
+      "default_unit_cost_cny": 188,
+      "material_descriptions": [
+        "Copper, Natural brown crystal marble"
+      ],
+      "observed_sizes": [
+        "9*9*10"
+      ],
+      "source_orders": [
+        "369"
+      ],
+      "source_line_numbers": [
+        "369:20"
+      ],
+      "notes": [],
+      "catalog_matches": [
+        {
+          "catalog_product_id": "衡威家居目录2026(英):3:94:A",
+          "catalog_file": "catalog/衡威家居目录2026(英).xlsx",
+          "sheet_name": "铜、水晶系列3",
+          "display_name": "decoration",
+          "size": "9*9*20/17/10",
+          "materials": "natural crystal copper marble",
+          "price_label": "unit_price",
+          "price_options_cny": [
+            850.0,
+            800.0,
+            750.0
+          ],
+          "raw_model": "H1445ABC",
+          "match_strategy": "exact"
+        }
+      ],
+      "catalog_match_count": 1,
+      "import_status": "catalog_matched"
+    },
+    {
+      "supplier_item_code": "H1637A",
+      "supplier_name": "Hengwei Craft",
+      "supplier_id": "CN-001",
+      "inventory_type": "purchased",
+      "sourcing_strategy": "supplier_premade",
+      "default_unit_cost_cny": 330,
+      "material_descriptions": [
+        "Copper, Natural mineral stone, K9 crystal"
+      ],
+      "observed_sizes": [
+        "16*8.5*50"
+      ],
+      "source_orders": [
+        "369"
+      ],
+      "source_line_numbers": [
+        "369:21"
+      ],
+      "notes": [],
+      "catalog_matches": [
+        {
+          "catalog_product_id": "衡威家居目录2026(英):4:94:A",
+          "catalog_file": "catalog/衡威家居目录2026(英).xlsx",
+          "sheet_name": "铜、水晶系列4",
+          "display_name": "natural gypsum column ornaments",
+          "size": "16*9*52/16*9*47",
+          "materials": "gypsum copper K9crystal",
+          "price_label": null,
+          "price_options_cny": [],
+          "raw_model": "H1637A/B",
+          "match_strategy": "exact"
+        }
+      ],
+      "catalog_match_count": 1,
+      "import_status": "catalog_matched"
+    },
+    {
+      "supplier_item_code": "H1733B",
+      "supplier_name": "Hengwei Craft",
+      "supplier_id": "CN-001",
+      "inventory_type": "purchased",
+      "sourcing_strategy": "supplier_premade",
+      "default_unit_cost_cny": 475,
+      "material_descriptions": [
+        "Malachite copper, natural dolomite"
+      ],
+      "observed_sizes": [
+        "14*8*63"
+      ],
+      "source_orders": [
+        "364-365"
+      ],
+      "source_line_numbers": [
+        "364-365:9"
+      ],
+      "notes": [],
+      "catalog_matches": [
+        {
+          "catalog_product_id": "衡威家居目录2026(英):5:136:A",
+          "catalog_file": "catalog/衡威家居目录2026(英).xlsx",
+          "sheet_name": "铜、水晶系列5",
+          "display_name": null,
+          "size": "14*8*72/63",
+          "materials": "natural malachite copper natural marble",
+          "price_label": "unit_price",
+          "price_options_cny": [
+            1950.0,
+            1900.0
+          ],
+          "raw_model": "H1733A/B",
+          "match_strategy": "exact"
+        }
+      ],
+      "catalog_match_count": 1,
+      "import_status": "catalog_matched"
+    },
+    {
+      "supplier_item_code": "H489A",
+      "supplier_name": "Hengwei Craft",
+      "supplier_id": "CN-001",
+      "inventory_type": "purchased",
+      "sourcing_strategy": "supplier_premade",
+      "default_unit_cost_cny": 188,
+      "material_descriptions": [
+        "Copper, natural crystal, K9 crystal"
+      ],
+      "observed_sizes": [
+        "12*12*48"
+      ],
+      "source_orders": [
+        "369"
+      ],
+      "source_line_numbers": [
+        "369:2"
+      ],
+      "notes": [],
+      "catalog_matches": [
+        {
+          "catalog_product_id": "衡威家居目录2026(英):1:3:G",
+          "catalog_file": "catalog/衡威家居目录2026(英).xlsx",
+          "sheet_name": "铜、水晶系列1",
+          "display_name": "decoration",
+          "size": "12*12*48/40/34",
+          "materials": "copper natural white crystal K9",
+          "price_label": "unit_price",
+          "price_options_cny": [
+            750.0
+          ],
+          "raw_model": "H489ABC",
+          "match_strategy": "exact"
+        }
+      ],
+      "catalog_match_count": 1,
+      "import_status": "catalog_matched"
+    },
+    {
+      "supplier_item_code": "H489B",
+      "supplier_name": "Hengwei Craft",
+      "supplier_id": "CN-001",
+      "inventory_type": "purchased",
+      "sourcing_strategy": "supplier_premade",
+      "default_unit_cost_cny": 188,
+      "material_descriptions": [
+        "Copper, natural crystal, K9 crystal"
+      ],
+      "observed_sizes": [
+        "12*12*40"
+      ],
+      "source_orders": [
+        "369"
+      ],
+      "source_line_numbers": [
+        "369:3"
+      ],
+      "notes": [],
+      "catalog_matches": [
+        {
+          "catalog_product_id": "衡威家居目录2026(英):1:3:G",
+          "catalog_file": "catalog/衡威家居目录2026(英).xlsx",
+          "sheet_name": "铜、水晶系列1",
+          "display_name": "decoration",
+          "size": "12*12*48/40/34",
+          "materials": "copper natural white crystal K9",
+          "price_label": "unit_price",
+          "price_options_cny": [
+            750.0
+          ],
+          "raw_model": "H489ABC",
+          "match_strategy": "exact"
+        }
+      ],
+      "catalog_match_count": 1,
+      "import_status": "catalog_matched"
+    },
+    {
+      "supplier_item_code": "H489C",
+      "supplier_name": "Hengwei Craft",
+      "supplier_id": "CN-001",
+      "inventory_type": "purchased",
+      "sourcing_strategy": "supplier_premade",
+      "default_unit_cost_cny": 188,
+      "material_descriptions": [
+        "Copper, natural crystal"
+      ],
+      "observed_sizes": [
+        "12*12*34"
+      ],
+      "source_orders": [
+        "369"
+      ],
+      "source_line_numbers": [
+        "369:4"
+      ],
+      "notes": [],
+      "catalog_matches": [
+        {
+          "catalog_product_id": "衡威家居目录2026(英):1:3:G",
+          "catalog_file": "catalog/衡威家居目录2026(英).xlsx",
+          "sheet_name": "铜、水晶系列1",
+          "display_name": "decoration",
+          "size": "12*12*48/40/34",
+          "materials": "copper natural white crystal K9",
+          "price_label": "unit_price",
+          "price_options_cny": [
+            750.0
+          ],
+          "raw_model": "H489ABC",
+          "match_strategy": "exact"
+        }
+      ],
+      "catalog_match_count": 1,
+      "import_status": "catalog_matched"
+    },
+    {
+      "supplier_item_code": "H552",
+      "supplier_name": "Hengwei Craft",
+      "supplier_id": "CN-001",
+      "inventory_type": "purchased",
+      "sourcing_strategy": "supplier_premade",
+      "default_unit_cost_cny": 195,
+      "material_descriptions": [
+        "Natural green fluorite"
+      ],
+      "observed_sizes": [
+        "20*8*14 left/right"
+      ],
+      "source_orders": [
+        "369"
+      ],
+      "source_line_numbers": [
+        "369:5"
+      ],
+      "notes": [],
+      "catalog_matches": [
+        {
+          "catalog_product_id": "衡威家居目录2026(英):1:10:G",
+          "catalog_file": "catalog/衡威家居目录2026(英).xlsx",
+          "sheet_name": "铜、水晶系列1",
+          "display_name": "bookend",
+          "size": "20*8*14around",
+          "materials": "natural green fluorite",
+          "price_label": "unit_price",
+          "price_options_cny": [
+            650.0
+          ],
+          "raw_model": "H552",
+          "match_strategy": "exact"
+        },
+        {
+          "catalog_product_id": "衡威家居目录2026(英):3:87:A",
+          "catalog_file": "catalog/衡威家居目录2026(英).xlsx",
+          "sheet_name": "铜、水晶系列3",
+          "display_name": "bookend",
+          "size": "20*8*14around",
+          "materials": "natural green fluorite",
+          "price_label": "unit_price",
+          "price_options_cny": [
+            650.0
+          ],
+          "raw_model": "H552",
+          "match_strategy": "exact"
+        }
+      ],
+      "catalog_match_count": 2,
+      "import_status": "catalog_matched"
+    },
+    {
+      "supplier_item_code": "H677紫晶",
+      "supplier_name": "Hengwei Craft",
+      "supplier_id": "CN-001",
+      "inventory_type": "purchased",
+      "sourcing_strategy": "supplier_premade",
+      "default_unit_cost_cny": 238,
+      "material_descriptions": [
+        "Purple crystal, marble, copper"
+      ],
+      "observed_sizes": [
+        "13*10*16 single side"
+      ],
+      "source_orders": [
+        "369"
+      ],
+      "source_line_numbers": [
+        "369:7"
+      ],
+      "notes": [],
+      "catalog_matches": [
+        {
+          "catalog_product_id": "衡威家居目录2026(英):1:52:A",
+          "catalog_file": "catalog/衡威家居目录2026(英).xlsx",
+          "sheet_name": "铜、水晶系列1",
+          "display_name": "bookend",
+          "size": "13*10*16/half",
+          "materials": "K9crystal，crystal·copper",
+          "price_label": "unit_price",
+          "price_options_cny": [
+            950.0
+          ],
+          "raw_model": "H677",
+          "match_strategy": "base_code"
+        },
+        {
+          "catalog_product_id": "衡威家居目录2026(英):1:52:D",
+          "catalog_file": "catalog/衡威家居目录2026(英).xlsx",
+          "sheet_name": "铜、水晶系列1",
+          "display_name": "bookend",
+          "size": "13*10*16/half",
+          "materials": "K9crystal，crystal·copper",
+          "price_label": "unit_price",
+          "price_options_cny": [
+            950.0
+          ],
+          "raw_model": "H677",
+          "match_strategy": "base_code"
+        },
+        {
+          "catalog_product_id": "衡威家居目录2026(英):1:52:G",
+          "catalog_file": "catalog/衡威家居目录2026(英).xlsx",
+          "sheet_name": "铜、水晶系列1",
+          "display_name": "bookend",
+          "size": "13*10*16/half",
+          "materials": "K9crystal，crystal·copper",
+          "price_label": "unit_price",
+          "price_options_cny": [
+            950.0
+          ],
+          "raw_model": "H677",
+          "match_strategy": "base_code"
+        }
+      ],
+      "catalog_match_count": 3,
+      "import_status": "catalog_matched"
+    },
+    {
+      "supplier_item_code": "H762",
+      "supplier_name": "Hengwei Craft",
+      "supplier_id": "CN-001",
+      "inventory_type": "purchased",
+      "sourcing_strategy": "supplier_premade",
+      "default_unit_cost_cny": 250,
+      "material_descriptions": [
+        "Natural green fluorite marble"
+      ],
+      "observed_sizes": [
+        "26*10*16"
+      ],
+      "source_orders": [
+        "369"
+      ],
+      "source_line_numbers": [
+        "369:9"
+      ],
+      "notes": [],
+      "catalog_matches": [
+        {
+          "catalog_product_id": "衡威家居目录2026(英):1:94:D",
+          "catalog_file": "catalog/衡威家居目录2026(英).xlsx",
+          "sheet_name": "铜、水晶系列1",
+          "display_name": "bookend",
+          "size": "26*10*16",
+          "materials": "natural green fluorite，white marble",
+          "price_label": "unit_price",
+          "price_options_cny": [
+            975.0
+          ],
+          "raw_model": "H762",
+          "match_strategy": "exact"
+        }
+      ],
+      "catalog_match_count": 1,
+      "import_status": "catalog_matched"
+    },
+    {
+      "supplier_item_code": "H870A",
+      "supplier_name": "Hengwei Craft",
+      "supplier_id": "CN-001",
+      "inventory_type": "purchased",
+      "sourcing_strategy": "supplier_premade",
+      "default_unit_cost_cny": 238,
+      "material_descriptions": [
+        "Natural blue crystal marble"
+      ],
+      "observed_sizes": [
+        "25*13*15"
+      ],
+      "source_orders": [
+        "369"
+      ],
+      "source_line_numbers": [
+        "369:10a"
+      ],
+      "notes": [],
+      "catalog_matches": [
+        {
+          "catalog_product_id": "衡威家居目录2026(英):1:115:J",
+          "catalog_file": "catalog/衡威家居目录2026(英).xlsx",
+          "sheet_name": "铜、水晶系列1",
+          "display_name": "box",
+          "size": "25*13*15/21*11*12",
+          "materials": "natural blue crystal marble",
+          "price_label": "unit_price",
+          "price_options_cny": [
+            950.0,
+            900.0
+          ],
+          "raw_model": "H870A B",
+          "match_strategy": "exact"
+        }
+      ],
+      "catalog_match_count": 1,
+      "import_status": "catalog_matched"
+    },
+    {
+      "supplier_item_code": "H870B",
+      "supplier_name": "Hengwei Craft",
+      "supplier_id": "CN-001",
+      "inventory_type": "purchased",
+      "sourcing_strategy": "supplier_premade",
+      "default_unit_cost_cny": 225,
+      "material_descriptions": [
+        "Natural blue crystal marble"
+      ],
+      "observed_sizes": [
+        "21*11*12"
+      ],
+      "source_orders": [
+        "369"
+      ],
+      "source_line_numbers": [
+        "369:10b"
+      ],
+      "notes": [],
+      "catalog_matches": [
+        {
+          "catalog_product_id": "衡威家居目录2026(英):1:115:J",
+          "catalog_file": "catalog/衡威家居目录2026(英).xlsx",
+          "sheet_name": "铜、水晶系列1",
+          "display_name": "box",
+          "size": "25*13*15/21*11*12",
+          "materials": "natural blue crystal marble",
+          "price_label": "unit_price",
+          "price_options_cny": [
+            950.0,
+            900.0
+          ],
+          "raw_model": "H870A B",
+          "match_strategy": "exact"
+        }
+      ],
+      "catalog_match_count": 1,
+      "import_status": "catalog_matched"
+    },
+    {
+      "supplier_item_code": "H883",
+      "supplier_name": "Hengwei Craft",
+      "supplier_id": "CN-001",
+      "inventory_type": "purchased",
+      "sourcing_strategy": "supplier_premade",
+      "default_unit_cost_cny": 245,
+      "material_descriptions": [
+        "Natural crystal, copper, K9 crystal"
+      ],
+      "observed_sizes": [
+        "26*10*16"
+      ],
+      "source_orders": [
+        "369"
+      ],
+      "source_line_numbers": [
+        "369:11"
+      ],
+      "notes": [],
+      "catalog_matches": [
+        {
+          "catalog_product_id": "衡威家居目录2026(英):1:122:G",
+          "catalog_file": "catalog/衡威家居目录2026(英).xlsx",
+          "sheet_name": "铜、水晶系列1",
+          "display_name": "bookend",
+          "size": "26*10*16",
+          "materials": "rock crystal quartz，blue crystal K9",
+          "price_label": "unit_price",
+          "price_options_cny": [
+            975.0
+          ],
+          "raw_model": "H883",
+          "match_strategy": "exact"
+        }
+      ],
+      "catalog_match_count": 1,
+      "import_status": "catalog_matched"
+    },
+    {
+      "supplier_item_code": "H904A",
+      "supplier_name": "Hengwei Craft",
+      "supplier_id": "CN-001",
+      "inventory_type": "purchased",
+      "sourcing_strategy": "supplier_premade",
+      "default_unit_cost_cny": 188,
+      "material_descriptions": [
+        "Natural brown crystal, copper, K9 base"
+      ],
+      "observed_sizes": [
+        "13*13*20"
+      ],
+      "source_orders": [
+        "369"
+      ],
+      "source_line_numbers": [
+        "369:12"
+      ],
+      "notes": [],
+      "catalog_matches": [
+        {
+          "catalog_product_id": "衡威家居目录2026(英):1:129:G",
+          "catalog_file": "catalog/衡威家居目录2026(英).xlsx",
+          "sheet_name": "铜、水晶系列1",
+          "display_name": "decoration",
+          "size": "13*13*20/16/10",
+          "materials": "natural crystal k9pedestal",
+          "price_label": "unit_price",
+          "price_options_cny": [
+            750.0,
+            700.0,
+            650.0
+          ],
+          "raw_model": "H904A B C",
+          "match_strategy": "exact"
+        }
+      ],
+      "catalog_match_count": 1,
+      "import_status": "catalog_matched"
+    },
+    {
+      "supplier_item_code": "H904B",
+      "supplier_name": "Hengwei Craft",
+      "supplier_id": "CN-001",
+      "inventory_type": "purchased",
+      "sourcing_strategy": "supplier_premade",
+      "default_unit_cost_cny": 175,
+      "material_descriptions": [
+        "Natural brown crystal, copper, K9 base"
+      ],
+      "observed_sizes": [
+        "13*13*16"
+      ],
+      "source_orders": [
+        "369"
+      ],
+      "source_line_numbers": [
+        "369:13"
+      ],
+      "notes": [],
+      "catalog_matches": [
+        {
+          "catalog_product_id": "衡威家居目录2026(英):1:129:G",
+          "catalog_file": "catalog/衡威家居目录2026(英).xlsx",
+          "sheet_name": "铜、水晶系列1",
+          "display_name": "decoration",
+          "size": "13*13*20/16/10",
+          "materials": "natural crystal k9pedestal",
+          "price_label": "unit_price",
+          "price_options_cny": [
+            750.0,
+            700.0,
+            650.0
+          ],
+          "raw_model": "H904A B C",
+          "match_strategy": "exact"
+        }
+      ],
+      "catalog_match_count": 1,
+      "import_status": "catalog_matched"
+    },
+    {
+      "supplier_item_code": "H904C",
+      "supplier_name": "Hengwei Craft",
+      "supplier_id": "CN-001",
+      "inventory_type": "purchased",
+      "sourcing_strategy": "supplier_premade",
+      "default_unit_cost_cny": 163,
+      "material_descriptions": [
+        "Natural brown crystal, copper, K9 base"
+      ],
+      "observed_sizes": [
+        "13*13*10"
+      ],
+      "source_orders": [
+        "369"
+      ],
+      "source_line_numbers": [
+        "369:14"
+      ],
+      "notes": [],
+      "catalog_matches": [
+        {
+          "catalog_product_id": "衡威家居目录2026(英):1:129:G",
+          "catalog_file": "catalog/衡威家居目录2026(英).xlsx",
+          "sheet_name": "铜、水晶系列1",
+          "display_name": "decoration",
+          "size": "13*13*20/16/10",
+          "materials": "natural crystal k9pedestal",
+          "price_label": "unit_price",
+          "price_options_cny": [
+            750.0,
+            700.0,
+            650.0
+          ],
+          "raw_model": "H904A B C",
+          "match_strategy": "exact"
+        }
+      ],
+      "catalog_match_count": 1,
+      "import_status": "catalog_matched"
+    },
+    {
+      "supplier_item_code": "H905",
+      "supplier_name": "Hengwei Craft",
+      "supplier_id": "CN-001",
+      "inventory_type": "purchased",
+      "sourcing_strategy": "supplier_premade",
+      "default_unit_cost_cny": 238,
+      "material_descriptions": [
+        "Natural brown crystal, copper, K9 base"
+      ],
+      "observed_sizes": [
+        "27*10*16"
+      ],
+      "source_orders": [
+        "369"
+      ],
+      "source_line_numbers": [
+        "369:15"
+      ],
+      "notes": [],
+      "catalog_matches": [
+        {
+          "catalog_product_id": "衡威家居目录2026(英):1:129:J",
+          "catalog_file": "catalog/衡威家居目录2026(英).xlsx",
+          "sheet_name": "铜、水晶系列1",
+          "display_name": "bookend",
+          "size": "27*10*16",
+          "materials": "natural crystal k9",
+          "price_label": "unit_price",
+          "price_options_cny": [
+            950.0
+          ],
+          "raw_model": "H905",
+          "match_strategy": "exact"
+        }
+      ],
+      "catalog_match_count": 1,
+      "import_status": "catalog_matched"
+    }
+  ],
+  "uncoded_order_lines": [
+    {
+      "order_number": "364-365",
+      "source_line_number": 10,
+      "display_name": "Guardian artwork",
+      "line_total_cny": 2000
+    }
+  ]
+}

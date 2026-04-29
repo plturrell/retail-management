@@ -1,0 +1,222 @@
+{
+  "order_number": "364-365",
+  "order_date": "2026-03-26",
+  "supplier_id": "CN-001",
+  "supplier_name": "Hengwei Craft",
+  "currency": "CNY",
+  "source_document_total_amount": 11046,
+  "document_payment_status": "cash_paid",
+  "reported_operational_status": "delivered_and_staged",
+  "item_reconciliation_status": "needs_follow_up",
+  "item_reconciliation_notes": [
+    "Most lines are catalog-matched, but one invoice line still has no supplier item code and needs manual SKU mapping.",
+    "Do not treat item reconciliation as complete until the Guardian artwork line is resolved."
+  ],
+  "financial_reconciliation_status": "paid",
+  "financial_reconciliation_notes": [
+    "User confirmed this order was settled in cash at 5.34 CNY/SGD.",
+    "No competing payment trail is currently recorded for this order."
+  ],
+  "payment_breakdown": [
+    {
+      "method": "cash",
+      "currency": "CNY",
+      "amount": 11046,
+      "reported_fx_rate_cny_per_sgd": 5.34,
+      "derived_sgd_equivalent": 2068.54
+    }
+  ],
+  "charges": [
+    {
+      "description": "Cost of wooden frame",
+      "currency": "CNY",
+      "amount": 500
+    }
+  ],
+  "line_items": [
+    {
+      "source_line_number": 1,
+      "supplier_item_code": "A339A",
+      "unit_cost_cny": 120,
+      "quantity": 5,
+      "line_total_cny": 600,
+      "size": "8*8*10",
+      "material_description": "Copper, Natural mineral stone"
+    },
+    {
+      "source_line_number": 2,
+      "supplier_item_code": "A339B",
+      "unit_cost_cny": 105,
+      "quantity": 5,
+      "line_total_cny": 525,
+      "size": "11.5*11.5*6",
+      "material_description": "Copper, Natural mineral stone"
+    },
+    {
+      "source_line_number": 3,
+      "supplier_item_code": "H1444A",
+      "unit_cost_cny": 360,
+      "quantity": 2,
+      "line_total_cny": 720,
+      "size": "18*18*14",
+      "material_description": "Copper, Natural brown crystal marble"
+    },
+    {
+      "source_line_number": 4,
+      "supplier_item_code": "H1444B",
+      "unit_cost_cny": 285,
+      "quantity": 1,
+      "line_total_cny": 285,
+      "size": "14*14*14",
+      "material_description": "Copper, Natural brown crystal marble"
+    },
+    {
+      "source_line_number": 5,
+      "supplier_item_code": "H1406A",
+      "unit_cost_cny": 200,
+      "quantity": 2,
+      "line_total_cny": 400,
+      "size": "12*12*48",
+      "material_description": "Copper, Natural white crystal, K9 crystal"
+    },
+    {
+      "source_line_number": 6,
+      "supplier_item_code": "H1406B",
+      "unit_cost_cny": 200,
+      "quantity": 2,
+      "line_total_cny": 400,
+      "size": "12*12*40",
+      "material_description": "Copper, Natural white crystal, K9 crystal"
+    },
+    {
+      "source_line_number": 7,
+      "supplier_item_code": "H1406C",
+      "unit_cost_cny": 200,
+      "quantity": 2,
+      "line_total_cny": 400,
+      "size": "12*12*34",
+      "material_description": "Copper, Natural white crystal, K9 crystal"
+    },
+    {
+      "source_line_number": 8,
+      "supplier_item_code": "H1405B",
+      "unit_cost_cny": 200,
+      "quantity": 2,
+      "line_total_cny": 400,
+      "size": "9*9*17",
+      "material_description": "Copper, Natural white crystal, K9 crystal"
+    },
+    {
+      "source_line_number": 9,
+      "supplier_item_code": "H1733B",
+      "unit_cost_cny": 475,
+      "quantity": 2,
+      "line_total_cny": 950,
+      "size": "14*8*63",
+      "material_description": "Malachite copper, natural dolomite"
+    },
+    {
+      "source_line_number": 10,
+      "supplier_item_code": null,
+      "display_name": "Guardian artwork",
+      "unit_cost_cny": 2000,
+      "quantity": 1,
+      "line_total_cny": 2000,
+      "material_description": "Malachite Tin"
+    },
+    {
+      "source_line_number": 11,
+      "supplier_item_code": "A336",
+      "unit_cost_cny": 600,
+      "quantity": 1,
+      "line_total_cny": 600,
+      "size": "19*5.5*12",
+      "material_description": "Copper Malachite"
+    },
+    {
+      "source_line_number": 12,
+      "supplier_item_code": "A430B",
+      "unit_cost_cny": 475,
+      "quantity": 1,
+      "line_total_cny": 475,
+      "size": "33*11*27",
+      "material_description": "Natural gypsum, copper"
+    },
+    {
+      "source_line_number": 13,
+      "supplier_item_code": "A010B",
+      "unit_cost_cny": 525,
+      "quantity": 2,
+      "line_total_cny": 1050,
+      "size": "11*11*50",
+      "material_description": "Copper, Natural mineral stone"
+    },
+    {
+      "source_line_number": 14,
+      "supplier_item_code": "A010C",
+      "unit_cost_cny": 488,
+      "quantity": 2,
+      "line_total_cny": 976,
+      "size": "11*11*40",
+      "material_description": "Copper, Natural mineral stone"
+    },
+    {
+      "source_line_number": 15,
+      "supplier_item_code": "A629B",
+      "unit_cost_cny": 525,
+      "quantity": 1,
+      "line_total_cny": 525,
+      "size": "10*10*14",
+      "material_description": "Natural malachite acrylic"
+    },
+    {
+      "source_line_number": 16,
+      "supplier_item_code": "A507",
+      "unit_cost_cny": 60,
+      "quantity": 2,
+      "line_total_cny": 120,
+      "size": "6*3*10",
+      "material_description": "Copper, Natural blue crystal K9",
+      "note": "Napkin buckle"
+    },
+    {
+      "source_line_number": 17,
+      "supplier_item_code": "A508",
+      "unit_cost_cny": 60,
+      "quantity": 2,
+      "line_total_cny": 120,
+      "size": "6*3*10",
+      "material_description": "Copper, Natural white crystal K9",
+      "note": "Napkin buckle"
+    }
+  ],
+  "inventory_movement": {
+    "current_location": "Breeze by the East",
+    "current_location_role": [
+      "home_base",
+      "temporary_warehouse"
+    ],
+    "current_state": "delivered_and_staged",
+    "planned_destination": "Jewel",
+    "planned_reason": "Hold inventory for Jewel opening",
+    "planned_destination_open_date": "2026-05-01"
+  },
+  "source_artifacts": [
+    {
+      "type": "scan_image",
+      "file": "orders/order-364-365-2026-03-26-source.PNG",
+      "original_source_filename": "149.PNG",
+      "note": "The scan filename has been normalized to the real order number and date."
+    }
+  ],
+  "verification": {
+    "source_of_truth": [
+      "order_scan matches order number 364-365 and date 2026-03-26",
+      "user_confirmed payment and staging details"
+    ],
+    "normalization_notes": [
+      "The line items and wooden-frame charge reconcile exactly to 11,046 CNY.",
+      "The SGD equivalent is derived from the reported cash rate of 5.34 CNY/SGD."
+    ]
+  }
+}

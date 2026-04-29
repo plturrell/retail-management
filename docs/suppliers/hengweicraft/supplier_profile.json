@@ -1,0 +1,62 @@
+{
+  "id": "CN-001",
+  "name": "Hengwei Craft",
+  "name_local": "衡威工艺",
+  "country": "China",
+  "cities": [
+    "Guangzhou",
+    "Jiangmen"
+  ],
+  "category": "Decorative Arts",
+  "brand": "Hengwei Craft",
+  "payment_accounts": [
+    {
+      "type": "bank_transfer",
+      "bank_name": "Bank of China",
+      "bank_location": "Hong Kong",
+      "account_number": "01271020007591",
+      "swift_code": "BKCHHKHH",
+      "notes": "Used for the recorded HKD transfers on order 149."
+    },
+    {
+      "type": "alipay",
+      "notes": "Supplier accepts partial settlement via Alipay."
+    },
+    {
+      "type": "cash",
+      "notes": "Supplier also accepts cash settlement for in-person orders."
+    }
+  ],
+  "catalog_sources": [
+    {
+      "file": "catalog/衡威.爱达荷目录2026(英).xlsx",
+      "description": "English catalog source file."
+    },
+    {
+      "file": "catalog/衡威家居目录2026(英).xlsx",
+      "description": "English catalog source file."
+    }
+  ],
+  "location_notes": {
+    "staging_store": "Breeze by the East",
+    "staging_store_role": [
+      "home_base",
+      "temporary_warehouse"
+    ],
+    "planned_destination_store": "Jewel",
+    "planned_destination_open_date": "2026-05-01"
+  },
+  "order_records": [
+    "orders/369.json",
+    "orders/364-365.json"
+  ],
+  "bundle_file": "supplier_bundle.json",
+  "catalog_products_file": "catalog_products.json",
+  "product_candidates_file": "product_candidates.json",
+  "notes": [
+    "Use supplier_bundle.json as the canonical supplier import reference.",
+    "Use catalog_products.json as the structured supplier catalog reference extracted from the source spreadsheets.",
+    "Use product_candidates.json as the extracted supplier-code staging file for future SKU matching.",
+    "One source document currently conflicts with an earlier reported order reference and remains explicitly marked as a reconciliation issue."
+  ]
+}
