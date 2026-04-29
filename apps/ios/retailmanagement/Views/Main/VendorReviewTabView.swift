@@ -85,7 +85,7 @@ struct VendorReviewTabView: View {
                         .frame(width: imageWidth, height: imageHeight)
 
                         // Overlays
-                        ForEach(Array(cropRegions.keys), id: \\.self) { key in
+                        ForEach(Array(cropRegions.keys), id: \.self) { key in
                             if let rect = cropRegions[key] {
                                 let isSelected = selectedLineKey == key
                                 Rectangle()
@@ -113,7 +113,7 @@ struct VendorReviewTabView: View {
             VStack(alignment: .leading, spacing: 8) {
                 HStack(alignment: .top) {
                     VStack(alignment: .leading, spacing: 4) {
-                        Text("Line \\(line.sourceLineNumber)")
+                        Text("Line \(line.sourceLineNumber)")
                             .font(.caption.monospaced())
                             .foregroundStyle(.secondary)
                         
@@ -128,9 +128,9 @@ struct VendorReviewTabView: View {
                     Spacer()
                     VStack(alignment: .trailing, spacing: 4) {
                         if let qty = line.quantity, let cost = line.unitCostCny, let total = line.lineTotalCny {
-                            Text("¥\\(String(format: "%.0f", total))")
+                            Text("¥\(String(format: "%.0f", total))")
                                 .font(.headline.monospaced())
-                            Text("\\(qty) × ¥\\(String(format: "%.0f", cost))")
+                            Text("\(qty) × ¥\(String(format: "%.0f", cost))")
                                 .font(.caption.monospaced())
                                 .foregroundStyle(.secondary)
                         }
@@ -138,7 +138,7 @@ struct VendorReviewTabView: View {
                 }
                 
                 HStack {
-                    Text("Target SKU: \\(line.supplierItemCode ?? "UNMAPPED")")
+                    Text("Target SKU: \(line.supplierItemCode ?? "UNMAPPED")")
                         .font(.caption.monospaced())
                         .foregroundStyle(line.supplierItemCode == nil ? .red : .green)
                     

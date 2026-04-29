@@ -6,7 +6,23 @@ from uuid import uuid4
 import pytest
 from httpx import AsyncClient
 
+import app.firestore as _fs
 from app.firestore_helpers import create_document, get_document
+
+
+def _firestore_available() -> bool:
+    """True iff a real Firestore client can be obtained (creds present)."""
+    try:
+        client = _fs._get_db()
+    except Exception:
+        return False
+    return client is not None
+
+
+pytestmark = pytest.mark.skipif(
+    not _firestore_available(),
+    reason="Integration test: requires real Firestore credentials or emulator",
+)
 from tests.firestore_payroll_support import (
     override_owner_user,
     seed_approved_time_entries,

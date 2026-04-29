@@ -18,7 +18,7 @@ from openpyxl import load_workbook
 from openpyxl.worksheet.worksheet import Worksheet
 from google.cloud.firestore_v1.client import Client as FirestoreClient
 
-from app.firestore import db as firestore_db
+import app.firestore as _fs  # access as `_fs.db` so init stays lazy
 from app.firestore_helpers import query_collection, create_document, get_document, update_document
 
 
@@ -322,7 +322,7 @@ def import_ve_payroll(
         if (entry_date := _entry_date(entry.get("clock_in"))) is not None
     }
 
-    batch = firestore_db.batch()
+    batch = _fs.db.batch()
     batch_count = 0
 
     for sheet_name in wb.sheetnames:
@@ -388,7 +388,7 @@ def import_ve_payroll(
                         clock_out_dt = clock_in + timedelta(hours=hours)
                         doc_id = str(_uuid.uuid4())
                         now = datetime.now(timezone.utc)
-                        ref = firestore_db.collection(timesheet_col).document(doc_id)
+                        ref = _fs.db.collection(timesheet_col).document(doc_id)
                         batch.set(ref, {
                             "id": doc_id,
                             "user_id": str(user_id),
@@ -416,7 +416,7 @@ def import_ve_payroll(
                     )
                     order_doc_id = str(_uuid.uuid4())
                     now = datetime.now(timezone.utc)
-                    ref = firestore_db.collection(orders_col).document(order_doc_id)
+                    ref = _fs.db.collection(orders_col).document(order_doc_id)
                     batch.set(ref, {
                         "id": order_doc_id,
                         "order_number": order_num,
@@ -438,7 +438,7 @@ def import_ve_payroll(
                 # Commit batch if approaching limit
                 if batch_count >= 499:
                     batch.commit()
-                    batch = firestore_db.batch()
+                    batch = _fs.db.batch()
                     batch_count = 0
 
             month_result.staff_results.append(staff_result)

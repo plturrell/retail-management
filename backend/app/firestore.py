@@ -20,6 +20,7 @@ from app.config import settings
 logger = logging.getLogger(__name__)
 
 _app: Optional[firebase_admin.App] = None
+_db: Optional[FirestoreClient] = None
 
 
 class FirestoreAuthError(RuntimeError):
@@ -86,21 +87,29 @@ def _initialize_firebase() -> firebase_admin.App:
         os.environ["FIRESTORE_EMULATOR_HOST"] = emulator_host
         logger.info("Using Firestore emulator at %s", emulator_host)
 
+    project_id = settings.FIREBASE_PROJECT_ID or settings.GCP_PROJECT_ID
     try:
         cred = credentials.ApplicationDefault()
-        _app = firebase_admin.initialize_app(cred, {
-            "projectId": settings.FIREBASE_PROJECT_ID or settings.GCP_PROJECT_ID,
-        })
-        logger.info("Firebase Admin SDK initialized (project: %s)",
-                     settings.FIREBASE_PROJECT_ID or settings.GCP_PROJECT_ID)
+        _app = firebase_admin.initialize_app(cred, {"projectId": project_id})
+        logger.info("Firebase Admin SDK initialized (project: %s)", project_id)
     except ValueError:
         _app = firebase_admin.get_app()
         logger.info("Firebase Admin SDK already initialized")
     except Exception as exc:
         if _is_auth_error(exc):
-            print(_AUTH_HINT, file=sys.stderr)
-            raise FirestoreAuthError(str(exc)) from exc
-        raise
+            # Fall back to project-ID-only mode so the FastAPI app can boot
+            # in environments without ADC (e.g. CI). Any Firestore call will
+            # still fail at the network layer with a clear permission error,
+            # but the dependency callable itself returns successfully.
+            logger.warning(
+                "No Firestore credentials available; initializing "
+                "firebase-admin in project-ID-only mode (project: %s). "
+                "Real Firestore operations will fail.",
+                project_id,
+            )
+            _app = firebase_admin.initialize_app(options={"projectId": project_id})
+        else:
+            raise
 
     return _app
 
@@ -146,12 +155,25 @@ def _wrap_db(client: FirestoreClient) -> FirestoreClient:
     return client
 
 
-# Initialize on module import
-_initialize_firebase()
-
-db: FirestoreClient = _wrap_db(firestore.client())
+def _get_db() -> FirestoreClient:
+    """Initialize Firebase and return the wrapped Firestore client (idempotent)."""
+    global _db
+    if _db is not None:
+        return _db
+    _initialize_firebase()
+    _db = _wrap_db(firestore.client())
+    return _db
 
 
 def get_firestore_db() -> FirestoreClient:
     """FastAPI dependency that yields the Firestore client."""
-    return db
+    return _get_db()
+
+
+def __getattr__(name: str):
+    # PEP 562: defer `from app.firestore import db` to first access so that
+    # importing this module never requires Firebase credentials (allows test
+    # collection in environments without GCP ADC).
+    if name == "db":
+        return _get_db()
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

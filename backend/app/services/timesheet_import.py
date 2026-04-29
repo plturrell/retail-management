@@ -11,7 +11,7 @@ from uuid import UUID
 from openpyxl import load_workbook
 from google.cloud.firestore_v1.client import Client as FirestoreClient
 
-from app.firestore import db as firestore_db
+import app.firestore as _fs  # access as `_fs.db` so init stays lazy
 from app.firestore_helpers import query_collection
 
 
@@ -193,7 +193,7 @@ def import_timesheet_file(
     }
 
     # Use batch writes for bulk creation
-    batch = firestore_db.batch()
+    batch = _fs.db.batch()
     batch_count = 0
 
     for row_idx, row in enumerate(rows, start=2):  # row 1 is header
@@ -265,7 +265,7 @@ def import_timesheet_file(
         notes = row.get("notes", "").strip() or None
         doc_id = str(_uuid.uuid4())
         now = datetime.now(timezone.utc)
-        ref = firestore_db.collection(col_path).document(doc_id)
+        ref = _fs.db.collection(col_path).document(doc_id)
         batch.set(ref, {
             "id": doc_id,
             "user_id": str(user_id),
@@ -287,7 +287,7 @@ def import_timesheet_file(
         # Firestore batch limit is 500
         if batch_count >= 499:
             batch.commit()
-            batch = firestore_db.batch()
+            batch = _fs.db.batch()
             batch_count = 0
 
     if batch_count > 0:

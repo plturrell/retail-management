@@ -8,7 +8,6 @@ from slowapi.errors import RateLimitExceeded
 
 from app.config import settings
 from app.rate_limit import limiter
-import app.firestore  # noqa: F401 — initialize Firebase/Firestore on startup
 
 if settings.ENVIRONMENT == "production":
     logging.config.dictConfig({

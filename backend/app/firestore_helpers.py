@@ -12,7 +12,7 @@ from typing import Any, Dict, List, Optional, Sequence, Tuple
 from google.cloud.firestore_v1 import DocumentSnapshot
 from google.cloud.firestore_v1.client import Client as FirestoreClient
 
-from app.firestore import db
+import app.firestore as _fs  # access as `_fs.db` so init stays lazy
 
 
 # ---------------------------------------------------------------------------
@@ -35,7 +35,7 @@ def doc_to_dict(doc_snapshot: DocumentSnapshot) -> Dict[str, Any] | None:
 
 def get_document(collection_path: str, doc_id: str) -> Dict[str, Any] | None:
     """Fetch a single document by ID. Returns None if not found."""
-    doc = db.collection(collection_path).document(doc_id).get()
+    doc = _fs.db.collection(collection_path).document(doc_id).get()
     return doc_to_dict(doc)
 
 
@@ -46,10 +46,10 @@ def create_document(
 ) -> Dict[str, Any]:
     """Create a document. If *doc_id* is None Firestore auto-generates one."""
     if doc_id:
-        ref = db.collection(collection_path).document(doc_id)
+        ref = _fs.db.collection(collection_path).document(doc_id)
         ref.set(data)
     else:
-        ref = db.collection(collection_path).add(data)[1]
+        ref = _fs.db.collection(collection_path).add(data)[1]
     created = dict(data)
     if not created.get("id"):
         created["id"] = ref.id
@@ -62,7 +62,7 @@ def update_document(
     data: Dict[str, Any],
 ) -> Dict[str, Any]:
     """Update (merge) fields on an existing document."""
-    ref = db.collection(collection_path).document(doc_id)
+    ref = _fs.db.collection(collection_path).document(doc_id)
     ref.update(data)
     # Return the full document after update
     return doc_to_dict(ref.get())
@@ -70,7 +70,7 @@ def update_document(
 
 def delete_document(collection_path: str, doc_id: str) -> bool:
     """Delete a document. Returns True on success."""
-    db.collection(collection_path).document(doc_id).delete()
+    _fs.db.collection(collection_path).document(doc_id).delete()
     return True
 
 
@@ -89,7 +89,7 @@ def query_collection(
     offset: int | None = None,
 ) -> List[Dict[str, Any]]:
     """Query a collection with optional filters, ordering, limit and offset."""
-    ref = db.collection(collection_path)
+    ref = _fs.db.collection(collection_path)
     query = ref
 
     for field, op, value in filters:
@@ -133,7 +133,7 @@ def paginated_query(
         }
     """
     # Count total matching documents
-    ref = db.collection(collection_path)
+    ref = _fs.db.collection(collection_path)
     count_query = ref
     for field, op, value in filters:
         count_query = count_query.where(field, op, value)
@@ -173,7 +173,7 @@ def batch_write(operations: List[Dict[str, Any]]) -> bool:
 
     Returns True on success.
     """
-    batch = db.batch()
+    batch = _fs.db.batch()
 
     for op in operations:
         action = op["action"]
@@ -182,15 +182,15 @@ def batch_write(operations: List[Dict[str, Any]]) -> bool:
 
         if action == "create":
             if doc_id:
-                ref = db.collection(collection).document(doc_id)
+                ref = _fs.db.collection(collection).document(doc_id)
             else:
-                ref = db.collection(collection).document()
+                ref = _fs.db.collection(collection).document()
             batch.set(ref, op["data"])
         elif action == "update":
-            ref = db.collection(collection).document(doc_id)
+            ref = _fs.db.collection(collection).document(doc_id)
             batch.update(ref, op["data"])
         elif action == "delete":
-            ref = db.collection(collection).document(doc_id)
+            ref = _fs.db.collection(collection).document(doc_id)
             batch.delete(ref)
         else:
             raise ValueError(f"Unknown batch action: {action}")
