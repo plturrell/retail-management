@@ -1077,7 +1077,7 @@ export default function ManagerOpsPage() {
         <section className="rounded-3xl border border-gray-200 bg-white p-5 shadow-sm">
           <h2 className="text-lg font-semibold text-gray-900">Owner-Only Operations</h2>
           <p className="mt-2 text-sm text-gray-600">
-            Supplier, purchase-order, manufacturing, transfer, invoice-review, cost, and financial workflows are hidden from sales managers.
+            Supplier, purchase-order, manufacturing, transfer, invoice-review, cost, and financial workflows are hidden from store managers.
           </p>
           <p className="mt-3 text-sm text-gray-500">
             This view stays focused on store stock, selling price, manual adjustments, and recommendation review for the locations assigned to you.

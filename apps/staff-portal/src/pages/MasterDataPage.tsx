@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   masterDataApi,
   type CreateProductRequest,
@@ -887,8 +887,8 @@ export default function MasterDataPage() {
                 const siblings = p.variant_siblings || [];
                 const isExpanded = expandedVariants.has(p.sku_code);
                 return (
-                  <>
-                  <tr key={p.sku_code} className={isSelected ? "bg-blue-50/40" : "hover:bg-blue-50/30"}>
+                  <Fragment key={p.sku_code}>
+                  <tr className={isSelected ? "bg-blue-50/40" : "hover:bg-blue-50/30"}>
                     <td className="px-2 py-2">
                       <input
                         type="checkbox"
@@ -1073,7 +1073,7 @@ export default function MasterDataPage() {
                       </tr>
                     );
                   })}
-                  </>
+                  </Fragment>
                 );
               })}
             </tbody>
@@ -2185,14 +2185,21 @@ function SupplierCatalogPane({
                 <div className="text-xs font-semibold text-gray-800">
                   New catalog entry
                 </div>
-                <input
-                  type="text"
-                  placeholder="Supplier item code *"
-                  value={addForm.supplier_item_code}
-                  onChange={(e) => setAddForm((f) => ({ ...f, supplier_item_code: e.target.value }))}
-                  disabled={addBusy}
-                  className="w-full rounded border border-gray-300 px-2 py-1 text-xs font-mono"
-                />
+                <div className="flex gap-1">
+                  <input
+                    type="text"
+                    placeholder="Supplier item code *"
+                    value={addForm.supplier_item_code}
+                    onChange={(e) => setAddForm((f) => ({ ...f, supplier_item_code: e.target.value }))}
+                    disabled={addBusy}
+                    className="w-full rounded border border-gray-300 px-2 py-1 text-xs font-mono"
+                  />
+                  <BarcodeScannerButton
+                    disabled={addBusy}
+                    onDetected={(code) => setAddForm((f) => ({ ...f, supplier_item_code: code }))}
+                    title="Scan barcode to fill supplier item code"
+                  />
+                </div>
                 <input
                   type="text"
                   placeholder="Display name"

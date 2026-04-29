@@ -13,17 +13,19 @@ const SELECTED_STORE_KEY = "retailsg.selectedStoreId";
 export interface StoreRole {
   id: string;
   store_id: string;
-  role: "staff" | "manager" | "owner";
+  role: "staff" | "manager" | "owner" | "system_admin";
 }
 
 export type StoreRoleName = StoreRole["role"];
 
 export function getRoleLabel(role: StoreRoleName | null | undefined) {
   switch (role) {
+    case "system_admin":
+      return "System Admin";
     case "owner":
       return "Owner Director";
     case "manager":
-      return "Sales Manager";
+      return "Store Manager";
     case "staff":
       return "Sales Promoter";
     default:
@@ -63,6 +65,7 @@ interface AuthContextValue {
   selectedStoreRole: StoreRole | null;
   isManager: boolean;
   isOwner: boolean;
+  isSystemAdmin: boolean;
   canViewSensitiveOperations: boolean;
   roleLabel: string;
   loading: boolean;
@@ -195,10 +198,20 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const selectedStoreRole = selectedStore
     ? profile?.store_roles.find((role) => role.store_id === selectedStore.id) ?? null
     : null;
-  const isOwner = selectedStoreRole?.role === "owner";
-  const isManager = selectedStoreRole?.role === "manager" || selectedStoreRole?.role === "owner";
+  // System admins have a global role: any system_admin assignment grants
+  // owner-equivalent access to every store, regardless of which store is
+  // currently selected. Mirrors the backend short-circuit in
+  // ``ensure_store_access`` / ``is_system_admin``.
+  const isSystemAdmin = (profile?.store_roles ?? []).some((r) => r.role === "system_admin");
+  const isOwner = isSystemAdmin || selectedStoreRole?.role === "owner";
+  const isManager =
+    isSystemAdmin ||
+    selectedStoreRole?.role === "manager" ||
+    selectedStoreRole?.role === "owner";
   const canViewSensitiveOperations = isOwner;
-  const roleLabel = getRoleLabel(selectedStoreRole?.role);
+  const roleLabel = isSystemAdmin
+    ? getRoleLabel("system_admin")
+    : getRoleLabel(selectedStoreRole?.role);
 
   if (firebaseConfigError) {
     return <FirebaseConfigurationError />;
@@ -214,6 +227,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         selectedStoreRole,
         isManager,
         isOwner,
+        isSystemAdmin,
         canViewSensitiveOperations,
         roleLabel,
         loading,

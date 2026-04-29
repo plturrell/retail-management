@@ -122,7 +122,7 @@ struct MainTabView: View {
             case .inventory:
                 InventoryTabView()
             case .masterData:
-                MasterDataView(canEdit: currentRole == .owner)
+                MasterDataView(canEdit: currentRole.isOwnerOrAbove)
             case .vendorReview:
                 VendorReviewTabView()
             case .orders:
@@ -194,8 +194,8 @@ struct MainTabView: View {
                         Label("Inventory", systemImage: "shippingbox.fill")
                     }
             }
-            if currentRole == .owner {
-                MasterDataView(canEdit: currentRole == .owner)
+            if currentRole.isOwnerOrAbove {
+                MasterDataView(canEdit: currentRole.isOwnerOrAbove)
                     .tabItem {
                         Label("Master Data", systemImage: "list.bullet.rectangle.portrait")
                     }
@@ -234,7 +234,7 @@ private struct WorkflowsRoute: View {
     private var canViewSensitiveOperations: Bool {
         guard let user = authViewModel.currentUser,
               let store = storeViewModel.selectedStore else { return false }
-        return (user.role(for: store.id) ?? user.highestRole ?? .staff) == .owner
+        return (user.role(for: store.id) ?? user.highestRole ?? .staff).isOwnerOrAbove
     }
 
     var body: some View {

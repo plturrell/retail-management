@@ -139,18 +139,26 @@ def _resolve_store_nec_fields(fs_db: FirestoreClient, store_code: str | None) ->
     """Look up per-store NEC fields (``nec_store_id``, ``nec_taxable``,
     ``nec_tenant_code``) from the matching ``stores`` doc, if any. Returns
     the empty dict when no store matches.
+
+    Uses an indexed equality query on ``store_code`` so the cost is O(1)
+    regardless of how many stores the tenant operates.
     """
     if fs_db is None or not store_code:
         return {}
     try:
-        for snap in fs_db.collection("stores").stream():
+        snaps = (
+            fs_db.collection("stores")
+            .where("store_code", "==", store_code)
+            .limit(1)
+            .stream()
+        )
+        for snap in snaps:
             data = snap.to_dict() or {}
-            if data.get("store_code") == store_code:
-                return {
-                    "nec_store_id": data.get("nec_store_id"),
-                    "nec_taxable": data.get("nec_taxable"),
-                    "nec_tenant_code": data.get("nec_tenant_code"),
-                }
+            return {
+                "nec_store_id": data.get("nec_store_id"),
+                "nec_taxable": data.get("nec_taxable"),
+                "nec_tenant_code": data.get("nec_tenant_code"),
+            }
     except Exception:  # noqa: BLE001 - per-store lookup is best-effort
         return {}
     return {}

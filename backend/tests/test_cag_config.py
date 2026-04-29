@@ -1,11 +1,17 @@
-"""Tests for ``app.services.cag_config`` — Firestore-backed CAG config layer."""
+"""Tests for ``app.services.cag_config`` — Firestore-backed CAG config layer.
+
+The fakes here also exercise ``app.services.cag_history`` because both
+modules share the in-memory Firestore stub. Adding focused coverage for
+``list_runs`` (server-side limit) and ``_error_key`` (collision-resistant
+dedup) here avoids a new test file while keeping the fakes co-located.
+"""
 from __future__ import annotations
 
 from typing import Any
 
 import pytest
 
-from app.services import cag_config
+from app.services import cag_config, cag_history, cag_sftp
 
 
 class FakeDocSnapshot:
@@ -35,12 +41,75 @@ class FakeDocRef:
         self._store.pop(self._doc_id, None)
 
 
+class FakeQueryDocSnapshot:
+    """Stand-in for the per-doc snapshot returned by ``query.stream()``."""
+
+    def __init__(self, doc_id: str, data: dict[str, Any]):
+        self.id = doc_id
+        self._data = data
+        self.exists = True
+
+    def to_dict(self) -> dict[str, Any]:
+        return dict(self._data)
+
+
+class FakeQuery:
+    """Minimal Firestore query that supports ``.order_by`` + ``.limit`` +
+    ``.stream`` so we can exercise the ordered-then-limited path used by
+    :func:`cag_history.list_runs` and :func:`cag_history.list_errors`."""
+
+    def __init__(self, store: dict[str, dict[str, Any]], *, order_field: str | None = None,
+                 descending: bool = False, limit_n: int | None = None):
+        self._store = store
+        self._order_field = order_field
+        self._descending = descending
+        self._limit = limit_n
+
+    def order_by(self, field: str, direction: Any = None) -> "FakeQuery":
+        # Match the google.cloud.firestore.Query.DESCENDING sentinel (string id).
+        descending = bool(direction) and "DESC" in str(direction).upper()
+        return FakeQuery(self._store, order_field=field, descending=descending, limit_n=self._limit)
+
+    def limit(self, n: int) -> "FakeQuery":
+        return FakeQuery(self._store, order_field=self._order_field,
+                         descending=self._descending, limit_n=n)
+
+    def where(self, field: str, op: str, value: Any) -> "FakeQuery":
+        # Filter the store and return a new FakeQuery scoped to matches.
+        if op != "==":
+            raise NotImplementedError(op)
+        filtered = {k: v for k, v in self._store.items() if v.get(field) == value}
+        return FakeQuery(filtered, order_field=self._order_field,
+                         descending=self._descending, limit_n=self._limit)
+
+    def stream(self):
+        rows = [(k, v) for k, v in self._store.items()]
+        if self._order_field:
+            rows.sort(key=lambda kv: kv[1].get(self._order_field) or "",
+                      reverse=self._descending)
+        if self._limit is not None:
+            rows = rows[: self._limit]
+        return [FakeQueryDocSnapshot(k, v) for k, v in rows]
+
+
 class FakeCollection:
     def __init__(self, store: dict[str, dict[str, Any]]):
         self._store = store
 
     def document(self, doc_id: str) -> FakeDocRef:
         return FakeDocRef(self._store, doc_id)
+
+    def order_by(self, field: str, direction: Any = None) -> FakeQuery:
+        return FakeQuery(self._store).order_by(field, direction)
+
+    def limit(self, n: int) -> FakeQuery:
+        return FakeQuery(self._store).limit(n)
+
+    def where(self, field: str, op: str, value: Any) -> FakeQuery:
+        return FakeQuery(self._store).where(field, op, value)
+
+    def stream(self):
+        return FakeQuery(self._store).stream()
 
 
 class FakeFirestore:
@@ -198,3 +267,101 @@ def test_load_config_survives_firestore_exception():
     cfg = cag_config.load_config(BoomFs())
     # Falls back to env defaults — does not raise.
     assert cfg.port == 22
+
+
+
+# ---------------------------------------------------------------------------
+# host_fingerprint round-trip + propagation to SFTPConfig
+# ---------------------------------------------------------------------------
+
+def test_host_fingerprint_round_trip(fs):
+    cag_config.save_config(fs, {"host": "h", "host_fingerprint": "SHA256:abcd1234"})
+    cfg = cag_config.load_config(fs)
+    assert cfg.host_fingerprint == "SHA256:abcd1234"
+    assert cfg.to_sftp_config().host_fingerprint == "SHA256:abcd1234"
+
+
+def test_host_fingerprint_clearable_via_empty_patch(fs):
+    cag_config.save_config(fs, {"host_fingerprint": "SHA256:original"})
+    # Empty string explicitly clears (this is non-secret, unlike password).
+    cag_config.save_config(fs, {"host_fingerprint": ""})
+    assert cag_config.load_config(fs).host_fingerprint == ""
+
+
+# ---------------------------------------------------------------------------
+# cag_history.list_runs / list_errors — server-side ordering + limit
+# ---------------------------------------------------------------------------
+
+def test_list_runs_uses_server_side_order_by_and_limit(fs):
+    coll = fs.data.setdefault(cag_history.RUN_COLLECTION, {})
+    # Seed 5 runs with monotonically increasing created_at.
+    for i in range(5):
+        coll[f"run-{i}"] = {
+            "id": f"run-{i}",
+            "created_at": f"2026-04-29T0{i}:00:00Z",
+            "started_at": f"2026-04-29T0{i}:00:00Z",
+            "ok": True,
+        }
+    rows = cag_history.list_runs(fs, limit=3)
+    assert len(rows) == 3
+    # Newest first.
+    assert [r["id"] for r in rows] == ["run-4", "run-3", "run-2"]
+
+
+def test_list_errors_uses_server_side_order_by_and_limit(fs):
+    coll = fs.data.setdefault(cag_history.ERROR_COLLECTION, {})
+    for i in range(4):
+        coll[f"err-{i}"] = {
+            "id": f"err-{i}",
+            "synced_at": f"2026-04-29T0{i}:00:00Z",
+            "message": f"diagnostic {i}",
+            "line": 0,
+        }
+    rows = cag_history.list_errors(fs, limit=2)
+    assert len(rows) == 2
+    assert [r["id"] for r in rows] == ["err-3", "err-2"]
+
+
+# ---------------------------------------------------------------------------
+# cag_history._error_key — collision-resistant on (source_file, line=0)
+# ---------------------------------------------------------------------------
+
+def test_error_key_distinguishes_messages_on_same_file_and_line():
+    a = cag_history._error_key("SKU.errorLog", 0, "CHILD_CATG_CODE not found")
+    b = cag_history._error_key("SKU.errorLog", 0, "Mandatory fields are not filled")
+    c = cag_history._error_key("SKU.errorLog", 0, "CHILD_CATG_CODE not found")
+    assert a != b
+    assert a == c  # same inputs → same key (idempotent on re-sync)
+
+
+def test_sync_errors_persists_distinct_diagnostics_for_same_line(fs, monkeypatch):
+    # Configure SFTP just enough for ``is_configured`` to pass.
+    cag_config.save_config(fs, {"host": "h", "username": "u", "password": "p"})
+
+    fake_entries = [
+        cag_sftp.ErrorLogEntry("Failed", 0, "First unrecognised diagnostic", "X.errorLog"),
+        cag_sftp.ErrorLogEntry("Failed", 0, "Second unrecognised diagnostic", "X.errorLog"),
+    ]
+    monkeypatch.setattr(cag_sftp, "fetch_error_logs", lambda config, limit=200: fake_entries)
+
+    result = cag_history.sync_errors(fs)
+    assert result == {"fetched": 2, "new": 2, "skipped": 0}
+    # Both rows are persisted (not collapsed under one (file, line=0) key).
+    coll = fs.data.get(cag_history.ERROR_COLLECTION) or {}
+    messages = sorted(v["message"] for v in coll.values())
+    assert messages == ["First unrecognised diagnostic", "Second unrecognised diagnostic"]
+
+
+def test_sync_errors_dedups_on_repeat_sync(fs, monkeypatch):
+    cag_config.save_config(fs, {"host": "h", "username": "u", "password": "p"})
+
+    fake_entries = [
+        cag_sftp.ErrorLogEntry("Failed", 1, "msg-a", "Y.errorLog"),
+        cag_sftp.ErrorLogEntry("Failed", 2, "msg-b", "Y.errorLog"),
+    ]
+    monkeypatch.setattr(cag_sftp, "fetch_error_logs", lambda config, limit=200: fake_entries)
+
+    first = cag_history.sync_errors(fs)
+    second = cag_history.sync_errors(fs)
+    assert first == {"fetched": 2, "new": 2, "skipped": 0}
+    assert second == {"fetched": 2, "new": 0, "skipped": 2}

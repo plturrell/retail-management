@@ -31,6 +31,7 @@ interface CagConfigPublic {
   inbound_working: string;
   inbound_error: string;
   inbound_archive: string;
+  host_fingerprint: string;
   default_nec_store_id: string;
   default_taxable: boolean;
   scheduler_enabled: boolean;
@@ -82,6 +83,7 @@ type FormState = {
   inbound_working: string;
   inbound_error: string;
   inbound_archive: string;
+  host_fingerprint: string;
   default_nec_store_id: string;
   default_taxable: boolean;
   scheduler_enabled: boolean;
@@ -102,6 +104,7 @@ const EMPTY: FormState = {
   inbound_working: "Inbound/Working",
   inbound_error: "Inbound/Error",
   inbound_archive: "Inbound/Archive",
+  host_fingerprint: "",
   default_nec_store_id: "",
   default_taxable: true,
   scheduler_enabled: true,
@@ -125,6 +128,7 @@ function fromConfig(cfg: CagConfigPublic): FormState {
     inbound_working: cfg.inbound_working || "Inbound/Working",
     inbound_error: cfg.inbound_error || "Inbound/Error",
     inbound_archive: cfg.inbound_archive || "Inbound/Archive",
+    host_fingerprint: cfg.host_fingerprint ?? "",
     default_nec_store_id: cfg.default_nec_store_id ?? "",
     default_taxable: cfg.default_taxable ?? true,
     scheduler_enabled: cfg.scheduler_enabled ?? true,
@@ -296,6 +300,15 @@ export default function CagSettingsPage() {
         icon: "lock",
       },
       {
+        id: "host-fingerprint",
+        label: "Host-key fingerprint",
+        detail: cfg?.host_fingerprint
+          ? `Pinned (${cfg.host_fingerprint.replace(/^SHA256:/i, "").slice(0, 12)}…)`
+          : "Unpinned — vulnerable to MITM",
+        state: cfg?.host_fingerprint ? "ok" : "warn",
+        icon: "lock",
+      },
+      {
         id: "tenant",
         label: "Tenant folder",
         detail: effectiveTenant || "Missing tenant/customer number",
@@ -382,6 +395,7 @@ export default function CagSettingsPage() {
         inbound_working: form.inbound_working.trim() || "Inbound/Working",
         inbound_error: form.inbound_error.trim() || "Inbound/Error",
         inbound_archive: form.inbound_archive.trim() || "Inbound/Archive",
+        host_fingerprint: form.host_fingerprint.trim(),
         default_nec_store_id: form.default_nec_store_id.trim(),
         default_taxable: form.default_taxable,
         scheduler_enabled: form.scheduler_enabled,
@@ -668,6 +682,20 @@ export default function CagSettingsPage() {
             onChange={(e) => update("key_passphrase", e.target.value)}
             autoComplete="new-password"
             placeholder={cfg?.has_key_passphrase ? "•••••• (unchanged)" : ""}
+          />
+        </Field>
+        <Field
+          label="Host-key fingerprint (SHA-256)"
+          hint='Pin the server key to defeat MITM. Get it via `ssh-keyscan -t rsa,ed25519 <host> | ssh-keygen -lf -`. Leave blank only for first-time enrollment.'
+        >
+          <input
+            className={inputCls}
+            value={form.host_fingerprint}
+            onChange={(e) => update("host_fingerprint", e.target.value)}
+            placeholder="SHA256:abc123…"
+            spellCheck={false}
+            autoCapitalize="none"
+            autoCorrect="off"
           />
         </Field>
       </Section>

@@ -38,7 +38,9 @@ function getDetectorCtor(): BarcodeDetectorCtor | null {
 
 let didLogUnsupported = false;
 
-export function isBarcodeScanSupported(): boolean {
+// Module-private — the component itself returns null when the API is
+// missing, which is the only feature-detection callers need.
+function isBarcodeScanSupported(): boolean {
   return getDetectorCtor() !== null;
 }
 

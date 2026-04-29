@@ -23,13 +23,18 @@ class RoleEnum(str, Enum):
     staff = "staff"
     manager = "manager"
     owner = "owner"
+    system_admin = "system_admin"
 
 
-# Role hierarchy: owner > manager > staff
+# Role hierarchy: system_admin > owner > manager > staff. A ``system_admin``
+# assignment on any store grants global access (see ``is_system_admin`` and
+# the short-circuits in ``ensure_store_access`` / ``ensure_store_role`` /
+# ``ensure_any_store_role`` below).
 ROLE_HIERARCHY = {
     RoleEnum.staff: 0,
     RoleEnum.manager: 1,
     RoleEnum.owner: 2,
+    RoleEnum.system_admin: 3,
 }
 
 
@@ -50,7 +55,21 @@ def _field(obj: Any, key: str, default: Any = None) -> Any:
 
 
 def can_view_sensitive_operations(role: RoleEnum | str | None) -> bool:
-    return _coerce_role(role) == RoleEnum.owner
+    coerced = _coerce_role(role)
+    return coerced in (RoleEnum.owner, RoleEnum.system_admin)
+
+
+def is_system_admin(user: Any) -> bool:
+    """True iff the user holds a ``system_admin`` role on any store.
+
+    System admins bypass per-store membership checks: they can access every
+    store and every role-gated route regardless of which assignments exist
+    on their user document.
+    """
+    for assignment in _field(user, "store_roles", []):
+        if _coerce_role(_field(assignment, "role")) == RoleEnum.system_admin:
+            return True
+    return False
 
 
 # ---------------------------------------------------------------------------
@@ -183,15 +202,31 @@ def get_store_role(user: _UserDict, store_id: UUID) -> _RoleDict | None:
     return None
 
 
+def _virtual_system_admin_assignment(user: _UserDict, store_id: UUID) -> _RoleDict:
+    """Synthesize a system_admin assignment for ``store_id`` when bypassing
+    per-store membership checks. The returned dict mirrors the shape of a
+    real role doc so downstream callers (``_field(assignment, "role")`` etc.)
+    keep working without special-casing."""
+    user_id = _field(user, "id")
+    return _RoleDict({
+        "id": f"system_admin:{store_id}",
+        "store_id": store_id,
+        "user_id": user_id,
+        "role": RoleEnum.system_admin,
+    })
+
+
 def ensure_store_access(user: _UserDict, store_id: UUID) -> _RoleDict:
     """Ensure the user belongs to the requested store."""
     assignment = get_store_role(user, store_id)
-    if assignment is None:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="You do not have access to this store",
-        )
-    return assignment
+    if assignment is not None:
+        return assignment
+    if is_system_admin(user):
+        return _virtual_system_admin_assignment(user, store_id)
+    raise HTTPException(
+        status_code=status.HTTP_403_FORBIDDEN,
+        detail="You do not have access to this store",
+    )
 
 
 def ensure_store_role(
@@ -265,6 +300,29 @@ def require_any_store_role(min_role: RoleEnum):
         return ensure_any_store_role(user, min_role)
 
     return dependency
+
+
+def ensure_system_admin(user: _UserDict) -> _UserDict:
+    """Raise 403 unless the caller holds ``system_admin`` on any store.
+
+    Used to gate the highest-risk surfaces — the ones an owner-level
+    compromise must not be able to abuse — namely CAG/SFTP credential
+    rotation, audit-log reads, and irreversible identity actions
+    (user disable/enable). Owners do **not** pass this gate.
+    """
+    if is_system_admin(user):
+        return user
+    raise HTTPException(
+        status_code=status.HTTP_403_FORBIDDEN,
+        detail="System administrator role required",
+    )
+
+
+async def require_system_admin(
+    user: _UserDict = Depends(get_current_user),
+) -> _UserDict:
+    """FastAPI dependency wrapping :func:`ensure_system_admin`."""
+    return ensure_system_admin(user)
 
 
 # ---------------------------------------------------------------------------

@@ -17,8 +17,15 @@ struct SettingsView: View {
 
     private var isOwner: Bool {
         guard let user = authViewModel.currentUser else { return false }
-        if let store = storeViewModel.selectedStore, user.role(for: store.id) == .owner { return true }
-        return user.highestRole == .owner
+        if let store = storeViewModel.selectedStore,
+           (user.role(for: store.id) ?? .staff).isOwnerOrAbove { return true }
+        return (user.highestRole ?? .staff).isOwnerOrAbove
+    }
+
+    /// CAG / NEC SFTP credentials sit above the owner tier — only system
+    /// admins can read or edit them. Mirrors the staff-portal gate.
+    private var isSystemAdmin: Bool {
+        authViewModel.currentUser?.isSystemAdmin ?? false
     }
 
     var body: some View {
@@ -97,7 +104,7 @@ struct SettingsView: View {
                 }
                 #endif
 
-                if isOwner {
+                if isSystemAdmin {
                     Section("Integrations") {
                         NavigationLink {
                             CagSettingsView()

@@ -2,10 +2,13 @@
 //  CagSettingsView.swift
 //  retailmanagement
 //
-//  Owner-only mobile parity for the staff-portal CagSettingsPage. Surfaces
-//  SFTP credentials, tenant identifiers, scheduler defaults, and the same
-//  Save / Test SFTP / Run scheduled push now / Clear actions. Per-store
-//  NEC mappings and the remote error log panel remain web-only.
+//  System-admin-only mobile parity for the staff-portal CagSettingsPage.
+//  Surfaces SFTP credentials, tenant identifiers, scheduler defaults, and
+//  the same Save / Test SFTP / Run scheduled push now / Clear actions.
+//  Per-store NEC mappings and the remote error log panel remain web-only.
+//  Owners no longer see this screen — the SettingsView nav entry is gated
+//  on ``AppUser.isSystemAdmin``, matching the backend ``require_system_admin``
+//  gate on PUT/DELETE /api/cag/config.
 //
 
 import SwiftUI

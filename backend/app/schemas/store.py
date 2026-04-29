@@ -4,10 +4,53 @@ from datetime import date, datetime, time
 from enum import Enum
 from uuid import UUID
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from app.models.store import StoreTypeEnum
 from app.schemas.common import TimestampMixin, UUIDMixin
+
+
+def _normalize_nec_store_id(value: object) -> str | None:
+    """Coerce ``nec_store_id`` to either a 5-digit ASCII string or ``None``.
+
+    The value is consumed verbatim by ``cag_export`` to build SFTP
+    filenames such as ``SKU_<storeID>_*.txt``; bad values would silently
+    produce a broken push or, worse, route a payload to the wrong tenant.
+    Mirrors the runtime gate in ``cag_export._validate_nec_store_id`` so
+    operators see the failure at PATCH time rather than at push time.
+    """
+    if value is None:
+        return None
+    if not isinstance(value, str):
+        raise ValueError("nec_store_id must be a string of 5 ASCII digits")
+    cleaned = value.strip()
+    if not cleaned:
+        return None
+    if len(cleaned) != 5 or not cleaned.isdigit() or not cleaned.isascii():
+        raise ValueError("nec_store_id must be exactly 5 ASCII digits (e.g. 80001)")
+    return cleaned
+
+
+def _normalize_nec_tenant_code(value: object) -> str | None:
+    """Coerce ``nec_tenant_code`` to a 6/7-digit Customer No. or ``None``.
+
+    The tenant code becomes a path segment under
+    ``Inbound/Working/<tenant>/`` on the SFTP target, so we reject any
+    value that is not strictly digits to avoid path-traversal-shaped
+    strings.
+    """
+    if value is None:
+        return None
+    if not isinstance(value, str):
+        raise ValueError("nec_tenant_code must be a string of 6 or 7 ASCII digits")
+    cleaned = value.strip()
+    if not cleaned:
+        return None
+    if len(cleaned) not in (6, 7) or not cleaned.isdigit() or not cleaned.isascii():
+        raise ValueError(
+            "nec_tenant_code must be a 6- or 7-digit Customer No. (e.g. 200151)"
+        )
+    return cleaned
 
 
 class StoreType(str, Enum):
@@ -60,7 +103,15 @@ class StoreBase(BaseModel):
 
 
 class StoreCreate(StoreBase):
-    pass
+    @field_validator("nec_store_id", mode="before")
+    @classmethod
+    def _validate_nec_store_id(cls, value: object) -> str | None:
+        return _normalize_nec_store_id(value)
+
+    @field_validator("nec_tenant_code", mode="before")
+    @classmethod
+    def _validate_nec_tenant_code(cls, value: object) -> str | None:
+        return _normalize_nec_tenant_code(value)
 
 
 class StoreUpdate(BaseModel):
@@ -86,6 +137,16 @@ class StoreUpdate(BaseModel):
     nec_tenant_code: str | None = Field(None, max_length=20)
     nec_store_id: str | None = Field(None, max_length=5)
     nec_taxable: bool | None = None
+
+    @field_validator("nec_store_id", mode="before")
+    @classmethod
+    def _validate_nec_store_id(cls, value: object) -> str | None:
+        return _normalize_nec_store_id(value)
+
+    @field_validator("nec_tenant_code", mode="before")
+    @classmethod
+    def _validate_nec_tenant_code(cls, value: object) -> str | None:
+        return _normalize_nec_tenant_code(value)
 
 
 class StoreRead(StoreBase, UUIDMixin, TimestampMixin):

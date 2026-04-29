@@ -84,6 +84,7 @@ export default function AppShell() {
     selectedStoreRole,
     setSelectedStoreId,
     isManager,
+    isSystemAdmin,
     canViewSensitiveOperations,
     roleLabel,
   } = useAuth();
@@ -98,6 +99,11 @@ export default function AppShell() {
     { to: "/supplier-review", label: "Invoice Review", icon: "document" },
     { to: "/pos-readiness", label: "POS Readiness", icon: "check-circle" },
     { to: "/data-quality", label: "Data Quality", icon: "database" },
+  ];
+  // System-admin-only surfaces: SFTP host fingerprint + raw connection
+  // settings, and the audit trail. These are deliberately not visible to
+  // owners — see ``require_system_admin`` in the matching backend routes.
+  const systemAdminNavItems: NavItemConfig[] = [
     { to: "/settings/cag-nec", label: "CAG / NEC POS", icon: "lock" },
     { to: "/admin/audit", label: "Audit Log", icon: "shield" },
   ];
@@ -106,6 +112,7 @@ export default function AppShell() {
         ...baseNavItems,
         ...managerNavItems,
         ...(canViewSensitiveOperations ? ownerNavItems : []),
+        ...(isSystemAdmin ? systemAdminNavItems : []),
       ]
     : baseNavItems;
   const mobilePrimaryItems: NavItemConfig[] = [

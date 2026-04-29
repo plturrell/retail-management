@@ -51,10 +51,12 @@ const profile: BackendProfile = {
 
 function roleLabel(role: StoreRole["role"]) {
   switch (role) {
+    case "system_admin":
+      return "System Admin";
     case "owner":
       return "Owner Director";
     case "manager":
-      return "Sales Manager";
+      return "Store Manager";
     case "staff":
       return "Sales Promoter";
   }
@@ -67,6 +69,10 @@ function buildAuthContext(role: StoreRole["role"]) {
     role,
   };
 
+  const isSystemAdmin = role === "system_admin";
+  const isOwner = isSystemAdmin || role === "owner";
+  const isManager = isOwner || role === "manager";
+
   return {
     user: { email: "manager@example.com" } as never,
     profile: {
@@ -76,9 +82,10 @@ function buildAuthContext(role: StoreRole["role"]) {
     stores: [store],
     selectedStore: store,
     selectedStoreRole,
-    isManager: role === "manager" || role === "owner",
-    isOwner: role === "owner",
-    canViewSensitiveOperations: role === "owner",
+    isManager,
+    isOwner,
+    isSystemAdmin,
+    canViewSensitiveOperations: isOwner,
     roleLabel: roleLabel(role),
     loading: false,
     mustChangePassword: false,
@@ -352,7 +359,7 @@ describe("manager web hardening", () => {
     expect(screen.getAllByText("Manager Ops")).toHaveLength(2);
     expect(screen.queryAllByText("Staging Vault")).toHaveLength(0);
     expect(screen.queryAllByText("Invoice Review")).toHaveLength(0);
-    expect(screen.getAllByText("Sales Manager")).toHaveLength(1);
+    expect(screen.getAllByText("Store Manager")).toHaveLength(1);
 
     mockedUseAuth.mockReturnValue(buildAuthContext("owner"));
     rerender(
@@ -410,7 +417,7 @@ describe("manager web hardening", () => {
     expect(screen.queryByText("Manager page")).not.toBeInTheDocument();
   });
 
-  it("redirects sales managers away from owner-only routes", async () => {
+  it("redirects store managers away from owner-only routes", async () => {
     mockedUseAuth.mockReturnValue(buildAuthContext("manager"));
 
     render(
@@ -433,7 +440,7 @@ describe("manager web hardening", () => {
     expect(screen.queryByText("Owner page")).not.toBeInTheDocument();
   });
 
-  it("keeps the sales manager console free of supplier, cost, and procurement data", async () => {
+  it("keeps the store manager console free of supplier, cost, and procurement data", async () => {
     mockedUseAuth.mockReturnValue(buildAuthContext("manager"));
     configureManagerData();
     mockedApi.post.mockResolvedValue({ data: null });

@@ -69,7 +69,7 @@ struct InventoryTabView: View {
     }
 
     private var canViewSensitiveOperations: Bool {
-        currentRole == .owner
+        currentRole.isOwnerOrAbove
     }
 
     var body: some View {
@@ -533,7 +533,7 @@ struct InventoryTabView: View {
         VStack(alignment: .leading, spacing: 12) {
             Text("Owner-Only Operations")
                 .font(.headline)
-            Text("Supplier, purchase-order, manufacturing, transfer, invoice-review, cost, and financial workflows are hidden from sales managers.")
+            Text("Supplier, purchase-order, manufacturing, transfer, invoice-review, cost, and financial workflows are hidden from store managers.")
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
             Text("This view stays focused on store stock, selling price, manual adjustments, and recommendation review for the locations assigned to you.")

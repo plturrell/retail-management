@@ -25,6 +25,7 @@ const baseConfig = {
   inbound_working: "Inbound/Working",
   inbound_error: "Inbound/Error",
   inbound_archive: "Inbound/Archive",
+  host_fingerprint: "SHA256:abcdef1234567890",
   default_nec_store_id: "80001",
   default_taxable: true,
   scheduler_enabled: true,
@@ -155,5 +156,51 @@ describe("CagSettingsPage scheduler section", () => {
     await waitFor(() => expect(mockedErrors).toHaveBeenCalledWith(50));
     expect(await screen.findByText(/Mandatory fields are not filled/i)).toBeTruthy();
     expect(screen.getByText(/1 failed row\(s\)/i)).toBeTruthy();
+  });
+
+  it("renders the host-key fingerprint field and includes it in the PUT body", async () => {
+    render(<CagSettingsPage />);
+    await waitFor(() => expect(mockedApi.get).toHaveBeenCalledWith("/cag/config"));
+
+    const fpInput = screen.getByDisplayValue("SHA256:abcdef1234567890") as HTMLInputElement;
+    expect(fpInput).toBeTruthy();
+
+    fireEvent.change(fpInput, { target: { value: "SHA256:newpinabc123" } });
+    fireEvent.click(screen.getByRole("button", { name: /save settings/i }));
+
+    await waitFor(() => expect(mockedApi.put).toHaveBeenCalled());
+    const [, body] = mockedApi.put.mock.calls[0];
+    expect(body.host_fingerprint).toBe("SHA256:newpinabc123");
+  });
+
+  it("flags the host-key fingerprint as unpinned in the readiness console when blank", async () => {
+    mockedApi.get.mockImplementation((path: string) => {
+      if (path.startsWith("/cag/config"))
+        return Promise.resolve({ ...baseConfig, host_fingerprint: "" });
+      if (path.startsWith("/stores")) return Promise.resolve({ data: [], total: 0 });
+      return Promise.reject(new Error(`unexpected GET ${path}`));
+    });
+    render(<CagSettingsPage />);
+    await waitFor(() => expect(mockedApi.get).toHaveBeenCalledWith("/cag/config"));
+    expect(await screen.findByText(/Unpinned — vulnerable to MITM/i)).toBeTruthy();
+  });
+
+  it("shows the readiness console as Pinned when a fingerprint is configured", async () => {
+    render(<CagSettingsPage />);
+    await waitFor(() => expect(mockedApi.get).toHaveBeenCalledWith("/cag/config"));
+    expect(await screen.findByText(/Pinned \(abcdef123456…\)/i)).toBeTruthy();
+  });
+
+  it("clears the host-key fingerprint via empty string when the operator wipes the field", async () => {
+    render(<CagSettingsPage />);
+    await waitFor(() => expect(mockedApi.get).toHaveBeenCalledWith("/cag/config"));
+
+    const fpInput = screen.getByDisplayValue("SHA256:abcdef1234567890") as HTMLInputElement;
+    fireEvent.change(fpInput, { target: { value: "" } });
+    fireEvent.click(screen.getByRole("button", { name: /save settings/i }));
+
+    await waitFor(() => expect(mockedApi.put).toHaveBeenCalled());
+    const [, body] = mockedApi.put.mock.calls[0];
+    expect(body.host_fingerprint).toBe("");
   });
 });

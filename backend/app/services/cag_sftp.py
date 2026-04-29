@@ -24,6 +24,8 @@ without any network or paramiko dependency.
 
 from __future__ import annotations
 
+import base64
+import hashlib
 import logging
 import os
 import re
@@ -114,6 +116,11 @@ class SFTPConfig:
     inbound_working: str = "Inbound/Working"
     inbound_error: str = "Inbound/Error"
     inbound_archive: str = "Inbound/Archive"
+    # SHA-256 host-key fingerprint in OpenSSH format ("SHA256:<base64>") or
+    # the bare base64 portion. Empty means "skip verification" — only safe
+    # for the first-time pinning workflow run from a trusted operator
+    # workstation. Production deployments should always populate this.
+    host_fingerprint: str = ""
 
     @classmethod
     def from_settings(cls) -> "SFTPConfig":
@@ -128,6 +135,7 @@ class SFTPConfig:
             inbound_working=settings.CAG_SFTP_INBOUND_WORKING,
             inbound_error=settings.CAG_SFTP_INBOUND_ERROR,
             inbound_archive=settings.CAG_SFTP_INBOUND_ARCHIVE,
+            host_fingerprint=settings.CAG_SFTP_HOST_FINGERPRINT,
         )
 
     @property
@@ -178,6 +186,53 @@ class UploadResult:
         }
 
 
+def _normalize_fingerprint(fp: str) -> str:
+    """Canonicalise an OpenSSH SHA-256 fingerprint for comparison.
+
+    Accepts ``SHA256:<base64>``, the bare base64 portion, or padded base64.
+    Returns the unpadded base64 portion in upper-case-insensitive form so
+    case-mismatched configuration values still compare equal.
+    """
+    s = (fp or "").strip()
+    if not s:
+        return ""
+    if s.upper().startswith("SHA256:"):
+        s = s[len("SHA256:"):]
+    return s.rstrip("=")
+
+
+def _server_fingerprint_sha256(server_key) -> str:
+    """Compute the OpenSSH SHA-256 fingerprint for a paramiko server key."""
+    digest = hashlib.sha256(server_key.asbytes()).digest()
+    return base64.b64encode(digest).decode("ascii").rstrip("=")
+
+
+def _load_private_key(key_path: str, passphrase: str | None):
+    """Load an SSH private key from disk, auto-detecting the key type.
+
+    Tries Ed25519 → ECDSA → RSA → DSS in that order; the first class that
+    accepts the file wins. Raises :class:`SFTPConfigurationError` when no
+    class succeeds so the caller surfaces a clear error rather than the
+    misleading "not a valid RSA private key file" produced by ``RSAKey``
+    when the file is in fact Ed25519.
+    """
+    import paramiko  # type: ignore
+
+    expanded = os.path.expanduser(key_path)
+    pw = passphrase or None
+    last_exc: Exception | None = None
+    for cls in (paramiko.Ed25519Key, paramiko.ECDSAKey, paramiko.RSAKey, paramiko.DSSKey):
+        try:
+            return cls.from_private_key_file(expanded, password=pw)
+        except paramiko.SSHException as exc:
+            last_exc = exc
+            continue
+    raise SFTPConfigurationError(
+        f"Could not load SSH private key from {key_path!r}: tried Ed25519, "
+        f"ECDSA, RSA, and DSS — last error: {last_exc}"
+    )
+
+
 def _open_client(config: SFTPConfig):
     """Return an open paramiko ``SFTPClient`` plus its underlying transport.
 
@@ -199,14 +254,33 @@ def _open_client(config: SFTPConfig):
 
     transport = paramiko.Transport((config.host, config.port))
     try:
-        if config.key_path:
-            pkey = paramiko.RSAKey.from_private_key_file(
-                os.path.expanduser(config.key_path),
-                password=config.key_passphrase or None,
-            )
-            transport.connect(username=config.username, pkey=pkey)
+        # Start the SSH handshake before authenticating so we can verify the
+        # server's host key against the pinned fingerprint. This blocks any
+        # credentials reaching a MITM that hijacked the TCP connection.
+        transport.start_client(timeout=30)
+        server_key = transport.get_remote_server_key()
+        expected = _normalize_fingerprint(config.host_fingerprint)
+        actual = _server_fingerprint_sha256(server_key)
+        if expected:
+            if actual != _normalize_fingerprint(actual) or expected != actual:
+                raise SFTPTransportError(
+                    f"CAG SFTP host-key mismatch: server presents SHA256:{actual} "
+                    f"but CAG_SFTP_HOST_FINGERPRINT pins SHA256:{expected}. "
+                    "Refusing to send credentials."
+                )
         else:
-            transport.connect(username=config.username, password=config.password)
+            log.warning(
+                "CAG SFTP host key not pinned (CAG_SFTP_HOST_FINGERPRINT empty). "
+                "Server key SHA256:%s — set this in Settings → CAG / NEC POS to "
+                "enable MITM protection.",
+                actual,
+            )
+
+        if config.key_path:
+            pkey = _load_private_key(config.key_path, config.key_passphrase)
+            transport.auth_publickey(username=config.username, key=pkey)
+        else:
+            transport.auth_password(username=config.username, password=config.password)
         client = paramiko.SFTPClient.from_transport(transport)
         if client is None:
             raise SFTPTransportError("Failed to open SFTP channel")

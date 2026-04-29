@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import { api } from "../lib/api";
+import { useAuth } from "../contexts/AuthContext";
 import type { DataQualityResponse, Product } from "../lib/data-quality-types";
 
 /**
@@ -53,6 +54,7 @@ interface StepCard {
 }
 
 export default function PosReadinessPage() {
+  const { isSystemAdmin } = useAuth();
   const [dq, setDq] = useState<DataQualityResponse | null>(null);
   const [plu, setPlu] = useState<PluPreview | null>(null);
   const [nec, setNec] = useState<NecPreview | null>(null);
@@ -189,9 +191,11 @@ export default function PosReadinessPage() {
         detail: cag?.is_configured
           ? `Tenant ${cag.tenant_folder || "(default)"} · default Store ${cag.default_nec_store_id || "—"}`
           : "Host / username / key (or password) not set",
-        cta: cag?.is_configured
-          ? { label: "Review settings", to: "/settings/cag-nec" }
-          : { label: "Configure SFTP", to: "/settings/cag-nec" },
+        cta: isSystemAdmin
+          ? cag?.is_configured
+            ? { label: "Review settings", to: "/settings/cag-nec" }
+            : { label: "Configure SFTP", to: "/settings/cag-nec" }
+          : null,
       },
       {
         id: "nec",
@@ -217,7 +221,7 @@ export default function PosReadinessPage() {
         cta: { label: "Open Data Quality → Preview", to: "/data-quality" },
       },
     ];
-  }, [loading, counts, plu, cag, nec, necErr]);
+  }, [loading, counts, plu, cag, nec, necErr, isSystemAdmin]);
 
   const blockedCount = steps.filter((s) => s.status === "blocked").length;
   const warnCount = steps.filter((s) => s.status === "warn").length;

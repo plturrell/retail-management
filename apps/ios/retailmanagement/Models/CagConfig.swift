@@ -3,8 +3,9 @@
 //  retailmanagement
 //
 //  Mirrors the backend `CagConfigPublic` payload used by both the read-only
-//  NecStatusCard and the owner-only CagSettingsView. All fields default to
-//  empty / 0 / false so older backend responses still decode cleanly.
+//  NecStatusCard and the system-admin-only CagSettingsView. All fields
+//  default to empty / 0 / false so older backend responses still decode
+//  cleanly.
 //
 
 import Foundation

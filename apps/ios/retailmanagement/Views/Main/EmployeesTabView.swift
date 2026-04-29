@@ -111,7 +111,7 @@ struct EmployeesTabView: View {
     private var isOwner: Bool {
         guard let user = authViewModel.currentUser,
               let store = storeViewModel.selectedStore else { return false }
-        return user.role(for: store.id) == .owner
+        return (user.role(for: store.id) ?? .staff).isOwnerOrAbove
     }
 
     private var filteredEmployees: [Employee] {
@@ -226,6 +226,7 @@ struct EmployeeRow: View {
 
     var roleColor: Color {
         switch employee.role {
+        case .systemAdmin: return .pink
         case .owner: return .purple
         case .manager: return .blue
         case .staff: return .gray
@@ -279,7 +280,7 @@ struct EmployeeDetailView: View {
     private var isOwner: Bool {
         guard let user = authViewModel.currentUser,
               let store = storeViewModel.selectedStore else { return false }
-        return user.role(for: store.id) == .owner
+        return (user.role(for: store.id) ?? .staff).isOwnerOrAbove
     }
 
     private var isSelf: Bool {
@@ -382,7 +383,10 @@ struct EmployeeDetailView: View {
                 }
             }
             .confirmationDialog("Change Role", isPresented: $showRolePicker) {
-                ForEach(UserRole.allCases.filter { $0 != employee.role }, id: \.self) { role in
+                ForEach(
+                    UserRole.allCases.filter { $0 != employee.role && $0 != .systemAdmin },
+                    id: \.self
+                ) { role in
                     Button(role.displayName) {
                         Task { await changeRole(to: role) }
                     }
@@ -536,7 +540,7 @@ struct InviteEmployeeView: View {
 
                 Section("Role") {
                     Picker("Assign Role", selection: $selectedRole) {
-                        ForEach(UserRole.allCases, id: \.self) { role in
+                        ForEach(UserRole.allCases.filter { $0 != .systemAdmin }, id: \.self) { role in
                             Text(role.displayName).tag(role)
                         }
                     }

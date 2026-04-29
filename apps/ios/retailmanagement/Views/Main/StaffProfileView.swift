@@ -18,8 +18,9 @@ struct StaffProfileView: View {
 
     private var isOwner: Bool {
         guard let user = authViewModel.currentUser else { return false }
-        if let store = storeViewModel.selectedStore, user.role(for: store.id) == .owner { return true }
-        return user.highestRole == .owner
+        if let store = storeViewModel.selectedStore,
+           (user.role(for: store.id) ?? .staff).isOwnerOrAbove { return true }
+        return (user.highestRole ?? .staff).isOwnerOrAbove
     }
 
     var body: some View {

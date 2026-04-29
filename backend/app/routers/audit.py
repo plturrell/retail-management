@@ -1,24 +1,27 @@
-"""Owner-only audit log reader.
+"""System-admin-only audit log reader.
 
 Exposes a paginated, filterable view over the Firestore `audit_events`
 collection populated by `app.audit.log_event`. Read-only — there is no
 endpoint for mutating audit records (that would defeat the point).
 
 Authorization:
-  Owner role at ANY store is required. Managers cannot read audit data
-  because it contains password/role events about owners above them.
+  ``system_admin`` only. The audit trail records every owner-level
+  action (password resets, role grants, user disables, etc.); leaving
+  read access at owner level would let a compromised owner watch — and
+  ultimately tamper around — their own footprints. Restricting to
+  system_admin keeps the trail above the owner tier.
 """
 from __future__ import annotations
 
 from datetime import datetime
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, Query
 from google.cloud import firestore
 from pydantic import BaseModel
 
 from app.audit import AUDIT_COLLECTION
-from app.auth.dependencies import get_current_user
+from app.auth.dependencies import require_system_admin
 from app.firestore import get_firestore_db
 from app.schemas.common import DataResponse
 
@@ -47,17 +50,6 @@ class AuditPage(BaseModel):
     next_cursor: Optional[str] = None  # doc id to resume from
 
 
-def _require_owner(user: dict) -> None:
-    """Owner-at-any-store gate. Matches the precedent used elsewhere in the
-    codebase for data-quality / vault pages."""
-    for sr in user.get("store_roles", []):
-        raw = sr.get("role")
-        role = raw.value if hasattr(raw, "value") else str(raw or "")
-        if role == "owner":
-            return
-    raise HTTPException(status_code=403, detail="Audit log is owner-only")
-
-
 def _coerce_actor(raw) -> AuditActor:
     if not isinstance(raw, dict):
         return AuditActor()
@@ -75,12 +67,10 @@ async def list_audit_events(
     target_email: Optional[str] = Query(None, description="Filter by target email (exact match)"),
     limit: int = Query(50, ge=1, le=200),
     cursor: Optional[str] = Query(None, description="Doc id from previous page's next_cursor"),
-    user: dict = Depends(get_current_user),
+    _: dict = Depends(require_system_admin),
 ):
     """Paginated, newest-first. Filters are ANDed. Cursor is the Firestore
     doc id of the last row from the previous page."""
-    _require_owner(user)
-
     db = get_firestore_db()
     q = db.collection(AUDIT_COLLECTION).order_by(
         "created_at", direction=firestore.Query.DESCENDING
@@ -125,14 +115,13 @@ async def list_audit_events(
 
 
 @router.get("/event-types", response_model=DataResponse[list[str]])
-async def list_event_types(user: dict = Depends(get_current_user)):
+async def list_event_types(_: dict = Depends(require_system_admin)):
     """Return the static list of event_type values we write anywhere in the app.
 
     Using a curated list instead of a DISTINCT query because Firestore has no
     cheap distinct operator, and this list rarely changes. Keep in sync with
     `app/audit.py` callsites.
     """
-    _require_owner(user)
     return DataResponse(data=[
         "password.self_change",
         "password.admin_reset",

@@ -11,7 +11,7 @@ interface UserWithRoles {
   firebase_uid: string;
   disabled: boolean;
   must_change_password: boolean;
-  highest_role: "owner" | "manager" | "staff" | "";
+  highest_role: "system_admin" | "owner" | "manager" | "staff" | "";
   store_codes: string[];
 }
 
@@ -38,10 +38,12 @@ interface StoreOption {
   name: string;
 }
 
-const ROLE_ORDER: Record<string, number> = { owner: 3, manager: 2, staff: 1, "": 0 };
+const ROLE_ORDER: Record<string, number> = { system_admin: 4, owner: 3, manager: 2, staff: 1, "": 0 };
 
 function roleBadge(role: string) {
   switch (role) {
+    case "system_admin":
+      return "bg-rose-100 text-rose-700";
     case "owner":
       return "bg-purple-100 text-purple-700";
     case "manager":
@@ -54,7 +56,7 @@ function roleBadge(role: string) {
 }
 
 export default function AdminUsersPage() {
-  const { profile, isOwner } = useAuth();
+  const { profile, isOwner, isSystemAdmin } = useAuth();
   const [users, setUsers] = useState<UserWithRoles[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -71,7 +73,7 @@ export default function AdminUsersPage() {
   const [stores, setStores] = useState<StoreOption[]>([]);
   const [inviteEmail, setInviteEmail] = useState("");
   const [inviteName, setInviteName] = useState("");
-  const [inviteRole, setInviteRole] = useState<"staff" | "manager" | "owner">("staff");
+  const [inviteRole, setInviteRole] = useState<"staff" | "manager" | "owner" | "system_admin">("staff");
   const [inviteStoreIds, setInviteStoreIds] = useState<string[]>([]);
   const [inviteBusy, setInviteBusy] = useState(false);
   const [inviteErr, setInviteErr] = useState("");
@@ -104,7 +106,12 @@ export default function AdminUsersPage() {
     e.preventDefault();
     setInviteErr("");
     if (!inviteEmail.trim()) return setInviteErr("Email is required");
-    if (inviteRole !== "staff" && !isOwner) return setInviteErr("Only owners can invite managers or owners");
+    if (inviteRole === "system_admin" && !isSystemAdmin)
+      return setInviteErr("Only system admins can grant the system_admin role");
+    if (inviteRole === "system_admin" && inviteStoreIds.length === 0)
+      return setInviteErr("System admin grants require at least one store assignment");
+    if ((inviteRole === "manager" || inviteRole === "owner") && !isOwner)
+      return setInviteErr("Only owners can invite managers or owners");
     setInviteBusy(true);
     try {
       const res = await api.post<InviteResult>("/users/invite", {
@@ -163,8 +170,11 @@ export default function AdminUsersPage() {
 
   const requestReset = (u: UserWithRoles) => {
     setResetError("");
-    const targetIsOwner = u.highest_role === "owner";
-    if (targetIsOwner && !isOwner) {
+    if (u.highest_role === "system_admin" && !isSystemAdmin) {
+      setResetError("Only system admins can reset a system admin's password.");
+      return;
+    }
+    if (u.highest_role === "owner" && !isOwner) {
       setResetError("Only owners can reset an owner's password.");
       return;
     }
@@ -326,8 +336,14 @@ export default function AdminUsersPage() {
               {filtered.map((u) => {
                 const isSelf = profile?.id === u.id;
                 const canReset =
-                  !isSelf && (u.highest_role !== "owner" || isOwner);
-                const canToggle = canReset; // same permission matrix as reset
+                  !isSelf
+                  && (u.highest_role !== "owner" || isOwner)
+                  && (u.highest_role !== "system_admin" || isSystemAdmin);
+                // Disable/enable is destructive (revokes refresh tokens, can
+                // lock owners out) so it sits one tier above reset — only
+                // system_admins can flip account state. Backend mirrors this
+                // in `disable_user` / `enable_user`.
+                const canToggle = !isSelf && isSystemAdmin;
                 return (
                   <tr key={u.id} className={`hover:bg-gray-50 ${u.disabled ? "opacity-60" : ""}`}>
                     <td className="px-3 py-2 font-medium text-gray-800">
@@ -489,12 +505,17 @@ export default function AdminUsersPage() {
                   Role
                   <select
                     value={inviteRole}
-                    onChange={(e) => setInviteRole(e.target.value as "staff" | "manager" | "owner")}
+                    onChange={(e) =>
+                      setInviteRole(e.target.value as "staff" | "manager" | "owner" | "system_admin")
+                    }
                     className="mt-1 w-full rounded border border-gray-300 px-2 py-1.5 text-sm focus:border-blue-500 focus:outline-none"
                   >
                     <option value="staff">Staff (Sales Promoter)</option>
-                    <option value="manager" disabled={!isOwner}>Manager (Sales Manager){!isOwner && " — owner-only"}</option>
+                    <option value="manager" disabled={!isOwner}>Manager (Store Manager){!isOwner && " — owner-only"}</option>
                     <option value="owner" disabled={!isOwner}>Owner (Director){!isOwner && " — owner-only"}</option>
+                    {isSystemAdmin && (
+                      <option value="system_admin">System Admin (global)</option>
+                    )}
                   </select>
                 </label>
                 <div>

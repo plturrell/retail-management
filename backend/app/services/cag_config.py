@@ -59,6 +59,9 @@ class CagConfig:
     inbound_working: str = "Inbound/Working"
     inbound_error: str = "Inbound/Error"
     inbound_archive: str = "Inbound/Archive"
+    # SHA-256 host-key fingerprint pinned for the SFTP host. See
+    # ``app.services.cag_sftp._open_client`` for verification semantics.
+    host_fingerprint: str = ""
     default_nec_store_id: str = ""
     default_taxable: bool = True
     # Cloud Scheduler-driven push. ``scheduler_cron`` is informational — the
@@ -92,6 +95,7 @@ class CagConfig:
             inbound_working=self.inbound_working or "Inbound/Working",
             inbound_error=self.inbound_error or "Inbound/Error",
             inbound_archive=self.inbound_archive or "Inbound/Archive",
+            host_fingerprint=self.host_fingerprint,
         )
 
     def public_view(self) -> dict[str, Any]:
@@ -116,6 +120,7 @@ def _env_defaults() -> dict[str, Any]:
         "inbound_working": settings.CAG_SFTP_INBOUND_WORKING,
         "inbound_error": settings.CAG_SFTP_INBOUND_ERROR,
         "inbound_archive": settings.CAG_SFTP_INBOUND_ARCHIVE,
+        "host_fingerprint": settings.CAG_SFTP_HOST_FINGERPRINT,
     }
 
 
@@ -174,6 +179,7 @@ def save_config(
     for key in (
         "host", "port", "username", "key_path", "tenant_folder",
         "inbound_working", "inbound_error", "inbound_archive",
+        "host_fingerprint",
         "default_nec_store_id", "default_taxable",
         "scheduler_enabled", "scheduler_cron",
         "scheduler_default_tenant", "scheduler_default_store_id",

@@ -72,6 +72,11 @@ class Settings(BaseSettings):
     CAG_SFTP_KEY_PATH: str = ""
     CAG_SFTP_KEY_PASSPHRASE: str = ""
     CAG_SFTP_TENANT_FOLDER: str = ""
+    # SHA-256 host-key fingerprint, OpenSSH format (``SHA256:<base64>`` or the
+    # bare base64 portion). Compared against the server key on every connect;
+    # mismatch raises SFTPTransportError before any credentials are sent.
+    # Obtain via ``ssh-keyscan -t rsa,ed25519 <host> | ssh-keygen -lf -``.
+    CAG_SFTP_HOST_FINGERPRINT: str = ""
     # Stages: tenant uses Inbound/Working for uploads, Inbound/Error for
     # error log retrieval, Inbound/Archive for processed files.
     CAG_SFTP_INBOUND_WORKING: str = "Inbound/Working"

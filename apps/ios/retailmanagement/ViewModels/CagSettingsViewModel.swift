@@ -2,7 +2,7 @@
 //  CagSettingsViewModel.swift
 //  retailmanagement
 //
-//  Owner-only form state for the NEC CAG integration. Mirrors the
+//  System-admin-only form state for the NEC CAG integration. Mirrors the
 //  staff-portal CagSettingsPage logic: load → edit → PUT, with on-demand
 //  SFTP test and scheduled-push trigger that refresh telemetry on success.
 //

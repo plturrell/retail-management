@@ -3,6 +3,7 @@ import { AuthProvider } from "./contexts/AuthContext";
 import ProtectedRoute from "./components/ProtectedRoute";
 import ManagerOnlyRoute from "./components/ManagerOnlyRoute";
 import OwnerOnlyRoute from "./components/OwnerOnlyRoute";
+import SystemAdminOnlyRoute from "./components/SystemAdminOnlyRoute";
 import AppShell from "./components/AppShell";
 import LoginPage from "./pages/LoginPage";
 import SchedulePage from "./pages/SchedulePage";
@@ -150,9 +151,9 @@ export default function App() {
             <Route
               path="settings/cag-nec"
               element={
-                <OwnerOnlyRoute>
+                <SystemAdminOnlyRoute>
                   <CagSettingsPage />
-                </OwnerOnlyRoute>
+                </SystemAdminOnlyRoute>
               }
             />
             <Route
@@ -166,9 +167,9 @@ export default function App() {
             <Route
               path="admin/audit"
               element={
-                <OwnerOnlyRoute>
+                <SystemAdminOnlyRoute>
                   <AuditLogPage />
-                </OwnerOnlyRoute>
+                </SystemAdminOnlyRoute>
               }
             />
           </Route>

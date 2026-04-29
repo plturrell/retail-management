@@ -1,13 +1,19 @@
-"""Owner-facing settings API for the CAG / NEC POS integration.
+"""Settings API for the CAG / NEC POS integration.
 
-Endpoints (all owner-only):
+Endpoints:
 
 - ``GET    /api/cag/config``        — current merged config (secrets masked).
+                                       Owner-readable.
 - ``PUT    /api/cag/config``        — patch + persist to Firestore.
-- ``DELETE /api/cag/config``        — wipe Firestore overrides (env defaults
-                                       remain in effect).
+                                       **System-admin only** because this
+                                       writes the pinned host fingerprint
+                                       and SFTP credentials; an owner-level
+                                       compromise must not be able to
+                                       repoint exports to a hostile server.
+- ``DELETE /api/cag/config``        — wipe Firestore overrides.
+                                       **System-admin only** (same reason).
 - ``POST   /api/cag/config/test``   — open an SFTP session against the saved
-                                       (or provided) config and report status.
+                                       config and report status. Owner-readable.
 """
 
 from __future__ import annotations
@@ -19,7 +25,7 @@ from fastapi import APIRouter, Body, Depends, HTTPException
 from google.cloud.firestore_v1.client import Client as FirestoreClient
 from pydantic import BaseModel, ConfigDict, Field
 
-from app.auth.dependencies import RoleEnum, require_any_store_role
+from app.auth.dependencies import RoleEnum, require_any_store_role, require_system_admin
 from app.config import settings
 from app.firestore import get_firestore_db
 from app.services import cag_config, cag_sftp
@@ -41,6 +47,10 @@ class CagConfigPatch(BaseModel):
     inbound_working: str | None = None
     inbound_error: str | None = None
     inbound_archive: str | None = None
+    # SHA-256 host-key fingerprint (OpenSSH ``SHA256:<base64>`` form or the
+    # bare base64). Empty string clears the pin — only safe for the initial
+    # ssh-keyscan-driven enrollment from a trusted operator workstation.
+    host_fingerprint: str | None = None
     default_nec_store_id: str | None = None
     default_taxable: bool | None = None
     # Scheduler control surface. ``scheduler_cron`` is informational (the
@@ -63,6 +73,7 @@ class CagConfigPublic(BaseModel):
     inbound_working: str
     inbound_error: str
     inbound_archive: str
+    host_fingerprint: str = ""
     default_nec_store_id: str
     default_taxable: bool
     scheduler_enabled: bool = True
@@ -110,7 +121,7 @@ async def get_config(
 async def update_config(
     patch: CagConfigPatch = Body(...),
     fs_db: FirestoreClient = Depends(get_firestore_db),
-    user: dict = Depends(require_any_store_role(RoleEnum.owner)),
+    user: dict = Depends(require_system_admin),
 ) -> CagConfigPublic:
     if fs_db is None:
         raise HTTPException(status_code=503, detail="Firestore unavailable")
@@ -129,7 +140,7 @@ async def update_config(
 @router.delete("", response_model=CagConfigPublic)
 async def clear_overrides(
     fs_db: FirestoreClient = Depends(get_firestore_db),
-    _: dict = Depends(require_any_store_role(RoleEnum.owner)),
+    _: dict = Depends(require_system_admin),
 ) -> CagConfigPublic:
     cag_config.clear_config(fs_db)
     return _to_public(cag_config.load_config(fs_db))

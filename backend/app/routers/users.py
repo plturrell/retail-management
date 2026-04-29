@@ -31,8 +31,10 @@ from app.firestore_helpers import (
 from app.auth.dependencies import (
     RoleEnum,
     ensure_store_role,
+    ensure_system_admin,
     get_current_user,
     get_token_claims,
+    is_system_admin,
     require_store_role,
 )
 from app.rate_limit import limiter
@@ -84,7 +86,26 @@ def _role_to_read(data: dict) -> UserStoreRoleRead:
 # Password / role helpers
 # ---------------------------------------------------------------------------
 
-_ROLE_RANK = {"staff": 1, "manager": 2, "owner": 3}
+_ROLE_RANK = {"staff": 1, "manager": 2, "owner": 3, "system_admin": 4}
+
+
+def _role_name(sr: dict) -> str:
+    """Coerce a role assignment's ``role`` field to its plain string value."""
+    role = sr.get("role")
+    return role.value if hasattr(role, "value") else (role or "")
+
+
+def _caller_outranks_owner(caller: dict) -> bool:
+    """True iff the caller is an owner or system_admin on any store.
+
+    System admins bypass the per-store owner gate the way owners bypass the
+    per-store manager gate; treating both uniformly here keeps the rest of
+    the router free of string-list churn.
+    """
+    return any(
+        _role_name(sr) in ("owner", "system_admin")
+        for sr in caller.get("store_roles", [])
+    )
 
 # Firebase custom claim used to force password change on next sign-in (P1 #12).
 # The frontend reads this via the ID token and blocks the app shell until the
@@ -187,10 +208,7 @@ def _can_reset_password(caller: dict, target_user_id: str, target_roles: list[di
     if caller_id and caller_id == str(target_user_id):
         return False, "Use /users/me/change-password for your own password"
 
-    caller_is_owner = any(
-        (sr.get("role").value if hasattr(sr.get("role"), "value") else sr.get("role")) == "owner"
-        for sr in caller.get("store_roles", [])
-    )
+    caller_is_owner = _caller_outranks_owner(caller)
     if caller_is_owner:
         return True, ""
 
@@ -744,16 +762,18 @@ async def disable_user(
     Auth and revokes refresh tokens — the user can't sign in. Reversible via
     /enable.
 
-    Uses the same permission matrix as admin password reset.
+    Authorization: system_admin only. Locking another user out is a
+    high-impact, attacker-friendly action (mass-disable would lock owners
+    and managers out of every store) so it sits above the owner tier.
     """
+    ensure_system_admin(caller)
+
     target = get_document("users", str(user_id))
     if target is None:
         raise HTTPException(status_code=404, detail="User not found")
 
-    target_roles = _roles_for_user(user_id)
-    allowed, reason = _can_reset_password(caller, str(user_id), target_roles)
-    if not allowed:
-        raise HTTPException(status_code=403, detail=reason)
+    if str(caller.get("id") or "") == str(user_id):
+        raise HTTPException(status_code=400, detail="You cannot disable your own account")
 
     firebase_uid = target.get("firebase_uid")
     if not firebase_uid:
@@ -787,15 +807,12 @@ async def enable_user(
     caller: dict = Depends(get_current_user),
     db: FirestoreClient = Depends(get_firestore_db),
 ):
-    """Re-enable a previously disabled user (same permission matrix as disable)."""
+    """Re-enable a previously disabled user. system_admin only."""
+    ensure_system_admin(caller)
+
     target = get_document("users", str(user_id))
     if target is None:
         raise HTTPException(status_code=404, detail="User not found")
-
-    target_roles = _roles_for_user(user_id)
-    allowed, reason = _can_reset_password(caller, str(user_id), target_roles)
-    if not allowed:
-        raise HTTPException(status_code=403, detail=reason)
 
     firebase_uid = target.get("firebase_uid")
     if not firebase_uid:
@@ -824,7 +841,7 @@ async def enable_user(
 class InviteRequest(BaseModel):
     email: str = Field(..., description="Email address of the person to invite")
     full_name: str = Field("", description="Display name; defaults to email local-part")
-    role: str = Field(..., description="'staff' | 'manager' | 'owner'")
+    role: str = Field(..., description="'staff' | 'manager' | 'owner' | 'system_admin'")
     store_ids: list[UUID] = Field(default_factory=list, description="Stores to grant the role at")
 
 
@@ -860,18 +877,23 @@ async def invite_user(
       - Any manager or owner can invite a 'staff' user at stores they manage.
       - Only owners can invite 'manager' or 'owner' users, and owners can
         invite at any store.
+      - Only existing system admins can invite 'system_admin'. The role grant
+        is written at the requested stores; ``is_system_admin`` then matches
+        on any such assignment to bypass per-store membership checks.
       - Inviting `email` that already exists in Firebase is refused — use
         /users/{id}/reset-password for password recovery on existing users.
     """
-    caller_is_owner = any(
-        (sr.get("role").value if hasattr(sr.get("role"), "value") else sr.get("role")) == "owner"
-        for sr in caller.get("store_roles", [])
-    )
+    caller_is_owner = _caller_outranks_owner(caller)
+    caller_is_admin = is_system_admin(caller)
     target_role = payload.role.lower().strip()
-    if target_role not in {"staff", "manager", "owner"}:
+    if target_role not in {"staff", "manager", "owner", "system_admin"}:
         raise HTTPException(status_code=400, detail=f"Invalid role: {payload.role}")
     if target_role in {"manager", "owner"} and not caller_is_owner:
         raise HTTPException(status_code=403, detail="Only owners can invite managers or owners")
+    if target_role == "system_admin" and not caller_is_admin:
+        raise HTTPException(status_code=403, detail="Only system admins can grant the system_admin role")
+    if target_role == "system_admin" and not payload.store_ids:
+        raise HTTPException(status_code=400, detail="system_admin grants require at least one store assignment")
 
     # For staff invites by a manager: every requested store must be a store
     # the caller manages. Owners get a free pass (they invite anywhere).
@@ -1026,14 +1048,10 @@ async def list_users(
     `_all_roles_grouped_by_user` for details.
     """
     caller_store_roles = caller.get("store_roles", [])
-    caller_is_owner = any(
-        (sr.get("role").value if hasattr(sr.get("role"), "value") else sr.get("role")) == "owner"
-        for sr in caller_store_roles
-    )
+    caller_is_owner = _caller_outranks_owner(caller)
     caller_manager_stores: set[str] = set()
     for sr in caller_store_roles:
-        name = sr.get("role").value if hasattr(sr.get("role"), "value") else sr.get("role")
-        if name == "manager":
+        if _role_name(sr) == "manager":
             caller_manager_stores.add(str(sr.get("store_id")))
 
     # One query for ALL role docs across all stores.

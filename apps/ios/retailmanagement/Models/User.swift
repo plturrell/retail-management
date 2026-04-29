@@ -6,24 +6,32 @@
 import Foundation
 
 nonisolated enum UserRole: String, Codable, CaseIterable, Sendable {
+    case systemAdmin = "system_admin"
     case owner, manager, staff
 
     var displayName: String {
         switch self {
+        case .systemAdmin: return "System Admin"
         case .owner: return "Owner Director"
-        case .manager: return "Sales Manager"
+        case .manager: return "Store Manager"
         case .staff: return "Sales Promoter"
         }
     }
 
-    /// Role hierarchy: owner > manager > staff
+    /// Role hierarchy: systemAdmin > owner > manager > staff
     var level: Int {
         switch self {
+        case .systemAdmin: return 4
         case .owner: return 3
         case .manager: return 2
         case .staff: return 1
         }
     }
+
+    /// True iff this role outranks-or-equals ``owner``. Used in place of
+    /// `role == .owner` so ``systemAdmin`` (the global tier above owner)
+    /// inherits owner-gated surfaces — Master Data, Vendor Review, etc.
+    var isOwnerOrAbove: Bool { level >= UserRole.owner.level }
 }
 
 nonisolated struct AppUser: Codable, Identifiable, Sendable {
@@ -46,6 +54,13 @@ nonisolated struct AppUser: Codable, Identifiable, Sendable {
     /// Returns the highest role across all stores.
     var highestRole: UserRole? {
         storeRoles.map(\.role).max { $0.level < $1.level }
+    }
+
+    /// True iff the user holds ``system_admin`` on any store. System admins
+    /// bypass per-store membership checks server-side; the iOS surface mirrors
+    /// that by gating admin-only screens (NEC CAG settings) on this flag.
+    var isSystemAdmin: Bool {
+        storeRoles.contains { $0.role == .systemAdmin }
     }
 }
 

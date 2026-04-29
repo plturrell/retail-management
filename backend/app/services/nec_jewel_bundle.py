@@ -88,8 +88,9 @@ def build_master_bundle(
     counts: dict[str, int] = {}
 
     # CATG
-    files[nx.filename_catg(tenant_code, now)] = nx.write_catg(_build_catg_rows(tenant_code)).encode("ascii")
-    counts["catg"] = len(_build_catg_rows(tenant_code))
+    catg_rows = _build_catg_rows(tenant_code)
+    files[nx.filename_catg(tenant_code, now)] = nx.write_catg(catg_rows).encode("ascii")
+    counts["catg"] = len(catg_rows)
 
     # SKU
     sku_rows: list[list[Any]] = []

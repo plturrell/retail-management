@@ -270,6 +270,97 @@ async def test_push_test_endpoint_rejects_unauthenticated(client_no_auth):
     assert resp.status_code in (401, 403)
 
 
+# ---------------------------------------------------------------------------
+# _resolve_store_nec_fields — uses an indexed equality query, not a scan
+# ---------------------------------------------------------------------------
+
+class _FakeStream:
+    """Iterable returned from ``query.stream()``."""
+
+    def __init__(self, snaps):
+        self._snaps = snaps
+
+    def __iter__(self):
+        return iter(self._snaps)
+
+
+class _FakeSnap:
+    def __init__(self, data):
+        self._data = data
+
+    def to_dict(self):
+        return dict(self._data)
+
+
+class _FakeStoresQuery:
+    """Records ``where``/``limit`` calls so the test can assert the targeted
+    lookup is used instead of a collection-wide ``stream()``."""
+
+    def __init__(self, docs, calls):
+        self._docs = docs
+        self._calls = calls
+        self._filtered = list(docs)
+        self._limit = None
+
+    def where(self, field, op, value):
+        self._calls.append(("where", field, op, value))
+        assert op == "=="
+        self._filtered = [d for d in self._docs if d.get(field) == value]
+        return self
+
+    def limit(self, n):
+        self._calls.append(("limit", n))
+        self._limit = n
+        return self
+
+    def stream(self):
+        self._calls.append(("stream",))
+        rows = self._filtered if self._limit is None else self._filtered[: self._limit]
+        return _FakeStream([_FakeSnap(d) for d in rows])
+
+
+class _FakeStoresFs:
+    def __init__(self, docs):
+        self._docs = docs
+        self.calls: list = []
+
+    def collection(self, name):
+        assert name == "stores"
+        return _FakeStoresQuery(self._docs, self.calls)
+
+
+def test_resolve_store_nec_fields_uses_indexed_where_query():
+    docs = [
+        {"store_code": "JEWEL-01", "nec_store_id": "80001", "nec_taxable": True,  "nec_tenant_code": "200151"},
+        {"store_code": "JEWEL-02", "nec_store_id": "80002", "nec_taxable": False, "nec_tenant_code": "200151"},
+        {"store_code": "JEWEL-03", "nec_store_id": "80003", "nec_taxable": True,  "nec_tenant_code": "200151"},
+    ]
+    fs = _FakeStoresFs(docs)
+    out = cag_export._resolve_store_nec_fields(fs, "JEWEL-02")
+    assert out == {"nec_store_id": "80002", "nec_taxable": False, "nec_tenant_code": "200151"}
+    # The lookup must be performed via an equality query + limit, NOT a full scan.
+    assert ("where", "store_code", "==", "JEWEL-02") in fs.calls
+    assert ("limit", 1) in fs.calls
+    # ``where`` must precede ``stream`` so the server filters before returning rows.
+    where_idx = next(i for i, c in enumerate(fs.calls) if c[0] == "where")
+    stream_idx = next(i for i, c in enumerate(fs.calls) if c[0] == "stream")
+    assert where_idx < stream_idx
+
+
+def test_resolve_store_nec_fields_returns_empty_when_no_match():
+    fs = _FakeStoresFs([{"store_code": "OTHER", "nec_store_id": "99999"}])
+    assert cag_export._resolve_store_nec_fields(fs, "JEWEL-01") == {}
+
+
+def test_resolve_store_nec_fields_empty_inputs_short_circuit():
+    # No fs_db → no query attempted.
+    assert cag_export._resolve_store_nec_fields(None, "JEWEL-01") == {}
+    # No store_code → no query attempted (fs.calls stays empty).
+    fs = _FakeStoresFs([{"store_code": "JEWEL-01"}])
+    assert cag_export._resolve_store_nec_fields(fs, None) == {}
+    assert fs.calls == []
+
+
 @pytest.mark.asyncio
 async def test_push_test_endpoint_records_sftp_configuration_failure(client_as_owner, monkeypatch):
     client, captured = client_as_owner
@@ -291,3 +382,139 @@ async def test_push_test_endpoint_records_sftp_configuration_failure(client_as_o
     assert captured["history"]["trigger_kind"] == "manual"
     assert captured["telemetry"]["status"] == "failed"
     assert captured["telemetry"]["trigger"] == "manual"
+
+
+# ---------------------------------------------------------------------------
+# Per-store NEC mapping validation (StoreCreate / StoreUpdate)
+#
+# Invalid values would otherwise propagate into the security-critical CAG
+# export — bad ``nec_store_id`` builds malformed filenames and bad
+# ``nec_tenant_code`` becomes a path segment under ``Inbound/Working/<tenant>``.
+# These tests assert the schemas reject anything that would not survive the
+# runtime gate in ``cag_export._validate_nec_store_id``.
+# ---------------------------------------------------------------------------
+
+
+class _StoreFixtureMixin:
+    @staticmethod
+    def _base_payload(**overrides):
+        from datetime import time
+
+        payload = {
+            "store_code": "JEWEL-01",
+            "name": "Jewel",
+            "location": "Changi",
+            "address": "78 Airport Boulevard",
+            "business_hours_start": time(9, 0),
+            "business_hours_end": time(22, 0),
+        }
+        payload.update(overrides)
+        return payload
+
+
+class TestStoreCreateNecValidation(_StoreFixtureMixin):
+    @pytest.mark.parametrize("value", ["80001", " 80001 ", "00000"])
+    def test_accepts_five_digit_store_id(self, value):
+        from app.schemas.store import StoreCreate
+
+        store = StoreCreate(**self._base_payload(nec_store_id=value))
+        assert store.nec_store_id == value.strip()
+
+    @pytest.mark.parametrize("value", ["", "   ", None])
+    def test_blank_store_id_normalizes_to_none(self, value):
+        from app.schemas.store import StoreCreate
+
+        store = StoreCreate(**self._base_payload(nec_store_id=value))
+        assert store.nec_store_id is None
+
+    @pytest.mark.parametrize(
+        "value",
+        ["abc", "1234", "123456", "abcde", "12 45", "../80", "8000A", "8000\u3000"],
+    )
+    def test_rejects_malformed_store_id(self, value):
+        from pydantic import ValidationError
+
+        from app.schemas.store import StoreCreate
+
+        with pytest.raises(ValidationError) as exc:
+            StoreCreate(**self._base_payload(nec_store_id=value))
+        assert "5 ASCII digits" in str(exc.value)
+
+    @pytest.mark.parametrize("value", ["200151", "2001516", " 200151 "])
+    def test_accepts_six_or_seven_digit_tenant_code(self, value):
+        from app.schemas.store import StoreCreate
+
+        store = StoreCreate(**self._base_payload(nec_tenant_code=value))
+        assert store.nec_tenant_code == value.strip()
+
+    @pytest.mark.parametrize(
+        "value",
+        ["12345", "12345678", "20015X", "../etc", "200 51"],
+    )
+    def test_rejects_malformed_tenant_code(self, value):
+        from pydantic import ValidationError
+
+        from app.schemas.store import StoreCreate
+
+        with pytest.raises(ValidationError) as exc:
+            StoreCreate(**self._base_payload(nec_tenant_code=value))
+        assert "Customer No." in str(exc.value)
+
+
+class TestStoreUpdateNecValidation:
+    @pytest.mark.parametrize("value", ["abcde", "1234", "../80"])
+    def test_patch_rejects_bad_store_id(self, value):
+        from pydantic import ValidationError
+
+        from app.schemas.store import StoreUpdate
+
+        with pytest.raises(ValidationError):
+            StoreUpdate(nec_store_id=value)
+
+    @pytest.mark.parametrize("value", ["12345", "../etc", "20015X"])
+    def test_patch_rejects_bad_tenant_code(self, value):
+        from pydantic import ValidationError
+
+        from app.schemas.store import StoreUpdate
+
+        with pytest.raises(ValidationError):
+            StoreUpdate(nec_tenant_code=value)
+
+    def test_patch_accepts_clean_values_and_strips_whitespace(self):
+        from app.schemas.store import StoreUpdate
+
+        patch = StoreUpdate(nec_store_id=" 80001 ", nec_tenant_code=" 200151 ")
+        assert patch.nec_store_id == "80001"
+        assert patch.nec_tenant_code == "200151"
+
+    def test_patch_treats_empty_string_as_clear(self):
+        from app.schemas.store import StoreUpdate
+
+        patch = StoreUpdate(nec_store_id="", nec_tenant_code="")
+        assert patch.nec_store_id is None
+        assert patch.nec_tenant_code is None
+
+    def test_storeread_tolerates_legacy_persisted_values(self):
+        # Pre-existing docs may contain malformed values written before the
+        # validators were added; reads must surface them so the operator
+        # can fix them via PATCH rather than 500-ing the GET.
+        from datetime import datetime as _dt
+        from datetime import time, timezone
+        from uuid import uuid4
+
+        from app.schemas.store import StoreRead
+
+        read = StoreRead(
+            id=uuid4(),
+            store_code="LEGACY-01",
+            name="Legacy",
+            location="x",
+            address="y",
+            business_hours_start=time(9, 0),
+            business_hours_end=time(22, 0),
+            nec_store_id="1234",  # 4 digits — illegal for new writes
+            nec_tenant_code="abc",  # non-digit — illegal for new writes
+            created_at=_dt.now(timezone.utc),
+        )
+        assert read.nec_store_id == "1234"
+        assert read.nec_tenant_code == "abc"
