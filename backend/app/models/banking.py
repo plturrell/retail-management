@@ -44,6 +44,10 @@ class BankTransaction(Base):
     # Reconciliation links to the finance ledger. NULL until the bank txn is
     # categorised / posted to a chart-of-accounts entry. ON DELETE SET NULL so
     # that pruning a journal entry doesn't cascade-delete its bank evidence.
+    # NOTE: the alembic graph currently has multiple heads (two `007`s); the
+    # production DB FK constraints for these columns must be added once the
+    # tree is consolidated. Until then, referential integrity is enforced at
+    # the ORM layer only.
     account_id: Mapped[Optional[uuid.UUID]] = mapped_column(
         UUID(as_uuid=True),
         ForeignKey("accounts.id", ondelete="SET NULL"),
