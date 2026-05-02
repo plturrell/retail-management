@@ -2,7 +2,7 @@ import uuid as _uuid
 from datetime import date, datetime, time, timezone
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from google.cloud.firestore_v1.client import Client as FirestoreClient
 
 from app.firestore import get_firestore_db
@@ -13,9 +13,10 @@ from app.firestore_helpers import (
     query_collection,
     update_document,
 )
-from app.auth.dependencies import get_current_user
+from app.auth.dependencies import get_current_user, is_system_admin
 from app.schemas.common import DataResponse, PaginatedResponse
 from app.schemas.store import StoreCreate, StoreRead, StoreUpdate
+from app.services.store_identity import canonical_active_location_stores
 
 router = APIRouter(prefix="/api/stores", tags=["stores"])
 
@@ -54,8 +55,8 @@ def _store_to_read(data: dict) -> StoreRead:
         name=data.get("name", ""),
         location=data.get("location", ""),
         address=data.get("address", ""),
-        business_hours_start=_parse_time(data.get("business_hours_start")),
-        business_hours_end=_parse_time(data.get("business_hours_end")),
+        business_hours_start=_parse_time(data.get("business_hours_start")) or time(10, 0),
+        business_hours_end=_parse_time(data.get("business_hours_end")) or time(22, 0),
         store_type=data.get("store_type", "retail"),
         operational_status=data.get("operational_status", "active"),
         is_home_base=data.get("is_home_base", False),
@@ -90,19 +91,34 @@ def _serialize_store_data(data: dict) -> dict:
 async def list_stores(
     page: int = 1,
     page_size: int = 50,
+    active_locations: bool = Query(
+        False,
+        description="Return one preferred store document per canonical operating location.",
+    ),
     user: dict = Depends(get_current_user),
     db: FirestoreClient = Depends(get_firestore_db),
 ):
-    store_ids = [str(sr.get("store_id", "")) for sr in user.get("store_roles", [])]
-    if not store_ids:
-        return PaginatedResponse(data=[], total=0, page=page, page_size=page_size)
+    if is_system_admin(user):
+        all_stores = query_collection("stores")
+    else:
+        store_ids = {
+            str(sr.get("store_id", "")).strip()
+            for sr in user.get("store_roles", [])
+            if str(sr.get("store_id", "")).strip()
+        }
+        if not store_ids:
+            return PaginatedResponse(data=[], total=0, page=page, page_size=page_size)
 
-    # Fetch each store doc individually (Firestore has no IN query for doc IDs)
-    all_stores = []
-    for sid in store_ids:
-        doc = get_document("stores", sid)
-        if doc is not None:
-            all_stores.append(doc)
+        # Fetch each store doc individually (Firestore has no IN query for doc IDs)
+        all_stores = []
+        for sid in store_ids:
+            doc = get_document("stores", sid)
+            if doc is not None:
+                all_stores.append(doc)
+
+    if active_locations:
+        location_stores = canonical_active_location_stores(all_stores)
+        all_stores = location_stores or all_stores
 
     total = len(all_stores)
     start = (page - 1) * page_size

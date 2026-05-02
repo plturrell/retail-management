@@ -89,6 +89,8 @@ _ALIASES_TO_CODE = {
     for store in CANONICAL_STORES
     for alias in (store.code, store.name, *store.aliases)
 }
+_CANONICAL_STORES_BY_CODE = {store.code: store for store in CANONICAL_STORES}
+CANONICAL_STORE_CODE_ORDER: tuple[str, ...] = tuple(store.code for store in CANONICAL_STORES)
 
 
 def _normalize_store_token(value: str | None) -> str:
@@ -127,6 +129,13 @@ def infer_canonical_store_code_from_document(store: Mapping[str, Any]) -> str | 
     return None
 
 
+def canonical_store_name_for_code(code: str | None) -> str | None:
+    if not code:
+        return None
+    identity = _CANONICAL_STORES_BY_CODE.get(code.strip().upper())
+    return identity.name if identity else None
+
+
 def _store_timestamp_key(store: Mapping[str, Any]) -> str:
     updated = store.get("updated_at")
     created = store.get("created_at")
@@ -153,6 +162,55 @@ def _store_rank(store: Mapping[str, Any], reference: str, canonical_code: str | 
         bool(store.get("is_active", True)),
         _store_timestamp_key(store),
     )
+
+
+def _active_location_rank(
+    store: Mapping[str, Any], canonical_code: str
+) -> tuple[bool, bool, bool, bool, str]:
+    store_code = str(store.get("store_code", "") or "").strip().upper()
+    operational_status = str(store.get("operational_status", "") or "").strip().lower()
+    return (
+        store_code == canonical_code,
+        bool(store.get("is_active", True)),
+        operational_status in ("", "active"),
+        not bool(store.get("is_temp_warehouse", False)),
+        _store_timestamp_key(store),
+    )
+
+
+def canonical_active_location_stores(
+    stores: list[Mapping[str, Any]],
+) -> list[dict[str, Any]]:
+    """Collapse raw store documents to the five operating locations.
+
+    Firestore can contain historical or system-support store docs for the same
+    real-world location. The staff active-store selector should remain about
+    choosing where the user is working, so it receives one preferred document
+    per canonical operating location.
+    """
+    best_by_code: dict[str, Mapping[str, Any]] = {}
+    for store in stores:
+        canonical_code = infer_canonical_store_code_from_document(store)
+        if canonical_code not in _CANONICAL_STORES_BY_CODE:
+            continue
+
+        current = best_by_code.get(canonical_code)
+        if current is None or _active_location_rank(
+            store, canonical_code
+        ) > _active_location_rank(current, canonical_code):
+            best_by_code[canonical_code] = store
+
+    active_locations: list[dict[str, Any]] = []
+    for code in CANONICAL_STORE_CODE_ORDER:
+        store = best_by_code.get(code)
+        if store is None:
+            continue
+        identity = _CANONICAL_STORES_BY_CODE[code]
+        normalized = dict(store)
+        normalized["store_code"] = identity.code
+        normalized["name"] = identity.name
+        active_locations.append(normalized)
+    return active_locations
 
 
 def resolve_firestore_store_document(reference: str | UUID | None) -> dict[str, Any] | None:

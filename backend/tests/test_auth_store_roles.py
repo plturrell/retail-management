@@ -130,6 +130,5 @@ async def test_current_user_falls_back_to_role_doc_id_when_group_query_is_empty(
 
 
 # The companion `test_system_admin_active_locations_are_the_five_canonical_stores`
-# test is held back in `_pending_b4_stores_router_test.py.txt` until the
-# stores router gains its `canonical_active_location_stores` integration
-# in cluster B4.
+# test lives in `test_store_identity.py` (added with cluster B4 alongside
+# the `canonical_active_location_stores` helper).
