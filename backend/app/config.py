@@ -22,7 +22,15 @@ class Settings(BaseSettings):
     TIDB_SSL_CA: str = ""
     FIREBASE_PROJECT_ID: str = ""
     FIRESTORE_EMULATOR_HOST: str = ""
-    CORS_ORIGINS: List[str] = ["http://localhost:3000", "http://localhost:5173", "https://victoriaensoapp.web.app"]
+    CORS_ORIGINS: List[str] = [
+        "http://localhost:3000",
+        "http://127.0.0.1:3000",
+        "http://localhost:5173",
+        "http://127.0.0.1:5173",
+        "http://localhost:5174",
+        "http://127.0.0.1:5174",
+        "https://victoriaensoapp.web.app",
+    ]
     ENVIRONMENT: str = "development"
     GOOGLE_APPLICATION_CREDENTIALS: str = ""
     GEMINI_API_KEY: str = ""
@@ -42,9 +50,9 @@ class Settings(BaseSettings):
     # named owners (Craig and Irina) are the only people who should be able to
     # write a price into Firestore directly from the Master Data page.
     # Override in prod with the JSON-array form, e.g.
-    #   MASTER_DATA_PUBLISHER_EMAILS='["craig@victoriaenso.com","irina@victoriaenso.com","new@..."]'
+    #   MASTER_DATA_PUBLISHER_EMAILS='["turrell.craig.1971@gmail.com","irina@victoriaenso.com","new@..."]'
     MASTER_DATA_PUBLISHER_EMAILS: List[str] = [
-        "craig@victoriaenso.com",
+        "turrell.craig.1971@gmail.com",
         "irina@victoriaenso.com",
     ]
 
