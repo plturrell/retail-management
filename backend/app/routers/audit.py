@@ -137,4 +137,7 @@ async def list_event_types(_: dict = Depends(require_system_admin)):
         "webauthn.register",
         "webauthn.login",
         "webauthn.revoke",
+        "commission.rule.create",
+        "commission.rule.update",
+        "commission.rule.delete",
     ])

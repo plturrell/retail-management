@@ -7,10 +7,11 @@ from decimal import Decimal, ROUND_HALF_UP
 from typing import Any
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from google.cloud.firestore_v1.client import Client as FirestoreClient
 from google.cloud.firestore_v1.transaction import transactional as _transactional
 
+from app.audit import log_event
 from app.firestore import get_firestore_db
 from app.firestore_helpers import (
     create_document,
@@ -22,6 +23,7 @@ from app.firestore_helpers import (
 )
 from app.auth.dependencies import (
     RoleEnum,
+    ensure_store_role,
     get_current_user,
     require_self_or_store_manager,
     require_store_role,
@@ -1044,6 +1046,60 @@ def _rule_to_read(data: dict) -> CommissionRuleRead:
 
 
 # ---- Commission Rule endpoints ----
+#
+# Authorization split:
+#   - Reads (GET list / GET one)         → manager+ (managers need to see the
+#                                          tier table to explain payslips).
+#   - Writes (POST / PATCH / DELETE)     → owner+. Rate changes are payroll-
+#                                          impacting; a manager must not be
+#                                          able to silently lift their own
+#                                          tier rate. Every mutation emits a
+#                                          ``commission.rule.*`` audit event
+#                                          (with old/new diff on PATCH) so
+#                                          rate changes are reviewable.
+#
+# Single-active-rule policy:
+#   New active rules cannot be created (or a deactivated rule re-activated)
+#   while another active rule exists in the same store. This blocks the
+#   silent multi-rule cumulation footgun in :func:`calculate_payroll`, where
+#   every active rule is applied to the same sales figure. The check fires
+#   only on transitions *into* the active state — editing an already-active
+#   rule remains allowed so existing multi-rule stores can continue to be
+#   maintained without first being unwound.
+
+
+def _audit_actor(user: dict) -> dict:
+    """Shape a user dict for ``log_event(actor=...)`` — mirrors users.py."""
+    return {
+        "id": user.get("id") if isinstance(user, dict) else getattr(user, "id", None),
+        "email": user.get("email") if isinstance(user, dict) else getattr(user, "email", None),
+        "firebase_uid": (
+            user.get("firebase_uid") if isinstance(user, dict)
+            else getattr(user, "firebase_uid", None)
+        ),
+    }
+
+
+def _rule_audit_snapshot(rule: dict) -> dict:
+    """Small, secret-free snapshot of a commission rule for audit metadata."""
+    return {
+        "name": rule.get("name"),
+        "is_active": rule.get("is_active"),
+        "tiers": rule.get("tiers", []),
+    }
+
+
+def _other_active_rule_exists(store_id: UUID, exclude_rule_id: str | None = None) -> bool:
+    """True iff the store has an active commission rule whose id differs
+    from ``exclude_rule_id``. Used to enforce single-active-rule on writes."""
+    actives = query_collection(
+        _commission_col(store_id),
+        filters=[("is_active", "==", True)],
+    )
+    for r in actives:
+        if exclude_rule_id is None or str(r.get("id")) != exclude_rule_id:
+            return True
+    return False
 
 
 @router.post(
@@ -1054,9 +1110,19 @@ def _rule_to_read(data: dict) -> CommissionRuleRead:
 async def create_commission_rule(
     store_id: UUID,
     payload: CommissionRuleCreate,
-    _=Depends(require_store_role(RoleEnum.manager)),
+    request: Request,
+    user: dict = Depends(get_current_user),
     db: FirestoreClient = Depends(get_firestore_db),
 ):
+    ensure_store_role(user, store_id, RoleEnum.owner)
+    if payload.is_active and _other_active_rule_exists(store_id):
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                "Another commission rule is already active for this store. "
+                "Deactivate it before creating a new active rule."
+            ),
+        )
     now = datetime.now(timezone.utc)
     doc_id = str(_uuid.uuid4())
     data = {
@@ -1067,6 +1133,16 @@ async def create_commission_rule(
         "created_at": now,
     }
     result = create_document(_commission_col(store_id), data, doc_id=doc_id)
+    log_event(
+        "commission.rule.create",
+        actor=_audit_actor(user),
+        metadata={
+            "store_id": str(store_id),
+            "rule_id": doc_id,
+            "rule": _rule_audit_snapshot(result),
+        },
+        request=request,
+    )
     return DataResponse(data=_rule_to_read(result))
 
 
@@ -1112,9 +1188,11 @@ async def update_commission_rule(
     store_id: UUID,
     rule_id: UUID,
     payload: CommissionRuleUpdate,
-    _=Depends(require_store_role(RoleEnum.manager)),
+    request: Request,
+    user: dict = Depends(get_current_user),
     db: FirestoreClient = Depends(get_firestore_db),
 ):
+    ensure_store_role(user, store_id, RoleEnum.owner)
     col = _commission_col(store_id)
     rule_id_str = str(rule_id)
     existing = get_document(col, rule_id_str)
@@ -1125,7 +1203,36 @@ async def update_commission_rule(
     if "tiers" in updates and updates["tiers"] is not None:
         updates["tiers"] = [t.model_dump(mode="json") for t in payload.tiers]
 
+    # Block inactive→active transitions when another rule is already active.
+    # Edits to an already-active rule pass through so existing multi-rule
+    # stores can still be maintained without first being unwound.
+    activating = (
+        "is_active" in updates
+        and bool(updates["is_active"])
+        and not bool(existing.get("is_active"))
+    )
+    if activating and _other_active_rule_exists(store_id, exclude_rule_id=rule_id_str):
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                "Another commission rule is already active for this store. "
+                "Deactivate it before activating this rule."
+            ),
+        )
+
     result = update_document(col, rule_id_str, updates)
+    log_event(
+        "commission.rule.update",
+        actor=_audit_actor(user),
+        metadata={
+            "store_id": str(store_id),
+            "rule_id": rule_id_str,
+            "before": _rule_audit_snapshot(existing),
+            "after": _rule_audit_snapshot(result),
+            "changed_fields": sorted(updates.keys()),
+        },
+        request=request,
+    )
     return DataResponse(data=_rule_to_read(result))
 
 
@@ -1136,9 +1243,11 @@ async def update_commission_rule(
 async def delete_commission_rule(
     store_id: UUID,
     rule_id: UUID,
-    _=Depends(require_store_role(RoleEnum.manager)),
+    request: Request,
+    user: dict = Depends(get_current_user),
     db: FirestoreClient = Depends(get_firestore_db),
 ):
+    ensure_store_role(user, store_id, RoleEnum.owner)
     col = _commission_col(store_id)
     rule_id_str = str(rule_id)
     existing = get_document(col, rule_id_str)
@@ -1146,4 +1255,14 @@ async def delete_commission_rule(
         raise HTTPException(status_code=404, detail="Commission rule not found")
 
     delete_document(col, rule_id_str)
+    log_event(
+        "commission.rule.delete",
+        actor=_audit_actor(user),
+        metadata={
+            "store_id": str(store_id),
+            "rule_id": rule_id_str,
+            "rule": _rule_audit_snapshot(existing),
+        },
+        request=request,
+    )
     return DataResponse(data={"deleted": True})
