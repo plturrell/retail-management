@@ -43,8 +43,23 @@ export interface UseNecErrorsResult {
   loading: boolean;
   /** Last error from the polling fetch, surfaced for diagnostics. */
   fetchError: string | null;
+  /**
+   * True once the backend has reported the CAG SFTP isn't configured (HTTP
+   * 503 from ``/api/cag/export/errors``). Polling stops until the page is
+   * reloaded so we don't spam the console once a minute on dev boxes.
+   */
+  notConfigured: boolean;
   ackAll(): void;
   refresh(): Promise<void>;
+}
+
+// `cagRequest` throws ``new Error(\`API ${status}: ${body}\`)`` so the status
+// is recoverable from the message without changing the error contract.
+const NOT_CONFIGURED_RE = /^API 503:/;
+
+function isNotConfiguredError(err: unknown): boolean {
+  const msg = err instanceof Error ? err.message : String(err);
+  return NOT_CONFIGURED_RE.test(msg);
 }
 
 /**
@@ -61,6 +76,7 @@ export function useNecErrors(enabled: boolean): UseNecErrorsResult {
   const [acked, setAcked] = useState<Set<string>>(loadAcked);
   const [loading, setLoading] = useState(false);
   const [fetchError, setFetchError] = useState<string | null>(null);
+  const [notConfigured, setNotConfigured] = useState(false);
   // Tracks ids we've already toasted on this mount so a brief network blip
   // doesn't fire the same toast on every poll.
   const toastedRef = useRef<Set<string>>(new Set());
@@ -68,7 +84,7 @@ export function useNecErrors(enabled: boolean): UseNecErrorsResult {
   const lastSeenRef = useRef<Set<string> | null>(null);
 
   const refresh = useCallback(async () => {
-    if (!enabled) return;
+    if (!enabled || notConfigured) return;
     setLoading(true);
     try {
       const cagExportApi = await loadCagExportApi();
@@ -97,21 +113,34 @@ export function useNecErrors(enabled: boolean): UseNecErrorsResult {
       }
       lastSeenRef.current = nextIds;
     } catch (err) {
+      // 503 from the endpoint means CAG SFTP isn't configured on this
+      // backend — that's a deployment state, not a transient fetch error.
+      // Latch into a terminal "not configured" mode (cleared on reload) so
+      // the polling effect tears down and the bell shows an empty state
+      // instead of a misleading red strip.
+      if (isNotConfiguredError(err)) {
+        setErrors([]);
+        setFetchError(null);
+        setNotConfigured(true);
+        return;
+      }
       setFetchError(err instanceof Error ? err.message : String(err));
     } finally {
       setLoading(false);
     }
-  }, [enabled, acked, toast]);
+  }, [enabled, notConfigured, acked, toast]);
 
   // Initial fetch + 60s polling, restarted whenever ``enabled`` flips.
+  // Once ``notConfigured`` latches true the interval tears down for the
+  // remainder of the page lifetime — a hard reload is the recovery path.
   useEffect(() => {
-    if (!enabled) return;
+    if (!enabled || notConfigured) return;
     void refresh();
     const handle = window.setInterval(() => {
       void refresh();
     }, POLL_INTERVAL_MS);
     return () => window.clearInterval(handle);
-  }, [enabled, refresh]);
+  }, [enabled, notConfigured, refresh]);
 
   const ackAll = useCallback(() => {
     setAcked((prev) => {
@@ -130,6 +159,7 @@ export function useNecErrors(enabled: boolean): UseNecErrorsResult {
     unackedCount: unacked.length,
     loading,
     fetchError,
+    notConfigured,
     ackAll,
     refresh,
   };
