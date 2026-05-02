@@ -14,7 +14,12 @@ from pathlib import Path
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import create_async_engine
 
-from identifier_utils import aligned_nec_plu_for_sku, is_valid_ean13, parse_sku_sequence
+from identifier_utils import (
+    aligned_nec_plu_for_sku,
+    is_valid_ean13,
+    is_valid_plu,
+    parse_sku_sequence,
+)
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_EXPORT_DIR = REPO_ROOT / "data" / "exports"
@@ -70,7 +75,11 @@ FETCH_SQL = text(
 
 def classify_row_status(row: SourcePlusRow) -> tuple[str, str | None, bool]:
     current_plu = str(row.plu_code)
-    current_valid = is_valid_ean13(current_plu)
+    # Audit is a migration tool: a legacy EAN-13 PLU is "valid in its own
+    # format" even though new issuance is EAN-8. Treat either format as a
+    # well-formed current PLU so the action recommendation can distinguish
+    # "legacy code worth re-issuing" from genuine garbage.
+    current_valid = is_valid_plu(current_plu) or is_valid_ean13(current_plu)
     expected = aligned_nec_plu_for_sku(row.sku_code)
     if expected is None:
         return ("legacy_valid_unmapped" if current_valid else "legacy_invalid_unmapped"), expected, current_valid

@@ -1,9 +1,9 @@
-"""Bulk-assign / repair NEC-aligned EAN-13 PLU barcodes in Firestore.
+"""Bulk-assign / repair NEC-aligned EAN-8 PLU barcodes in Firestore.
 
 The data quality dashboard surfaces a count of SKUs without a valid PLU.
 This service scans the live Firestore data and either:
 
-* assigns an aligned EAN-13 PLU to each SKU that lacks one, or
+* assigns an aligned EAN-8 PLU to each SKU that lacks one, or
 * rewrites invalid / misaligned PLUs to their canonical form.
 
 Mirrors the strategy in ``tools/scripts/repair_invalid_plus_codes.py`` but
@@ -21,7 +21,7 @@ from typing import Any, Iterable
 from app.services.identifier_utils import (
     aligned_nec_plu_for_sku,
     generate_nec_plu,
-    is_valid_ean13,
+    is_valid_plu,
     max_sku_sequence,
     max_valid_plu_sequence,
 )
@@ -102,7 +102,7 @@ def _classify(sku: dict[str, Any], plu_doc: dict[str, Any] | None) -> tuple[str,
     plu_code = str(plu_doc.get("plu_code") or "") if plu_doc else ""
     if not plu_code:
         return ("missing", None)
-    if not is_valid_ean13(plu_code):
+    if not is_valid_plu(plu_code):
         return ("invalid", plu_code)
     expected = aligned_nec_plu_for_sku(sku_code)
     if expected and plu_code != expected:

@@ -8,7 +8,7 @@ import pytest
 from app.services import plu_bulk_assign
 from app.services.identifier_utils import (
     aligned_nec_plu_for_sku,
-    is_valid_ean13,
+    is_valid_plu,
 )
 
 
@@ -95,7 +95,7 @@ def fs_with_mixed_data() -> FakeFirestore:
     plus = {
         "plu-1": {"id": "plu-1", "sku_id": "sku-1", "plu_code": aligned_nec_plu_for_sku("VE0000001")},
         # sku-2 has no plus doc
-        "plu-3": {"id": "plu-3", "sku_id": "sku-3", "plu_code": "1234567890123"},  # bad checksum
+        "plu-3": {"id": "plu-3", "sku_id": "sku-3", "plu_code": "12345678"},  # bad EAN-8 checksum
         "plu-4": {"id": "plu-4", "sku_id": "sku-4", "plu_code": aligned_nec_plu_for_sku("VE0000007")},
     }
     return FakeFirestore({"store-1": skus}, plus)
@@ -109,9 +109,9 @@ def test_dry_run_lists_only_problematic_skus(fs_with_mixed_data):
     assert by_sku["VE0000002"].reason == "missing"
     assert by_sku["VE0000003"].reason == "invalid"
     assert by_sku["VE0000004"].reason == "misaligned"
-    # All proposed PLUs are valid EAN-13.
+    # All proposed PLUs are valid EAN-8.
     for row in result.plan:
-        assert is_valid_ean13(row.new_plu)
+        assert is_valid_plu(row.new_plu)
 
 
 def test_apply_creates_doc_for_missing_and_updates_existing(fs_with_mixed_data):
@@ -121,12 +121,12 @@ def test_apply_creates_doc_for_missing_and_updates_existing(fs_with_mixed_data):
     # New plus doc created for sku-2.
     new_docs = [d for d in fs_with_mixed_data._plus.values() if d.get("sku_id") == "sku-2"]
     assert len(new_docs) == 1
-    assert is_valid_ean13(new_docs[0]["plu_code"])
+    assert is_valid_plu(new_docs[0]["plu_code"])
 
     # sku-3 / sku-4 docs were updated in place; check no duplicate created.
     sku3_docs = [d for d in fs_with_mixed_data._plus.values() if d.get("sku_id") == "sku-3"]
     sku4_docs = [d for d in fs_with_mixed_data._plus.values() if d.get("sku_id") == "sku-4"]
-    assert len(sku3_docs) == 1 and is_valid_ean13(sku3_docs[0]["plu_code"])
+    assert len(sku3_docs) == 1 and is_valid_plu(sku3_docs[0]["plu_code"])
     assert len(sku4_docs) == 1
     assert sku4_docs[0]["plu_code"] == aligned_nec_plu_for_sku("VE0000004")
     assert sku4_docs[0]["previous_plu_code"] == aligned_nec_plu_for_sku("VE0000007")
@@ -151,4 +151,4 @@ def test_all_assigned_codes_are_unique():
     codes = [row.new_plu for row in result.plan]
     assert len(codes) == 20
     assert len(set(codes)) == 20  # no duplicates
-    assert all(is_valid_ean13(c) for c in codes)
+    assert all(is_valid_plu(c) for c in codes)

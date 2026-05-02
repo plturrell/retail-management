@@ -1,18 +1,66 @@
+"""EAN-8 / NEC-PLU helpers (mirror of ``backend/app/services/identifier_utils``).
+
+See the backend copy for the full docstring. Keep both files in sync.
+"""
+
 from __future__ import annotations
 
 import re
 from typing import Callable, Iterable
 
-PLU_PREFIX = "200"
-PLU_BODY_DIGITS = 12
-PLU_SEQUENCE_DIGITS = 9
-SKU_SEQUENCE_DIGITS = 7
+# ── EAN-8 (current) ──────────────────────────────────────────────────────────
 
+PLU_PREFIX = "2"
+PLU_BODY_DIGITS = 7
+PLU_SEQUENCE_DIGITS = 6
+PLU_TOTAL_DIGITS = PLU_BODY_DIGITS + 1  # 8
+
+SKU_SEQUENCE_DIGITS = 7
 _SKU_SEQUENCE_RE = re.compile(r"(\d{7})$")
+
+# ── EAN-13 (legacy, for reading pre-switch data) ─────────────────────────────
+
+_LEGACY_PLU_PREFIX = "200"
+_LEGACY_PLU_BODY_DIGITS = 12
+_LEGACY_PLU_SEQUENCE_DIGITS = 9
+
+
+# ── EAN-8 primitives ─────────────────────────────────────────────────────────
+
+
+def compute_ean8_check_digit(code7: str) -> str:
+    if len(code7) != PLU_BODY_DIGITS or not code7.isdigit():
+        raise ValueError(f"EAN-8 body must be exactly 7 digits, got {code7!r}")
+    total = sum(int(d) * (3 if i % 2 == 0 else 1) for i, d in enumerate(code7))
+    return str((10 - (total % 10)) % 10)
+
+
+def is_valid_ean8(code: str | None) -> bool:
+    if code is None:
+        return False
+    text = str(code).strip()
+    if len(text) != PLU_TOTAL_DIGITS or not text.isdigit():
+        return False
+    return compute_ean8_check_digit(text[:PLU_BODY_DIGITS]) == text[PLU_BODY_DIGITS]
+
+
+is_valid_plu = is_valid_ean8
+
+
+def generate_nec_plu(seq: int) -> str:
+    if seq < 0:
+        raise ValueError("PLU sequence must be non-negative")
+    if seq > 999_999:
+        raise ValueError("PLU sequence exceeds 6-digit EAN-8 range (max 999_999)")
+    body = f"{PLU_PREFIX}{seq:0{PLU_SEQUENCE_DIGITS}d}"
+    return f"{body}{compute_ean8_check_digit(body)}"
+
+
+# ── EAN-13 primitives (legacy reads only) ────────────────────────────────────
 
 
 def compute_ean13_check_digit(code12: str) -> str:
-    if len(code12) != PLU_BODY_DIGITS or not code12.isdigit():
+    if len(code12) != _LEGACY_PLU_BODY_DIGITS or not code12.isdigit():
         raise ValueError(f"EAN-13 body must be exactly 12 digits, got {code12!r}")
     total = sum(int(d) * (1 if i % 2 == 0 else 3) for i, d in enumerate(code12))
     return str((10 - (total % 10)) % 10)
@@ -27,13 +75,7 @@ def is_valid_ean13(code: str | None) -> bool:
     return compute_ean13_check_digit(text[:12]) == text[12]
 
 
-def generate_nec_plu(seq: int) -> str:
-    if seq < 0:
-        raise ValueError("PLU sequence must be non-negative")
-    if seq > 999_999_999:
-        raise ValueError("PLU sequence exceeds 9-digit NEC range")
-    code12 = f"{PLU_PREFIX}{seq:09d}"
-    return f"{code12}{compute_ean13_check_digit(code12)}"
+# ── SKU / PLU sequence helpers ───────────────────────────────────────────────
 
 
 def parse_sku_sequence(sku_code: str | None) -> int | None:
@@ -49,16 +91,31 @@ def parse_nec_plu_sequence(plu_code: str | None, require_valid: bool = True) -> 
     if not plu_code:
         return None
     code = str(plu_code).strip()
-    if len(code) != 13 or not code.isdigit() or not code.startswith(PLU_PREFIX):
+    if len(code) != PLU_TOTAL_DIGITS or not code.isdigit() or not code.startswith(PLU_PREFIX):
+        return None
+    if require_valid and not is_valid_ean8(code):
+        return None
+    return int(code[len(PLU_PREFIX):PLU_BODY_DIGITS])
+
+
+def parse_legacy_ean13_plu_sequence(
+    plu_code: str | None, require_valid: bool = True
+) -> int | None:
+    if not plu_code:
+        return None
+    code = str(plu_code).strip()
+    if len(code) != 13 or not code.isdigit() or not code.startswith(_LEGACY_PLU_PREFIX):
         return None
     if require_valid and not is_valid_ean13(code):
         return None
-    return int(code[len(PLU_PREFIX):12])
+    return int(code[len(_LEGACY_PLU_PREFIX):_LEGACY_PLU_BODY_DIGITS])
 
 
 def aligned_nec_plu_for_sku(sku_code: str | None) -> str | None:
     seq = parse_sku_sequence(sku_code)
     if seq is None:
+        return None
+    if seq > 999_999:
         return None
     return generate_nec_plu(seq)
 
@@ -80,8 +137,8 @@ def validate_identifier_pair(
         raise ValueError("Missing sku_code")
     if not plu_code:
         raise ValueError(f"Missing nec_plu for SKU {sku_code}")
-    if not is_valid_ean13(plu_code):
-        raise ValueError(f"Invalid EAN-13 check digit for SKU {sku_code}: {plu_code}")
+    if not is_valid_ean8(plu_code):
+        raise ValueError(f"Invalid EAN-8 check digit for SKU {sku_code}: {plu_code}")
     if require_alignment and not is_sku_plu_aligned(sku_code, plu_code):
         expected = aligned_nec_plu_for_sku(sku_code)
         raise ValueError(

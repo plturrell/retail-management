@@ -156,20 +156,25 @@ class TestGenerateGoogleProductId:
 # ── generate_nec_plu ────────────────────────────────────────────────────────
 
 class TestGenerateNecPlu:
-    def test_length_13(self):
+    def test_length_8(self):
+        # We switched from EAN-13 (13 digits) to EAN-8 (8 digits) when NEC POS
+        # was confirmed to accept GTIN-8 in-store codes; the 13 pre-printed
+        # Hengwei homeware labels in the shop start at seq=1.
         result = generate_nec_plu(1)
-        assert len(result) == 13
+        assert len(result) == 8
 
-    def test_starts_with_200(self):
+    def test_starts_with_2(self):
+        # GS1 restricted-circulation prefix in EAN-8 is `2` (single digit).
         result = generate_nec_plu(42)
-        assert result.startswith("200")
+        assert result.startswith("2")
 
     def test_check_digit_valid(self):
         plu = generate_nec_plu(1)
-        digits = [int(d) for d in plu[:12]]
-        total = sum(d * (1 if i % 2 == 0 else 3) for i, d in enumerate(digits))
+        digits = [int(d) for d in plu[:7]]
+        # EAN-8 weights: 3,1,3,1,3,1,3 from the left (opposite of EAN-13).
+        total = sum(d * (3 if i % 2 == 0 else 1) for i, d in enumerate(digits))
         expected = (10 - (total % 10)) % 10
-        assert int(plu[12]) == expected
+        assert int(plu[7]) == expected
 
     def test_unique_for_different_seq(self):
         assert generate_nec_plu(1) != generate_nec_plu(2)

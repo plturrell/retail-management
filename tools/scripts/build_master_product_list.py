@@ -34,6 +34,7 @@ from typing import Any
 from identifier_utils import (
     allocate_identifier_pair,
     is_valid_ean13,
+    is_valid_plu,
     max_sku_sequence,
     parse_sku_sequence,
     validate_identifier_pair,
@@ -398,12 +399,15 @@ def _reuse_or_allocate_identifiers(
     if assignment:
         sku_code = assignment.get("sku_code", "").strip()
         nec_plu = assignment.get("nec_plu", "").strip()
+        # Honour either the new EAN-8 codes or the legacy 13-digit codes —
+        # the rebuilder isn't responsible for migrating between encodings,
+        # only for not breaking callers who feed it cached assignments.
         if (
             sku_code
             and nec_plu
             and sku_code not in used_sku_codes
             and nec_plu not in used_plus
-            and is_valid_ean13(nec_plu)
+            and (is_valid_plu(nec_plu) or is_valid_ean13(nec_plu))
         ):
             validate_identifier_pair(sku_code, nec_plu)
             used_sku_codes.add(sku_code)
