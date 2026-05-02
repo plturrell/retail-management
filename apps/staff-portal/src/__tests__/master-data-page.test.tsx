@@ -315,4 +315,66 @@ describe("MasterDataPage archive controls", () => {
       }),
     );
   });
+
+  it("surfaces database sync failures in item details", async () => {
+    mockedApi.listProducts.mockResolvedValue({
+      count: 1,
+      products: [
+        {
+          sku_code: "SKU-1",
+          description: "Test product",
+          retail_price: null,
+          sale_ready: true,
+          database_sync: { ok: false, error: "Firestore unavailable" },
+        },
+      ],
+    });
+
+    renderWithRouter();
+
+    fireEvent.click(await screen.findByRole("button", { name: "Details" }));
+
+    expect(await screen.findByText("Database sync pending")).toBeInTheDocument();
+  });
+});
+
+describe("AddItemPage page-mode 'More' disclosures", () => {
+  it("tucks rarely-touched fields behind <details> in page mode", async () => {
+    mockedApi.getSourcingOptions.mockResolvedValue({
+      options: [
+        {
+          value: "manufactured_in_house",
+          label: "Manufactured by Victoria Enso",
+          description: "Built in our workshop from raw materials we hold.",
+          requires_supplier: false,
+          inventory_type: "finished",
+        },
+      ],
+    });
+
+    renderWithRouter();
+    fireEvent.click(await screen.findByRole("button", { name: /Create inventory/i }));
+    await screen.findByText("SKU and PLU are allocated automatically.");
+
+    // Three page-mode disclosures render as <summary> elements inside closed
+    // <details>; each summary is the only visible affordance until expanded.
+    const moreFields = await screen.findByText("More fields");
+    expect(moreFields.tagName).toBe("SUMMARY");
+    const moreDetails = moreFields.closest("details") as HTMLDetailsElement;
+    expect(moreDetails).not.toBeNull();
+    expect(moreDetails.open).toBe(false);
+
+    const addLongDesc = screen.getByText("Add long description");
+    expect(addLongDesc.tagName).toBe("SUMMARY");
+    expect((addLongDesc.closest("details") as HTMLDetailsElement).open).toBe(false);
+
+    const overrideSeq = screen.getByText(/Override sequence/i);
+    expect(overrideSeq.tagName).toBe("SUMMARY");
+    expect((overrideSeq.closest("details") as HTMLDetailsElement).open).toBe(false);
+
+    // The wrapped fields live INSIDE the "More fields" <details>, not in the
+    // structured grid: the Notes input is a descendant of the disclosure.
+    const notesInput = screen.getByLabelText(/^Notes$/);
+    expect(moreDetails.contains(notesInput)).toBe(true);
+  });
 });
