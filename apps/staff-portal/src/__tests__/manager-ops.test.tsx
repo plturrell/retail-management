@@ -357,7 +357,7 @@ describe("manager web hardening", () => {
     );
 
     expect(screen.getAllByText("Manager Ops")).toHaveLength(2);
-    expect(screen.queryAllByText("Staging Vault")).toHaveLength(0);
+    expect(screen.queryAllByText("Master Data")).toHaveLength(0);
     expect(screen.queryAllByText("Invoice Review")).toHaveLength(0);
     expect(screen.getAllByText("Store Manager")).toHaveLength(1);
 
@@ -373,7 +373,7 @@ describe("manager web hardening", () => {
     );
 
     expect(screen.getAllByText("Manager Ops")).toHaveLength(2);
-    expect(screen.getAllByText("Staging Vault")).toHaveLength(2);
+    expect(screen.getAllByText("Master Data")).toHaveLength(2);
     expect(screen.getAllByText("Invoice Review")).toHaveLength(2);
     expect(screen.getAllByText("Owner Director")).toHaveLength(1);
 
@@ -389,7 +389,7 @@ describe("manager web hardening", () => {
     );
 
     expect(screen.queryAllByText("Manager Ops")).toHaveLength(0);
-    expect(screen.queryAllByText("Staging Vault")).toHaveLength(0);
+    expect(screen.queryAllByText("Master Data")).toHaveLength(0);
     expect(screen.queryAllByText("Invoice Review")).toHaveLength(0);
     expect(screen.getAllByText("Sales Promoter")).toHaveLength(1);
   });
