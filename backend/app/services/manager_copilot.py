@@ -11,6 +11,21 @@ import httpx
 
 from app.auth.dependencies import RoleEnum, can_view_sensitive_operations
 from app.config import settings
+from app.constants.ai_confidence import (
+    CONFIDENCE_PRICE_MARKDOWN,
+    CONFIDENCE_PRICE_PREMIUM,
+    CONFIDENCE_REORDER_COLD,
+    CONFIDENCE_REORDER_HOT,
+    CONFIDENCE_STOCK_ANOMALY,
+)
+from app.constants.thresholds import (
+    PREMIUM_PRICE_FACTOR,
+    PREMIUM_PRICE_MIN_MARGIN_RATIO,
+    SLOW_MOVER_MARKDOWN_FACTOR,
+    SURPLUS_MIN_FLOOR,
+    SURPLUS_REORDER_MULTIPLIER,
+    SURPLUS_REORDER_QTY_MULTIPLIER,
+)
 from app.firestore_helpers import create_document, get_document, query_collection, update_document
 from app.schemas.copilot import (
     AuditSource,
@@ -701,7 +716,7 @@ async def trigger_analysis(
                     "type": RecommendationType.reorder,
                     "title": reorder_title,
                     "rationale": reorder_rationale,
-                    "confidence": 0.84 if insight.recent_sales_qty > 0 else 0.62,
+                    "confidence": CONFIDENCE_REORDER_HOT if insight.recent_sales_qty > 0 else CONFIDENCE_REORDER_COLD,
                     "suggested_order_qty": max(suggested_qty, 1),
                     "workflow_action": workflow_action,
                     "expected_impact": reorder_impact,
@@ -735,7 +750,7 @@ async def trigger_analysis(
                     "title": f"Investigate stock anomaly for {insight.sku_code}",
                     "rationale": insight.anomaly_reason
                     or f"Multica flagged {insight.sku_code} for follow-up based on inventory health signals.",
-                    "confidence": 0.71,
+                    "confidence": CONFIDENCE_STOCK_ANOMALY,
                     "expected_impact": "Prevent hidden shrinkage or overstock from distorting replenishment decisions.",
                     "supporting_metrics": {
                         "qty_on_hand": insight.qty_on_hand,
@@ -758,8 +773,16 @@ async def trigger_analysis(
         margin_ratio = ((current_price - cost_price) / current_price) if current_price and cost_price else None
 
         if current_price and price_doc and (insight.finished_qty > 0 or insight.qty_on_hand > 0):
-            if insight.qty_on_hand > max(insight.reorder_level * 4, insight.reorder_qty * 3, 12) and insight.recent_sales_qty <= max(1, insight.reorder_qty):
-                suggested_price = round(current_price * 0.95, 2)
+            if (
+                insight.qty_on_hand
+                > max(
+                    insight.reorder_level * SURPLUS_REORDER_MULTIPLIER,
+                    insight.reorder_qty * SURPLUS_REORDER_QTY_MULTIPLIER,
+                    SURPLUS_MIN_FLOOR,
+                )
+                and insight.recent_sales_qty <= max(1, insight.reorder_qty)
+            ):
+                suggested_price = round(current_price * SLOW_MOVER_MARKDOWN_FACTOR, 2)
                 proposals.append(
                     {
                         "type": RecommendationType.price_change,
@@ -768,7 +791,7 @@ async def trigger_analysis(
                             f"{insight.description} is carrying {insight.qty_on_hand} units with limited recent movement. "
                             "A small markdown can improve sell-through without auto-applying a change."
                         ),
-                        "confidence": 0.67,
+                        "confidence": CONFIDENCE_PRICE_MARKDOWN,
                         "current_price": current_price,
                         "suggested_price": suggested_price,
                         "workflow_action": "price_review",
@@ -788,8 +811,12 @@ async def trigger_analysis(
                         },
                     }
                 )
-            elif insight.low_stock and insight.recent_sales_qty >= max(3, insight.reorder_qty) and (margin_ratio or 0) >= 0.2:
-                suggested_price = round(current_price * 1.04, 2)
+            elif (
+                insight.low_stock
+                and insight.recent_sales_qty >= max(3, insight.reorder_qty)
+                and (margin_ratio or 0) >= PREMIUM_PRICE_MIN_MARGIN_RATIO
+            ):
+                suggested_price = round(current_price * PREMIUM_PRICE_FACTOR, 2)
                 proposals.append(
                     {
                         "type": RecommendationType.price_change,
@@ -798,7 +825,7 @@ async def trigger_analysis(
                             f"{insight.description} is moving quickly while inventory is constrained. "
                             "A modest price increase may protect margin without requiring an immediate price push."
                         ),
-                        "confidence": 0.61,
+                        "confidence": CONFIDENCE_PRICE_PREMIUM,
                         "current_price": current_price,
                         "suggested_price": suggested_price,
                         "workflow_action": "price_review",

@@ -71,13 +71,17 @@ class PreviewResult:
         }
 
 
-# Spec-derived limits.
-MAX_SKU_CODE = 16
-MAX_SKU_DESC = 60
-MAX_PLU_CODE = 80
-MAX_BRAND = 20
-VALID_AGE_GROUPS = {"ADULT", "CHILD<12", "ALL"}
-VALID_GENDERS = {"", "MALE", "FEMALE", "UNISEX"}
+# Spec-derived limits live in app.constants.nec_limits — re-exported here so
+# call sites in this module read like before. See that file for the source
+# (vendor "Catalog import — fixed columns" PDF).
+from app.constants.nec_limits import (  # noqa: E402
+    MAX_BRAND,
+    MAX_PLU_CODE,
+    MAX_SKU_CODE,
+    MAX_SKU_DESC,
+    VALID_AGE_GROUPS,
+    VALID_GENDERS,
+)
 
 
 def _validate_sku(product: Mapping[str, Any], *, taxable: bool) -> list[PreviewIssue]:
