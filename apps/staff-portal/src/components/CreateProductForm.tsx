@@ -686,9 +686,11 @@ export function CreateProductModal({
             <div className="text-xl font-semibold text-slate-950">Create inventory</div>
             <div className="mt-1 text-sm text-slate-500">SKU and PLU are allocated automatically.</div>
           </div>
-          <button onClick={onCancel} className="shrink-0 rounded-lg border border-slate-200 px-3 py-1.5 text-sm font-semibold text-slate-600 hover:bg-slate-50" disabled={submitting}>
-            Cancel
-          </button>
+          {!isPage && (
+            <button onClick={onCancel} className="shrink-0 rounded-lg border border-slate-200 px-3 py-1.5 text-sm font-semibold text-slate-600 hover:bg-slate-50" disabled={submitting}>
+              Cancel
+            </button>
+          )}
         </header>
 
         <div className="grid flex-1 grid-cols-1 overflow-y-auto lg:grid-cols-[minmax(0,1fr)_360px] lg:overflow-hidden">
