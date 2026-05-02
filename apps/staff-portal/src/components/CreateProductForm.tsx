@@ -678,6 +678,90 @@ export function CreateProductModal({
     ? "flex w-full max-w-6xl flex-col bg-white"
     : "flex h-[100dvh] max-h-[100dvh] w-full max-w-6xl flex-col overflow-hidden bg-white shadow-2xl sm:h-auto sm:max-h-[92vh] sm:rounded-2xl";
 
+  // Page mode tucks rarely-touched fields behind native <details> so the
+  // first impression of /master-data/add stays focused on the SKU triple,
+  // stock, and cost. Modal mode is unchanged. Disclosures auto-open when
+  // the field already has a value (e.g. resuming a draft).
+  const moreStructuredFieldsFilled =
+    form.additional_materials.length > 0 ||
+    form.size.trim() !== "" ||
+    form.notes.trim() !== "";
+  const longDescriptionFilled = form.long_description.trim() !== "";
+  const sequenceOverrideFilled = form.sequence_override.trim() !== "";
+
+  const otherMaterialsField = (
+    <Field label="Other materials" hint="Add as many extra materials as needed. Type custom materials here too.">
+      <div className="flex gap-1">
+        <input
+          list="masterdata-additional-material-options"
+          value={form.additional_material_input}
+          onChange={(e) => update("additional_material_input", e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") {
+              e.preventDefault();
+              addAdditionalMaterial();
+            }
+          }}
+          disabled={submitting}
+          className="w-full rounded border border-gray-300 px-2 py-1 text-sm focus:border-blue-500 focus:outline-none disabled:bg-gray-100"
+        />
+        <button
+          type="button"
+          onClick={() => addAdditionalMaterial()}
+          disabled={submitting || !form.additional_material_input.trim()}
+          className="rounded border border-gray-300 px-2 py-1 text-xs font-semibold text-gray-700 hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-50"
+        >
+          Add
+        </button>
+      </div>
+      <datalist id="masterdata-additional-material-options">
+        {additionalMaterialOptions.map((m) => (
+          <option key={m} value={m}>{m}</option>
+        ))}
+      </datalist>
+      {form.additional_materials.length > 0 && (
+        <div className="mt-2 flex flex-wrap gap-1">
+          {form.additional_materials.map((material) => (
+            <button
+              key={material}
+              type="button"
+              onClick={() => removeAdditionalMaterial(material)}
+              disabled={submitting}
+              className="rounded-full border border-gray-300 bg-gray-50 px-2 py-0.5 text-xs text-gray-700 hover:bg-gray-100 disabled:opacity-60"
+              title="Remove material"
+            >
+              {material} x
+            </button>
+          ))}
+        </div>
+      )}
+    </Field>
+  );
+
+  const sizeField = (
+    <Field label="Size" hint="e.g. 10x10x30 cm">
+      <input
+        type="text"
+        value={form.size}
+        onChange={(e) => update("size", e.target.value)}
+        disabled={submitting}
+        className="w-full rounded border border-gray-300 px-2 py-1 text-sm focus:border-blue-500 focus:outline-none disabled:bg-gray-100"
+      />
+    </Field>
+  );
+
+  const notesField = (
+    <Field label="Notes">
+      <input
+        type="text"
+        value={form.notes}
+        onChange={(e) => update("notes", e.target.value)}
+        disabled={submitting}
+        className="w-full rounded border border-gray-300 px-2 py-1 text-sm focus:border-blue-500 focus:outline-none disabled:bg-gray-100"
+      />
+    </Field>
+  );
+
   return (
     <div className={overlayClass}>
       <div className={cardClass}>
@@ -894,61 +978,8 @@ export function CreateProductModal({
                   ))}
                 </datalist>
               </Field>
-              <Field label="Other materials" hint="Add as many extra materials as needed. Type custom materials here too.">
-                <div className="flex gap-1">
-                  <input
-                    list="masterdata-additional-material-options"
-                    value={form.additional_material_input}
-                    onChange={(e) => update("additional_material_input", e.target.value)}
-                    onKeyDown={(e) => {
-                      if (e.key === "Enter") {
-                        e.preventDefault();
-                        addAdditionalMaterial();
-                      }
-                    }}
-                    disabled={submitting}
-                    className="w-full rounded border border-gray-300 px-2 py-1 text-sm focus:border-blue-500 focus:outline-none disabled:bg-gray-100"
-                  />
-                  <button
-                    type="button"
-                    onClick={() => addAdditionalMaterial()}
-                    disabled={submitting || !form.additional_material_input.trim()}
-                    className="rounded border border-gray-300 px-2 py-1 text-xs font-semibold text-gray-700 hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-50"
-                  >
-                    Add
-                  </button>
-                </div>
-                <datalist id="masterdata-additional-material-options">
-                  {additionalMaterialOptions.map((m) => (
-                    <option key={m} value={m}>{m}</option>
-                  ))}
-                </datalist>
-                {form.additional_materials.length > 0 && (
-                  <div className="mt-2 flex flex-wrap gap-1">
-                    {form.additional_materials.map((material) => (
-                      <button
-                        key={material}
-                        type="button"
-                        onClick={() => removeAdditionalMaterial(material)}
-                        disabled={submitting}
-                        className="rounded-full border border-gray-300 bg-gray-50 px-2 py-0.5 text-xs text-gray-700 hover:bg-gray-100 disabled:opacity-60"
-                        title="Remove material"
-                      >
-                        {material} x
-                      </button>
-                    ))}
-                  </div>
-                )}
-              </Field>
-              <Field label="Size" hint="e.g. 10x10x30 cm">
-                <input
-                  type="text"
-                  value={form.size}
-                  onChange={(e) => update("size", e.target.value)}
-                  disabled={submitting}
-                  className="w-full rounded border border-gray-300 px-2 py-1 text-sm focus:border-blue-500 focus:outline-none disabled:bg-gray-100"
-                />
-              </Field>
+              {!isPage && otherMaterialsField}
+              {!isPage && sizeField}
               <Field label="Qty on hand">
                 <input
                   type="number"
@@ -1009,16 +1040,23 @@ export function CreateProductModal({
                   </select>
                 </div>
               </Field>
-              <Field label="Notes">
-                <input
-                  type="text"
-                  value={form.notes}
-                  onChange={(e) => update("notes", e.target.value)}
-                  disabled={submitting}
-                  className="w-full rounded border border-gray-300 px-2 py-1 text-sm focus:border-blue-500 focus:outline-none disabled:bg-gray-100"
-                />
-              </Field>
+              {!isPage && notesField}
             </div>
+            {isPage && (
+              <details
+                open={moreStructuredFieldsFilled}
+                className="mt-3 rounded-lg border border-slate-200 bg-slate-50/40 px-3 py-2"
+              >
+                <summary className="cursor-pointer list-none text-xs font-semibold uppercase tracking-[0.16em] text-slate-500 hover:text-slate-700 [&::-webkit-details-marker]:hidden">
+                  More fields
+                </summary>
+                <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2">
+                  {otherMaterialsField}
+                  {sizeField}
+                  {notesField}
+                </div>
+              </details>
+            )}
             </section>
 
             {/* Description with AI assist */}
@@ -1068,17 +1106,39 @@ export function CreateProductModal({
                   className="w-full rounded border border-gray-300 px-2 py-1 text-sm focus:border-blue-500 focus:outline-none disabled:bg-gray-100"
                 />
               </Field>
-              <div className="mt-2">
-                <Field label="Long description" hint="Optional. Used in product detail views.">
-                  <textarea
-                    value={form.long_description}
-                    onChange={(e) => update("long_description", e.target.value)}
-                    rows={3}
-                    disabled={submitting}
-                    className="w-full rounded border border-gray-300 px-2 py-1 text-sm focus:border-blue-500 focus:outline-none disabled:bg-gray-100"
-                  />
-                </Field>
-              </div>
+              {isPage ? (
+                <details
+                  open={longDescriptionFilled}
+                  className="mt-3 rounded-lg border border-slate-200 bg-slate-50/40 px-3 py-2"
+                >
+                  <summary className="cursor-pointer list-none text-xs font-semibold uppercase tracking-[0.16em] text-slate-500 hover:text-slate-700 [&::-webkit-details-marker]:hidden">
+                    Add long description
+                  </summary>
+                  <div className="mt-3">
+                    <Field label="Long description" hint="Optional. Used in product detail views.">
+                      <textarea
+                        value={form.long_description}
+                        onChange={(e) => update("long_description", e.target.value)}
+                        rows={3}
+                        disabled={submitting}
+                        className="w-full rounded border border-gray-300 px-2 py-1 text-sm focus:border-blue-500 focus:outline-none disabled:bg-gray-100"
+                      />
+                    </Field>
+                  </div>
+                </details>
+              ) : (
+                <div className="mt-2">
+                  <Field label="Long description" hint="Optional. Used in product detail views.">
+                    <textarea
+                      value={form.long_description}
+                      onChange={(e) => update("long_description", e.target.value)}
+                      rows={3}
+                      disabled={submitting}
+                      className="w-full rounded border border-gray-300 px-2 py-1 text-sm focus:border-blue-500 focus:outline-none disabled:bg-gray-100"
+                    />
+                  </Field>
+                </div>
+              )}
               {aiNote && (
                 <div className="mt-2 text-xs text-gray-600">{aiNote}</div>
               )}
@@ -1290,29 +1350,58 @@ export function CreateProductModal({
                   the override to let the server pick the next free seq.
                 </div>
               )}
-              <div className="mt-3 border-t border-blue-200 pt-2">
-                <label className="flex flex-wrap items-center gap-2">
-                  <span className="text-xs font-semibold text-blue-900">
-                    Sequence override (optional):
-                  </span>
-                  <input
-                    type="number"
-                    min={1}
-                    max={999_999}
-                    step={1}
-                    value={form.sequence_override}
-                    onChange={(e) => update("sequence_override", e.target.value)}
-                    disabled={submitting}
-                    placeholder="auto"
-                    className="w-24 rounded border border-blue-300 px-2 py-1 text-sm focus:border-blue-500 focus:outline-none disabled:bg-gray-100"
-                  />
-                  <span className="text-xs text-gray-600">
-                    Leave blank to auto-allocate. Use a specific number only
-                    when matching a pre-printed barcode label (e.g. claim 1–13
-                    for the Hengwei homeware tags already on the shop floor).
-                  </span>
-                </label>
-              </div>
+              {isPage ? (
+                <details
+                  open={sequenceOverrideFilled}
+                  className="mt-3 border-t border-blue-200 pt-2"
+                >
+                  <summary className="cursor-pointer list-none text-xs font-semibold text-blue-900 hover:text-blue-700 [&::-webkit-details-marker]:hidden">
+                    Override sequence (auto-allocated by default)
+                  </summary>
+                  <label className="mt-2 flex flex-wrap items-center gap-2">
+                    <input
+                      type="number"
+                      min={1}
+                      max={999_999}
+                      step={1}
+                      value={form.sequence_override}
+                      onChange={(e) => update("sequence_override", e.target.value)}
+                      disabled={submitting}
+                      placeholder="auto"
+                      className="w-24 rounded border border-blue-300 px-2 py-1 text-sm focus:border-blue-500 focus:outline-none disabled:bg-gray-100"
+                    />
+                    <span className="text-xs text-gray-600">
+                      Use a specific number only when matching a pre-printed
+                      barcode label (e.g. claim 1–13 for the Hengwei homeware
+                      tags already on the shop floor).
+                    </span>
+                  </label>
+                </details>
+              ) : (
+                <div className="mt-3 border-t border-blue-200 pt-2">
+                  <label className="flex flex-wrap items-center gap-2">
+                    <span className="text-xs font-semibold text-blue-900">
+                      Sequence override (optional):
+                    </span>
+                    <input
+                      type="number"
+                      min={1}
+                      max={999_999}
+                      step={1}
+                      value={form.sequence_override}
+                      onChange={(e) => update("sequence_override", e.target.value)}
+                      disabled={submitting}
+                      placeholder="auto"
+                      className="w-24 rounded border border-blue-300 px-2 py-1 text-sm focus:border-blue-500 focus:outline-none disabled:bg-gray-100"
+                    />
+                    <span className="text-xs text-gray-600">
+                      Leave blank to auto-allocate. Use a specific number only
+                      when matching a pre-printed barcode label (e.g. claim 1–13
+                      for the Hengwei homeware tags already on the shop floor).
+                    </span>
+                  </label>
+                </div>
+              )}
             </section>
 
             {/* Optional inline publish */}
