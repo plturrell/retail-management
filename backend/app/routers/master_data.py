@@ -10,7 +10,7 @@ from decimal import Decimal
 from pathlib import Path
 from typing import Any, Optional
 
-from fastapi import APIRouter, Depends, File, HTTPException, Query, Request, UploadFile
+from fastapi import APIRouter, Depends, File, HTTPException, Query, Request, Response, UploadFile
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -22,6 +22,8 @@ from app.auth.dependencies import (
     require_any_store_role,
 )
 from app.config import settings
+from app import idempotency
+from app.rate_limit import _user_key_func, limiter
 from app.firestore_helpers import (
     create_document,
     get_document,
@@ -78,6 +80,9 @@ class _UnavailableLegacyRequest(BaseModel):
 
 
 ProductPatch = legacy_master_data.ProductPatch if legacy_master_data else _UnavailableLegacyRequest
+ProductArchiveRequest = (
+    legacy_master_data.ProductArchiveRequest if legacy_master_data else _UnavailableLegacyRequest
+)
 ExportLabelsRequest = legacy_master_data.ExportLabelsRequest if legacy_master_data else _UnavailableLegacyRequest
 IngestCommitRequest = legacy_master_data.IngestCommitRequest if legacy_master_data else _UnavailableLegacyRequest
 RecommendPricesRequest = legacy_master_data.RecommendPricesRequest if legacy_master_data else _UnavailableLegacyRequest
@@ -126,6 +131,106 @@ def _patch_product_images(sku: str, urls: list[str]) -> dict:
     raise HTTPException(status_code=404, detail=f"sku_code {sku} not found")
 
 
+def _default_master_store_id() -> str | None:
+    matches = query_collection("stores", filters=[("store_code", "==", "JEWEL-01")], limit=1)
+    return str(matches[0]["id"]) if matches else None
+
+
+def _sync_master_product_to_database(product: dict, *, source: str) -> dict:
+    """Mirror master JSON identity fields into Firestore SKU/PLU docs.
+
+    This is intentionally narrower than price publish: it keeps the database
+    aware of SKU, barcode, product copy, stock flags, and archive state without
+    creating or changing price documents.
+    """
+    sku_code = str(product.get("sku_code") or "").strip()
+    if not sku_code:
+        raise HTTPException(status_code=400, detail="product has no sku_code")
+
+    existing = query_collection("skus", filters=[("sku_code", "==", sku_code)], limit=1)
+    sku_id = str(existing[0]["id"]) if existing else str(_uuid.uuid4())
+    store_id = str(existing[0].get("store_id") or "") if existing else ""
+    store_id = store_id or _default_master_store_id()
+    now = datetime.now(timezone.utc)
+    plu_code = str(product.get("nec_plu") or product.get("plu_code") or "").strip()
+    status = str(product.get("status") or "active").strip().lower() or "active"
+
+    sku_doc_data = {
+        "id": sku_id,
+        "sku_code": sku_code[:32],
+        "description": (product.get("description") or "")[:60],
+        "long_description": product.get("long_description"),
+        "cost_price": float(product["cost_price"]) if product.get("cost_price") is not None else None,
+        "store_id": store_id,
+        "brand_id": None,
+        "category_id": None,
+        "tax_code": "G",
+        "is_unique_piece": False,
+        "use_stock": bool(product.get("use_stock", True)),
+        "block_sales": bool(product.get("block_sales", False)),
+        "status": status,
+        "archived_at": product.get("archived_at"),
+        "archived_reason": product.get("archived_reason"),
+        "internal_code": product.get("internal_code"),
+        "supplier_id": product.get("supplier_id"),
+        "supplier_name": product.get("supplier_name"),
+        "supplier_item_code": product.get("supplier_item_code"),
+        "nec_plu": plu_code or None,
+        "material": product.get("material"),
+        "product_type": product.get("product_type"),
+        "category": product.get("category"),
+        "stocking_location": product.get("stocking_location"),
+        "qty_on_hand": product.get("qty_on_hand"),
+        "source": source,
+        "updated_at": now,
+    }
+    if existing:
+        update_document("skus", sku_id, sku_doc_data)
+    else:
+        sku_doc_data["created_at"] = now
+        create_document("skus", sku_doc_data, doc_id=sku_id)
+
+    plu_id: str | None = None
+    if plu_code:
+        plus_matches = query_collection("plus", filters=[("plu_code", "==", plu_code)], limit=1)
+        if plus_matches:
+            plu_id = str(plus_matches[0]["id"])
+            update_document(
+                "plus",
+                plu_id,
+                {
+                    "plu_code": plu_code,
+                    "sku_id": sku_id,
+                    "status": status,
+                    "updated_at": now,
+                },
+            )
+        else:
+            plu_id = str(_uuid.uuid4())
+            create_document(
+                "plus",
+                {
+                    "id": plu_id,
+                    "plu_code": plu_code,
+                    "sku_id": sku_id,
+                    "status": status,
+                    "created_at": now,
+                    "updated_at": now,
+                },
+                doc_id=plu_id,
+            )
+    return {"ok": True, "sku_id": sku_id, "plu_id": plu_id}
+
+
+def _try_sync_master_product_to_database(product: dict, *, source: str) -> dict:
+    try:
+        return _sync_master_product_to_database(product, source=source)
+    except HTTPException:
+        raise
+    except Exception as exc:
+        return {"ok": False, "error": str(exc)}
+
+
 @router.get("/health")
 def health(
     _: dict = Depends(require_any_store_role(RoleEnum.owner)),
@@ -142,6 +247,26 @@ def stats(
     return legacy_master_data.stats()
 
 
+@router.get("/preview-codes")
+def preview_codes(
+    product_type: str = Query(..., min_length=1),
+    material: str = Query(..., min_length=1),
+    sequence_override: Optional[int] = Query(default=None, ge=1, le=999_999),
+    _: dict = Depends(require_any_store_role(RoleEnum.owner)),
+) -> dict:
+    """Compute the SKU+PLU pair the create endpoint *would* allocate, without
+    persisting. Used by the master-data create form to live-preview the codes
+    as the user types, and to flag collisions when they're typing a
+    ``sequence_override`` for a pre-printed barcode label.
+    """
+    legacy = _legacy_master_data()
+    return legacy.preview_codes(
+        product_type=product_type,
+        material=material,
+        sequence_override=sequence_override,
+    ).model_dump()
+
+
 @router.get("/products")
 def list_products(
     launch_only: bool = Query(True),
@@ -150,6 +275,7 @@ def list_products(
     purchased_only: bool = Query(True),
     sourcing_strategy: Optional[str] = Query(None),
     group_variants: bool = Query(False),
+    include_archived: bool = Query(False),
     _: dict = Depends(require_any_store_role(RoleEnum.owner)),
 ) -> dict:
     legacy_master_data = _legacy_master_data()
@@ -160,6 +286,7 @@ def list_products(
         purchased_only=purchased_only,
         sourcing_strategy=sourcing_strategy,
         group_variants=group_variants,
+        include_archived=include_archived,
     )
 
 
@@ -253,10 +380,87 @@ async def upload_product_image(
 def patch_product(
     sku: str,
     patch: ProductPatch,
+    request: Request,
     _: dict = Depends(require_any_store_role(RoleEnum.owner)),
+    actor: dict = Depends(get_current_user),
 ) -> dict:
     legacy_master_data = _legacy_master_data()
-    return legacy_master_data.patch_product(sku, patch)
+    product = legacy_master_data.patch_product(sku, patch)
+    product["database_sync"] = _try_sync_master_product_to_database(
+        product,
+        source="master_data_patch",
+    )
+    log_event(
+        "master_data.product_patch",
+        actor=actor,
+        metadata={
+            "sku_code": sku,
+            "database_sync": product.get("database_sync"),
+        },
+        request=request,
+    )
+    return product
+
+
+@router.post("/products/{sku}/archive")
+def archive_product(
+    sku: str,
+    req: ProductArchiveRequest,
+    request: Request,
+    _: dict = Depends(require_any_store_role(RoleEnum.owner)),
+    actor: dict = Depends(get_current_user),
+) -> dict:
+    legacy_master_data = _legacy_master_data()
+    actor_email = actor.get("email") if isinstance(actor, dict) else getattr(actor, "email", None)
+    product = legacy_master_data.archive_product(
+        sku,
+        req,
+        archived_by=actor_email or "unknown",
+    )
+    product["database_sync"] = _try_sync_master_product_to_database(
+        product,
+        source="master_data_archive",
+    )
+    log_event(
+        "master_data.product_archive",
+        actor=actor,
+        metadata={
+            "sku_code": sku,
+            "reason": getattr(req, "reason", None),
+            "database_sync": product.get("database_sync"),
+        },
+        request=request,
+    )
+    return product
+
+
+@router.post("/products/{sku}/restore")
+def restore_product(
+    sku: str,
+    request: Request,
+    _: dict = Depends(require_any_store_role(RoleEnum.owner)),
+    actor: dict = Depends(get_current_user),
+) -> dict:
+    legacy_master_data = _legacy_master_data()
+    actor_email = actor.get("email") if isinstance(actor, dict) else getattr(actor, "email", None)
+    product = legacy_master_data.restore_product(
+        sku,
+        restored_by=actor_email or "unknown",
+    )
+    product["database_sync"] = _try_sync_master_product_to_database(
+        product,
+        source="master_data_restore",
+    )
+    log_event(
+        "master_data.product_restore",
+        actor=actor,
+        metadata={
+            "sku_code": sku,
+            "database_sync": product.get("database_sync"),
+        },
+        request=request,
+    )
+    return product
 
 
 @router.post("/export/nec_jewel")
@@ -340,17 +544,39 @@ async def ingest_invoice(
 @router.post("/ingest/invoice/commit")
 def commit_invoice(
     req: IngestCommitRequest,
+    request: Request,
+    actor: dict = Depends(get_current_user),
     _: dict = Depends(require_any_store_role(RoleEnum.owner)),
 ) -> dict:
     legacy_master_data = _legacy_master_data()
-    return legacy_master_data.commit_invoice(req)
+    with idempotency.guard(request, "commit_invoice", actor) as g:
+        if g is not None and g.cached is not None:
+            return g.cached
+        result = legacy_master_data.commit_invoice(req)
+        for product in result.get("added_entries", []) or []:
+            product["database_sync"] = _try_sync_master_product_to_database(
+                product,
+                source="master_data_invoice_commit",
+            )
+        if g is not None:
+            g.store(result)
+        return result
 
 
 @router.post("/ai/recommend_prices")
+@limiter.limit("10/minute", key_func=_user_key_func)
 def recommend_prices(
     req: RecommendPricesRequest,
+    request: Request,  # required by slowapi to resolve the rate-limit key
+    response: Response,  # slowapi writes X-RateLimit-* headers into this
     _: dict = Depends(require_any_store_role(RoleEnum.owner)),
 ) -> dict:
+    """Ask DeepSeek V3 for retail-price recommendations on the supplied SKUs.
+
+    Capped at 10 requests/minute per authenticated user — DeepSeek bills per
+    token and a stuck "Recommend prices" button could otherwise rack up a
+    bill in seconds.
+    """
     legacy_master_data = _legacy_master_data()
     return legacy_master_data.recommend_prices(req)
 
@@ -648,48 +874,57 @@ def publish_prices_bulk(
     failure (e.g. 409 stale ``expected_active_price_id``) doesn't abort the
     batch; per-item outcomes are returned in ``results``. The owner-role +
     publisher-allowlist gate is enforced once at the endpoint boundary.
+
+    Honours an ``Idempotency-Key`` header so a network-level retry of the same
+    batch returns the original response instead of double-publishing.
     """
-    results: list[BulkPublishItemResult] = []
-    succeeded = 0
-    failed = 0
-    for item in req.items:
-        publish_req = PublishPriceRequest(
-            retail_price=item.retail_price,
-            store_code=item.store_code,
-            currency=item.currency,
-            tax_code=item.tax_code,
-            expected_active_price_id=item.expected_active_price_id,
-        )
-        try:
-            out = _do_publish_price(
-                item.sku, publish_req, actor=actor, request=request
+    with idempotency.guard(request, "publish_prices_bulk", actor) as g:
+        if g is not None and g.cached is not None:
+            return BulkPublishResponse.model_validate(g.cached)
+        results: list[BulkPublishItemResult] = []
+        succeeded = 0
+        failed = 0
+        for item in req.items:
+            publish_req = PublishPriceRequest(
+                retail_price=item.retail_price,
+                store_code=item.store_code,
+                currency=item.currency,
+                tax_code=item.tax_code,
+                expected_active_price_id=item.expected_active_price_id,
             )
-        except HTTPException as exc:
-            failed += 1
-            detail = exc.detail if isinstance(exc.detail, dict) else {"message": str(exc.detail)}
+            try:
+                out = _do_publish_price(
+                    item.sku, publish_req, actor=actor, request=request
+                )
+            except HTTPException as exc:
+                failed += 1
+                detail = exc.detail if isinstance(exc.detail, dict) else {"message": str(exc.detail)}
+                results.append(
+                    BulkPublishItemResult(
+                        sku=item.sku,
+                        ok=False,
+                        error={"status_code": exc.status_code, **detail},
+                    )
+                )
+                continue
+            succeeded += 1
             results.append(
                 BulkPublishItemResult(
                     sku=item.sku,
-                    ok=False,
-                    error={"status_code": exc.status_code, **detail},
+                    ok=True,
+                    price_id=out.get("price_id"),
+                    superseded_price_ids=out.get("superseded_price_ids", []) or [],
                 )
             )
-            continue
-        succeeded += 1
-        results.append(
-            BulkPublishItemResult(
-                sku=item.sku,
-                ok=True,
-                price_id=out.get("price_id"),
-                superseded_price_ids=out.get("superseded_price_ids", []) or [],
-            )
+        response = BulkPublishResponse(
+            ok=failed == 0,
+            succeeded=succeeded,
+            failed=failed,
+            results=results,
         )
-    return BulkPublishResponse(
-        ok=failed == 0,
-        succeeded=succeeded,
-        failed=failed,
-        results=results,
-    )
+        if g is not None:
+            g.store(response.model_dump())
+        return response
 
 
 class ManualCreateAndPublishRequest(BaseModel):
@@ -706,8 +941,16 @@ class ManualCreateAndPublishRequest(BaseModel):
 
     description: str = Field(min_length=1, max_length=120)
     long_description: Optional[str] = None
+    # Top-level product line — one of "Minerals" / "Homeware" / "Jewellery".
+    # Free-form string on the wire; the staff portal restricts to those three
+    # but a future bulk-import or OCR path may pass a non-canonical label, in
+    # which case we still persist it verbatim onto product.category.
+    category: Optional[str] = Field(default=None, max_length=64)
     product_type: str = Field(min_length=1)
     material: str = Field(min_length=1)
+    material_category: Optional[str] = None
+    material_subcategory: Optional[str] = None
+    additional_materials: Optional[list[str]] = None
     size: Optional[str] = None
     supplier_id: Optional[str] = Field(
         default=None,
@@ -726,8 +969,18 @@ class ManualCreateAndPublishRequest(BaseModel):
     inventory_type: Optional[str] = None
     notes: Optional[str] = None
     image_urls: Optional[list[str]] = None
+    stocking_location: Optional[str] = Field(
+        default=None,
+        description="Canonical location value, or a '+'-joined location combination.",
+    )
     variant_of_sku: Optional[str] = None
     variant_label: Optional[str] = Field(default=None, max_length=80)
+    # When set, force this exact sequence number for the SKU+PLU pair. Used
+    # for pre-printed labels (e.g. the 13 Hengwei homeware items printed with
+    # EAN-8 codes for seq 1–13 before the system switched to EAN-8). The
+    # server returns 409 if the requested seq collides with an existing
+    # SKU/PLU rather than silently issuing a different code.
+    sequence_override: Optional[int] = Field(default=None, ge=1, le=999_999)
 
     # Optional inline publish — when retail_price is set, the server creates
     # the SKU then immediately publishes the price in the same request so the
@@ -753,20 +1006,44 @@ def create_product_route(
     price publish additionally requires the publisher email allowlist; the
     check runs *before* the master-JSON write so we never leave a SKU behind
     that the caller wasn't allowed to price.
+
+    Honours an ``Idempotency-Key`` header so a network-level retry of the same
+    create returns the original response instead of minting a duplicate SKU.
+    The publisher-allowlist check still runs first, so a forbidden caller
+    can't poison the cache with a successful response.
     """
     if req.retail_price is not None:
         # Surface the publisher-allowlist 403 up front rather than after the
         # SKU has been appended to master_product_list.json.
         _assert_publish_allowed(actor)
 
+    with idempotency.guard(request, "create_product", actor) as g:
+        if g is not None and g.cached is not None:
+            return g.cached
+        result = _create_product_inner(req, request=request, actor=actor)
+        if g is not None:
+            g.store(result)
+        return result
+
+
+def _create_product_inner(
+    req: ManualCreateAndPublishRequest,
+    *,
+    request: Request,
+    actor: dict,
+) -> dict:
     legacy = _legacy_master_data()
 
     actor_email = actor.get("email") if isinstance(actor, dict) else getattr(actor, "email", None)
     legacy_req = legacy.ManualProductCreateRequest(
         description=req.description,
         long_description=req.long_description,
+        category=req.category,
         product_type=req.product_type,
         material=req.material,
+        material_category=req.material_category,
+        material_subcategory=req.material_subcategory,
+        additional_materials=req.additional_materials,
         size=req.size,
         supplier_id=req.supplier_id,
         supplier_name=req.supplier_name,
@@ -779,10 +1056,16 @@ def create_product_route(
         inventory_type=req.inventory_type,
         notes=req.notes,
         image_urls=req.image_urls,
+        stocking_location=req.stocking_location,
         variant_of_sku=req.variant_of_sku,
         variant_label=req.variant_label,
+        sequence_override=req.sequence_override,
     )
     product = legacy.create_product(legacy_req, created_by=actor_email or "unknown")
+    product["database_sync"] = _try_sync_master_product_to_database(
+        product,
+        source="master_data_create",
+    )
 
     log_event(
         "master_data.product_create",
@@ -794,6 +1077,10 @@ def create_product_route(
             "internal_code": product.get("internal_code"),
             "product_type": product.get("product_type"),
             "material": product.get("material"),
+            "material_category": product.get("material_category"),
+            "material_subcategory": product.get("material_subcategory"),
+            "additional_materials": product.get("additional_materials"),
+            "database_sync": product.get("database_sync"),
         },
         request=request,
     )
@@ -849,6 +1136,20 @@ def sourcing_options(
     """
     legacy = _legacy_master_data()
     return legacy.list_sourcing_options()
+
+
+@router.get("/stocking-locations")
+def stocking_locations(
+    _: dict = Depends(require_any_store_role(RoleEnum.owner)),
+) -> dict:
+    """Return the canonical stocking-location choices for the create-product UI.
+
+    Same rationale as ``/sourcing-options`` — server-owned so adding a new
+    physical location (e.g. a pop-up store) doesn't require a frontend deploy.
+    See ``tools/server/master_data_api.py::_STOCKING_LOCATIONS``.
+    """
+    legacy = _legacy_master_data()
+    return legacy.list_stocking_locations()
 
 
 @router.get("/suppliers")
@@ -917,11 +1218,17 @@ def add_supplier_catalog_entry(
 AiDescribeProductRequest = (
     legacy_master_data.AiDescribeProductRequest if legacy_master_data else _UnavailableLegacyRequest
 )
+CheckSimilarProductsRequest = (
+    legacy_master_data.CheckSimilarProductsRequest if legacy_master_data else _UnavailableLegacyRequest
+)
 
 
 @router.post("/ai/describe_product")
+@limiter.limit("20/minute", key_func=_user_key_func)
 async def ai_describe_product(
     req: AiDescribeProductRequest,
+    request: Request,  # required by slowapi to resolve the rate-limit key
+    response: Response,  # slowapi writes X-RateLimit-* headers into this
     _: dict = Depends(require_any_store_role(RoleEnum.owner)),
 ) -> dict:
     """Ask DeepSeek V3 to draft retail-facing description copy for a new SKU.
@@ -930,7 +1237,34 @@ async def ai_describe_product(
     unavailable or returns invalid JSON, so the create flow never blocks on
     the network call. ``is_fallback`` flags which path was taken so the UI
     can warn the user when the AI didn't actually produce output.
+
+    Capped at 20 requests/minute per authenticated user to bound DeepSeek
+    spend if the create-product modal ever loops on the AI button.
     """
     legacy = _legacy_master_data()
     resp = await legacy.ai_describe_product(req)
+    return resp.model_dump()
+
+
+@router.post("/ai/check_similar_products")
+@limiter.limit("20/minute", key_func=_user_key_func)
+async def check_similar_products(
+    req: CheckSimilarProductsRequest,
+    request: Request,  # required by slowapi to resolve the rate-limit key
+    response: Response,  # slowapi writes X-RateLimit-* headers into this
+    _: dict = Depends(require_any_store_role(RoleEnum.owner)),
+) -> dict:
+    """Find existing master-list rows that look like a draft about to be
+    created, so the UI can warn the user before they mint a duplicate SKU.
+
+    Two-stage matcher — see ``find_similar_products`` in the legacy module.
+    Stage 1 (lexical Jaccard) is always cheap; stage 2 (DeepSeek V3 verdicts)
+    only runs when the caller passes ``use_ai=true`` so this endpoint is safe
+    to call on every keystroke once the description is long enough to bother.
+
+    Capped at 20 requests/minute per authenticated user — same cap as
+    ``/ai/describe_product`` since the UI typically calls them in pairs.
+    """
+    legacy = _legacy_master_data()
+    resp = await legacy.find_similar_products(req)
     return resp.model_dump()
