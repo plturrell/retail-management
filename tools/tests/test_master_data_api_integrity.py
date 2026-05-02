@@ -6,6 +6,7 @@ from pathlib import Path
 
 import pytest
 from fastapi import HTTPException
+from pydantic import ValidationError
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "server"))
 
@@ -218,3 +219,78 @@ def test_restore_product_rejects_duplicate_barcode_corruption(master_json: Path)
 
     assert exc.value.status_code == 409
     assert "barcode 20000011" in str(exc.value.detail)
+
+
+def test_create_product_rejects_duplicate_supplier_item_code(master_json: Path) -> None:
+    existing = _product(
+        sku_code="VEBWLAMET0000001",
+        nec_plu="20000011",
+        description="Existing Amethyst Bowl",
+    )
+    existing["supplier_id"] = "CN-001"
+    existing["supplier_item_code"] = "A001"
+    _write_master(master_json, [existing])
+
+    req = api.ManualProductCreateRequest(
+        description="Brand New Amethyst Bowl",
+        product_type="Bowl",
+        material="Amethyst",
+        sourcing_strategy="supplier_premade",
+        supplier_id="CN-001",
+        supplier_item_code="A001",
+        internal_code="A001-NEW",
+    )
+
+    with pytest.raises(HTTPException) as exc:
+        api.create_product(req)
+
+    assert exc.value.status_code == 409
+    assert "supplier_item_code A001" in str(exc.value.detail)
+    assert "VEBWLAMET0000001" in str(exc.value.detail)
+
+
+def test_create_product_allows_same_supplier_item_code_for_different_supplier(
+    master_json: Path,
+) -> None:
+    existing = _product(
+        sku_code="VEBWLAMET0000001",
+        nec_plu="20000011",
+        description="Existing Amethyst Bowl",
+    )
+    existing["supplier_id"] = "CN-001"
+    existing["supplier_item_code"] = "A001"
+    _write_master(master_json, [existing])
+
+    req = api.ManualProductCreateRequest(
+        description="Different Supplier Same Code",
+        product_type="Bowl",
+        material="Amethyst",
+        sourcing_strategy="supplier_premade",
+        supplier_id="CN-002",
+        supplier_item_code="A001",
+        internal_code="A001-CN002",
+    )
+
+    result = api.create_product(req)
+    assert result["supplier_id"] == "CN-002"
+    assert result["supplier_item_code"] == "A001"
+
+
+def test_manual_product_create_request_rejects_invalid_cost_currency() -> None:
+    with pytest.raises(ValidationError):
+        api.ManualProductCreateRequest(
+            description="Test Item",
+            product_type="Bowl",
+            material="Amethyst",
+            cost_currency="USDS",
+        )
+
+
+def test_manual_product_create_request_normalises_cost_currency_case() -> None:
+    req = api.ManualProductCreateRequest(
+        description="Test Item",
+        product_type="Bowl",
+        material="Amethyst",
+        cost_currency="  usd ",
+    )
+    assert req.cost_currency == "USD"

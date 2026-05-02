@@ -41,7 +41,7 @@ from typing import Any, Optional
 from fastapi import FastAPI, File, HTTPException, Query, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 MASTER_JSON = REPO_ROOT / "data" / "master_product_list.json"
@@ -225,6 +225,50 @@ def _raise_duplicate_description(
         raise HTTPException(
             status_code=409,
             detail=f"description already exists on {sku}",
+        )
+
+
+def _find_duplicate_supplier_item_code(
+    products: list[dict],
+    supplier_id: Any,
+    supplier_item_code: Any,
+    *,
+    exclude_sku: Optional[str] = None,
+) -> dict | None:
+    wanted_supplier = _normalise_code_value(supplier_id)
+    wanted_code = _normalise_code_value(supplier_item_code)
+    if not wanted_supplier or not wanted_code:
+        return None
+    exclude = _normalise_code_value(exclude_sku)
+    for product in products:
+        if exclude and _normalise_code_value(product.get("sku_code")) == exclude:
+            continue
+        if (
+            _normalise_code_value(product.get("supplier_id")) == wanted_supplier
+            and _normalise_code_value(product.get("supplier_item_code")) == wanted_code
+        ):
+            return product
+    return None
+
+
+def _raise_duplicate_supplier_item_code(
+    products: list[dict],
+    supplier_id: Any,
+    supplier_item_code: Any,
+    *,
+    exclude_sku: Optional[str] = None,
+) -> None:
+    duplicate = _find_duplicate_supplier_item_code(
+        products, supplier_id, supplier_item_code, exclude_sku=exclude_sku
+    )
+    if duplicate:
+        sku = duplicate.get("sku_code") or "unknown SKU"
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                f"supplier_item_code {supplier_item_code} already exists for "
+                f"supplier {supplier_id} on {sku}"
+            ),
         )
 
 
@@ -2159,6 +2203,18 @@ class ManualProductCreateRequest(BaseModel):
         ),
     )
 
+    @field_validator("cost_currency", mode="before")
+    @classmethod
+    def _normalise_cost_currency(cls, value: Any) -> Optional[str]:
+        if value is None:
+            return None
+        text = str(value).strip().upper()
+        if not text:
+            return None
+        if not re.fullmatch(r"[A-Z]{3}", text):
+            raise ValueError("cost_currency must be a 3-letter ISO 4217 code")
+        return text
+
 
 def create_product(req: ManualProductCreateRequest, *, created_by: str = "master_data_api") -> dict:
     """Append a hand-entered SKU to master_product_list.json.
@@ -2354,6 +2410,12 @@ def create_product(req: ManualProductCreateRequest, *, created_by: str = "master
                 status_code=409,
                 detail=f"nec_plu {plu_code} already exists on {duplicate_plu.get('sku_code')}",
             )
+        # Variant rows inherit supplier_item_code from their parent (line 2281
+        # above), so the parent itself would always trip the check — skip the
+        # supplier-code dedup in that case. Non-variants must be unique on
+        # (supplier_id, supplier_item_code) when both are present.
+        if not variant_parent:
+            _raise_duplicate_supplier_item_code(products, supplier_id, supplier_item_code)
 
         cost_price = float(req.cost_price) if req.cost_price is not None else None
         cost_currency = (req.cost_currency or ("SGD" if cost_price is not None else None))
