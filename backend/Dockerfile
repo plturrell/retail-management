@@ -24,4 +24,10 @@ RUN echo "Mangle Linux stub deployed. Waiting for architectural binary." > /usr/
 
 EXPOSE 8000
 
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "2"]
+# Single worker: the idempotency cache and SlowAPI rate limiter both live in
+# process memory and are not shared across workers. Multiple workers would
+# silently break idempotency on retries and let clients exceed rate limits
+# by ~Nx. Scale horizontally via Cloud Run / Railway replicas instead, or
+# move both stores to a shared backend (Redis / Firestore) before raising
+# this. See backend/RAILWAY_DEPLOY.md §7.
+CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "1"]

@@ -16,9 +16,10 @@ It depends on:
    - **Builder:** Dockerfile (auto-detected)
    - **Start Command:**
      ```
-     uvicorn app.main:app --host 0.0.0.0 --port $PORT --workers 2
+     uvicorn app.main:app --host 0.0.0.0 --port $PORT --workers 1
      ```
-     (Required — the Dockerfile hard-codes port 8000; Railway needs `$PORT`.)
+     (Required — the Dockerfile hard-codes port 8000; Railway needs `$PORT`.
+     Workers must stay at 1 — see §7.)
 3. **Networking:** Generate Domain.
 
 ## 2. Required environment variables
@@ -81,3 +82,35 @@ TiDB URL won't crash the API — `tidb.healthcheck()` will report the error.
   iteration (per scoping). Plan: in-memory sqlite + ORM CRUD smoke tests.
 - **Cutover** — the inventory ledger dual-writes; reads still come from
   Firestore. Switch reads to TiDB once we trust the data.
+
+## 7. Worker concurrency
+
+**The API runs with `--workers 1` and that's load-bearing.**
+
+Two pieces of process-local state make multi-worker setups silently incorrect:
+
+- **Idempotency cache** (`backend/app/idempotency.py`) — a module-level dict
+  keyed by `(actor, scope, idempotency_key)`. Used by bulk price publish and
+  similar write paths to absorb retries. With N workers, each worker has its
+  own cache; a retry hashed to a different worker re-executes the work.
+- **Rate limiter** (`backend/app/rate_limit.py`, SlowAPI in-memory backend) —
+  per-IP buckets live in the worker's RAM. With N workers, each client's
+  effective limit is ~Nx the documented cap.
+
+**Scale horizontally, not vertically.** Cloud Run already does this via
+container replicas (`max-instances=10` in `cloudbuild.yaml`); Railway does it
+via service replicas. Both are correct because each replica owns its own
+client cohort for the duration of the connection.
+
+**Before raising `--workers` above 1**, both stores must move to a shared
+backend:
+
+- Idempotency: swap `_cache` / `_inflight_locks` in `idempotency.py` for a
+  Firestore collection (TTL-indexed) or Redis with `SET NX EX`. Call sites
+  don't change — they already use the `guard()` context manager.
+- Rate limiter: pass `storage_uri="redis://..."` to `Limiter()` in
+  `rate_limit.py` and add a Redis instance to the deploy.
+
+A startup-time assertion (`if WORKERS != 1 in production: fail`) belongs in
+`backend/app/config.py`'s `validate_production_config` once the in-flight
+backend changes there are committed; until then, this doc is the guardrail.
