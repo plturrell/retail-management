@@ -1,4 +1,5 @@
 import os
+import json
 
 import firebase_admin
 from firebase_admin import auth as firebase_auth, credentials
@@ -27,9 +28,19 @@ def _get_firebase_app():
                 "GOOGLE_APPLICATION_CREDENTIALS", ""
             )
             if cred_path and os.path.isfile(cred_path):
-                # Explicit service account key file
-                cred = credentials.Certificate(cred_path)
-                _firebase_app = firebase_admin.initialize_app(cred)
+                # A service-account JSON can be loaded as a certificate. A
+                # local gcloud ADC JSON is an `authorized_user` file and must
+                # go through ApplicationDefault instead.
+                with open(cred_path, encoding="utf-8") as fh:
+                    cred_type = json.load(fh).get("type")
+                if cred_type == "service_account":
+                    cred = credentials.Certificate(cred_path)
+                else:
+                    cred = credentials.ApplicationDefault()
+                _firebase_app = firebase_admin.initialize_app(
+                    cred,
+                    options={"projectId": settings.FIREBASE_PROJECT_ID},
+                )
             else:
                 try:
                     # Try Application Default Credentials (works on GCP and

@@ -5,6 +5,7 @@ from typing import Any, List
 from uuid import UUID
 
 from fastapi import Depends, Header, HTTPException, Request, status
+from google.api_core.exceptions import FailedPrecondition
 from google.auth.transport import requests as g_requests
 from google.cloud.firestore_v1.client import Client as FirestoreClient
 from google.oauth2 import id_token
@@ -158,9 +159,9 @@ async def get_current_user(
     user_id = user_data.get("id")
     user_id_str = str(user_id) if user_id is not None else firebase_uid
 
-    store_roles: List[_RoleDict] = []
-    role_docs = db.collection_group("roles").where("user_id", "==", user_id_str).stream()
-    for rdoc in role_docs:
+    seen_role_keys: set[tuple[str, str, str]] = set()
+
+    def append_role_doc(rdoc: Any) -> None:
         rd = rdoc.to_dict() or {}
         if not rd.get("id"):
             rd["id"] = rdoc.id
@@ -172,7 +173,38 @@ async def get_current_user(
         rd["user_id"] = UUID(role_user_id) if _is_uuid(role_user_id) else role_user_id
         if "role" in rd and isinstance(rd["role"], str):
             rd["role"] = RoleEnum(rd["role"])
+        role_key = (
+            str(rd.get("store_id", "")),
+            str(rd.get("user_id", "")),
+            str(rd.get("id", "")),
+        )
+        if role_key in seen_role_keys:
+            return
+        seen_role_keys.add(role_key)
         store_roles.append(_RoleDict(rd))
+
+    def append_roles_by_store_walk() -> None:
+        for store_doc in db.collection("stores").stream():
+            role_doc = store_doc.reference.collection("roles").document(user_id_str).get()
+            if role_doc.exists:
+                append_role_doc(role_doc)
+
+    store_roles: List[_RoleDict] = []
+    try:
+        role_docs = db.collection_group("roles").where("user_id", "==", user_id_str).stream()
+        for rdoc in role_docs:
+            append_role_doc(rdoc)
+    except FailedPrecondition as exc:
+        if "requires" not in str(exc).lower() or "index" not in str(exc).lower():
+            raise
+        append_roles_by_store_walk()
+
+    if not store_roles:
+        # Older role documents may be keyed as stores/{store_id}/roles/{user_id}
+        # without a queryable user_id field. If the collection-group query
+        # succeeds but returns nothing, keep the staff app from losing every
+        # store by falling back to the direct document path.
+        append_roles_by_store_walk()
 
     user_data["store_roles"] = store_roles
 
