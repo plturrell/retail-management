@@ -19,12 +19,12 @@ from app.routers import master_data
 # ── _assert_publish_allowed: pure allowlist check ────────────────────────────
 
 def test_allowlist_accepts_named_publisher_email() -> None:
-    actor = {"email": "craig@victoriaenso.com"}
+    actor = {"email": "turrell.craig.1971@gmail.com"}
     master_data._assert_publish_allowed(actor)  # no raise
 
 
 def test_allowlist_is_case_insensitive() -> None:
-    actor = {"email": "CRAIG@VictoriaEnso.com"}
+    actor = {"email": "TURRELL.CRAIG.1971@Gmail.com"}
     master_data._assert_publish_allowed(actor)  # no raise
 
 
@@ -55,7 +55,7 @@ def test_allowlist_rejects_none_email() -> None:
 
 def test_allowlist_reads_email_off_object_attribute() -> None:
     class _Actor:
-        email = "craig@victoriaenso.com"
+        email = "turrell.craig.1971@gmail.com"
     master_data._assert_publish_allowed(_Actor())  # no raise
 
 
@@ -65,7 +65,7 @@ def test_allowlist_picks_up_settings_changes(monkeypatch) -> None:
     )
     # Default named publishers no longer pass.
     with pytest.raises(HTTPException) as exc:
-        master_data._assert_publish_allowed({"email": "craig@victoriaenso.com"})
+        master_data._assert_publish_allowed({"email": "turrell.craig.1971@gmail.com"})
     assert exc.value.status_code == 403
     # The newly configured email does.
     master_data._assert_publish_allowed({"email": "new-owner@victoriaenso.com"})
@@ -102,7 +102,7 @@ def _staff_actor(email: str) -> dict:
 
 
 def test_require_publish_price_owner_passes_for_owner_on_allowlist() -> None:
-    actor = _owner_actor("craig@victoriaenso.com")
+    actor = _owner_actor("turrell.craig.1971@gmail.com")
     result = _run(master_data.require_publish_price_owner(actor=actor))
     assert result is actor
 
@@ -116,7 +116,7 @@ def test_require_publish_price_owner_rejects_owner_off_allowlist() -> None:
 
 def test_require_publish_price_owner_rejects_allowlisted_non_owner() -> None:
     # Even if Craig somehow only had a staff role, the role gate must reject.
-    actor = _staff_actor("craig@victoriaenso.com")
+    actor = _staff_actor("turrell.craig.1971@gmail.com")
     with pytest.raises(HTTPException) as exc:
         _run(master_data.require_publish_price_owner(actor=actor))
     assert exc.value.status_code == 403
@@ -126,7 +126,7 @@ def test_require_publish_price_owner_rejects_allowlisted_non_owner() -> None:
 def test_require_publish_price_owner_rejects_user_with_no_store_roles() -> None:
     actor = {
         "id": uuid4(),
-        "email": "craig@victoriaenso.com",
+        "email": "turrell.craig.1971@gmail.com",
         "store_roles": [],
     }
     with pytest.raises(HTTPException) as exc:

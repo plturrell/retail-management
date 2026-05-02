@@ -22,7 +22,7 @@ async def bulk_client(monkeypatch):
     elsewhere in test_master_data_publish_gating.py)."""
     actor = {
         "id": "test-user-id",
-        "email": "craig@victoriaenso.com",
+        "email": "turrell.craig.1971@gmail.com",
         "store_roles": [{"role": "owner", "store_id": "JEWEL-01"}],
     }
     app.dependency_overrides[master_data.require_publish_price_owner] = lambda: actor

@@ -17492,10 +17492,58 @@
       "added_via": "add_hengwei_skus_to_master.py",
       "needs_review": true,
       "needs_retail_price": true
+    },
+    {
+      "id": "china_suppliers-vepndston0000526",
+      "internal_code": null,
+      "sku_code": "VEPNDSTON0000526",
+      "description": "Jade Pendant Grade A White Gold Diamond",
+      "long_description": "Jadeite Pendant in 18K White Gold with Diamond Halo",
+      "material": "Mineral Stone",
+      "product_type": "Pendant",
+      "category": "Home Decor",
+      "amazon_sku": null,
+      "google_product_id": "online:en:SG:VEPNDSTON0000526",
+      "google_product_category": "Home & Garden > Decor",
+      "nec_plu": "2000000005263",
+      "cost_price": 950.0,
+      "cost_currency": "SGD",
+      "cost_basis": {
+        "source_currency": "SGD",
+        "source_amount": 950.0
+      },
+      "retail_price": null,
+      "retail_price_note": null,
+      "qty_on_hand": 2,
+      "supplier_id": "CHINA_SUPPLIERS",
+      "supplier_name": "China Suppliers",
+      "supplier_item_code": null,
+      "source_orders": [],
+      "sources": [
+        "manual_entry:turrell.craig.1971@gmail.com"
+      ],
+      "raw_names": [
+        "Jade Pendant Grade A White Gold Diamond"
+      ],
+      "mention_count": 1,
+      "inventory_type": "purchased",
+      "sourcing_strategy": "supplier_premade",
+      "inventory_category": "finished_for_sale",
+      "sale_ready": false,
+      "block_sales": false,
+      "stocking_status": "in_stock",
+      "stocking_location": "jewel_changi",
+      "use_stock": true,
+      "size": "",
+      "added_at": "2026-04-30T04:39:28.343103+00:00",
+      "added_via": "master_data_api/manual_create/turrell.craig.1971@gmail.com",
+      "needs_review": false,
+      "needs_retail_price": true,
+      "image_urls": []
     }
   ],
   "metadata": {
-    "last_modified": "2026-04-26T01:10:55.094983+00:00",
-    "last_modified_by": "master_data_api"
+    "last_modified": "2026-04-30T04:39:28.343130+00:00",
+    "last_modified_by": "master_data_api/manual_create/turrell.craig.1971@gmail.com"
   }
 }

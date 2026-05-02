@@ -122,6 +122,14 @@ class ProductPatch(BaseModel):
     stocking_location: Optional[str] = None
 
 
+class ProductArchiveRequest(BaseModel):
+    reason: Optional[str] = Field(default=None, max_length=240)
+
+
+def _is_archived_product(product: dict) -> bool:
+    return _normalise_identity_value(product.get("status")) == "archived"
+
+
 def _is_purchased(p: dict) -> bool:
     """A product counts as 'purchased' only if we have a concrete PO/invoice
     on file for it.
@@ -141,6 +149,191 @@ def _is_purchased(p: dict) -> bool:
     return False
 
 
+def _normalise_identity_value(value: Any) -> str:
+    return re.sub(r"\s+", " ", str(value or "").strip()).casefold()
+
+
+def _normalise_code_value(value: Any) -> str:
+    return str(value or "").strip().upper()
+
+
+def _find_duplicate_description(
+    products: list[dict],
+    description: str,
+    *,
+    exclude_sku: Optional[str] = None,
+) -> dict | None:
+    wanted = _normalise_identity_value(description)
+    if not wanted:
+        return None
+    exclude = _normalise_code_value(exclude_sku)
+    for product in products:
+        if exclude and _normalise_code_value(product.get("sku_code")) == exclude:
+            continue
+        if _normalise_identity_value(product.get("description")) == wanted:
+            return product
+    return None
+
+
+def _find_duplicate_code(
+    products: list[dict],
+    field: str,
+    code: Any,
+    *,
+    exclude_sku: Optional[str] = None,
+) -> dict | None:
+    wanted = _normalise_code_value(code)
+    if not wanted:
+        return None
+    exclude = _normalise_code_value(exclude_sku)
+    for product in products:
+        if exclude and _normalise_code_value(product.get("sku_code")) == exclude:
+            continue
+        if _normalise_code_value(product.get(field)) == wanted:
+            return product
+    return None
+
+
+def _find_duplicate_barcode(
+    products: list[dict],
+    code: Any,
+    *,
+    exclude_sku: Optional[str] = None,
+) -> dict | None:
+    wanted = _normalise_code_value(code)
+    if not wanted:
+        return None
+    exclude = _normalise_code_value(exclude_sku)
+    for product in products:
+        if exclude and _normalise_code_value(product.get("sku_code")) == exclude:
+            continue
+        for field in ("nec_plu", "plu_code"):
+            if _normalise_code_value(product.get(field)) == wanted:
+                return product
+    return None
+
+
+def _raise_duplicate_description(
+    products: list[dict],
+    description: str,
+    *,
+    exclude_sku: Optional[str] = None,
+) -> None:
+    duplicate = _find_duplicate_description(products, description, exclude_sku=exclude_sku)
+    if duplicate:
+        sku = duplicate.get("sku_code") or "unknown SKU"
+        raise HTTPException(
+            status_code=409,
+            detail=f"description already exists on {sku}",
+        )
+
+
+def _raise_identity_conflicts_for_restore(products: list[dict], target: dict) -> None:
+    sku = target.get("sku_code")
+    _raise_duplicate_description(products, str(target.get("description") or ""), exclude_sku=sku)
+
+    duplicate_sku = _find_duplicate_code(products, "sku_code", sku, exclude_sku=sku)
+    if duplicate_sku:
+        raise HTTPException(
+            status_code=409,
+            detail=f"sku_code {sku} already exists on {duplicate_sku.get('sku_code')}",
+        )
+
+    seen_barcodes: set[str] = set()
+    for barcode in (target.get("nec_plu"), target.get("plu_code")):
+        normalised = _normalise_code_value(barcode)
+        if not normalised or normalised in seen_barcodes:
+            continue
+        seen_barcodes.add(normalised)
+        duplicate_barcode = _find_duplicate_barcode(products, barcode, exclude_sku=sku)
+        if duplicate_barcode:
+            raise HTTPException(
+                status_code=409,
+                detail=f"barcode {barcode} already exists on {duplicate_barcode.get('sku_code')}",
+            )
+
+
+def _sku_sequence(sku_code: Any) -> int | None:
+    match = re.search(r"(\d{7})$", str(sku_code or "").strip())
+    if not match:
+        return None
+    return int(match.group(1))
+
+
+def _inventory_state_for_product(product: dict) -> dict[str, Any]:
+    normalised_location = normalise_stocking_location(product.get("stocking_location"))
+    locations = normalised_location.split("+") if normalised_location else []
+    status = re.sub(r"[^a-z0-9]+", "", _normalise_identity_value(product.get("stocking_status")))
+    qty_on_order = product.get("qty_on_order") or product.get("on_order_qty")
+    try:
+        ordered_qty = float(qty_on_order or 0)
+    except (TypeError, ValueError):
+        ordered_qty = 0
+    is_on_order = status in {"onorder", "ordered", "incoming", "inbound"} or ordered_qty > 0
+    has_warehouse = "breeze" in locations
+    has_store = any(loc in {"jewel", "isetan", "takashimaya", "online"} for loc in locations)
+    qty = product.get("qty_on_hand")
+    has_qty = False
+    try:
+        has_qty = float(qty or 0) > 0
+    except (TypeError, ValueError):
+        has_qty = False
+    supplier_linked = bool(product.get("supplier_item_code") or product.get("supplier_id"))
+    is_catalog_only = (
+        _normalise_identity_value(product.get("inventory_type")) == "catalog"
+        or (
+            supplier_linked
+            and not _is_purchased(product)
+            and not has_qty
+            and not locations
+            and not is_on_order
+        )
+    )
+
+    buckets: list[str] = []
+    if has_store:
+        buckets.append("store")
+    if has_warehouse:
+        buckets.append("warehouse")
+    if is_on_order:
+        buckets.append("on_order")
+    if is_catalog_only or not buckets:
+        buckets.append("supplier_catalog")
+
+    if "on_order" in buckets:
+        label = "On order"
+    elif "store" in buckets and "warehouse" in buckets:
+        label = "Store + warehouse"
+    elif "store" in buckets:
+        label = "In store"
+    elif "warehouse" in buckets:
+        label = "In warehouse"
+    else:
+        label = "Supplier catalog"
+    return {"buckets": buckets, "label": label, "locations": locations}
+
+
+def _enrich_product_row(product: dict) -> dict:
+    row = dict(product)
+    inventory_state = _inventory_state_for_product(product)
+    row["inventory_buckets"] = inventory_state["buckets"]
+    row["inventory_state_label"] = inventory_state["label"]
+    row["inventory_locations"] = inventory_state["locations"]
+    row["sku_sequence"] = _sku_sequence(product.get("sku_code"))
+    return row
+
+
+def _duplicate_group_count(products: list[dict], field: str, *, codes: bool = False) -> int:
+    groups: dict[str, int] = {}
+    for product in products:
+        raw = product.get(field)
+        key = _normalise_code_value(raw) if codes else _normalise_identity_value(raw)
+        if not key:
+            continue
+        groups[key] = groups.get(key, 0) + 1
+    return sum(1 for count in groups.values() if count > 1)
+
+
 def _matches_filters(
     p: dict,
     launch_only: bool,
@@ -148,7 +341,10 @@ def _matches_filters(
     supplier: Optional[str],
     purchased_only: bool,
     sourcing_strategy: Optional[str] = None,
+    include_archived: bool = False,
 ) -> bool:
+    if _is_archived_product(p) and not include_archived:
+        return False
     if supplier and (p.get("supplier_id") or "") != supplier:
         return False
     if sourcing_strategy:
@@ -191,12 +387,20 @@ def health() -> dict:
 @app.get("/api/stats")
 def stats() -> dict:
     data = _read_master()
-    products = data.get("products", [])
+    all_products = data.get("products", [])
+    products = [p for p in all_products if not _is_archived_product(p)]
+    archived = len(all_products) - len(products)
     by_supplier: dict[str, int] = {}
     sale_ready = 0
     needs_price = 0
     needs_review = 0
     missing_price_in_sale_ready = 0
+    inventory_buckets = {
+        "store": 0,
+        "warehouse": 0,
+        "on_order": 0,
+        "supplier_catalog": 0,
+    }
     for p in products:
         sup = p.get("supplier_id") or "(none)"
         by_supplier[sup] = by_supplier.get(sup, 0) + 1
@@ -209,12 +413,20 @@ def stats() -> dict:
             needs_price += 1
         if p.get("needs_review"):
             needs_review += 1
+        for bucket in _inventory_state_for_product(p)["buckets"]:
+            if bucket in inventory_buckets:
+                inventory_buckets[bucket] += 1
     return {
         "total": len(products),
         "sale_ready": sale_ready,
         "needs_price_flag": needs_price,
         "needs_review_flag": needs_review,
         "sale_ready_missing_price": missing_price_in_sale_ready,
+        "duplicate_names": _duplicate_group_count(products, "description"),
+        "duplicate_skus": _duplicate_group_count(products, "sku_code", codes=True),
+        "duplicate_barcodes": _duplicate_group_count(products, "nec_plu", codes=True),
+        "inventory_buckets": inventory_buckets,
+        "archived": archived,
         "by_supplier": by_supplier,
     }
 
@@ -227,14 +439,24 @@ def list_products(
     purchased_only: bool = Query(True, description="Only products from real POs/invoices (skip catalog-only rows)"),
     sourcing_strategy: Optional[str] = Query(None, description="Filter by sourcing_strategy. Pass 'manufactured' to match any manufactured_* value."),
     group_variants: bool = Query(False, description="Populate variant_siblings on family heads when true."),
+    include_archived: bool = Query(False, description="Include archived products. Default hides archived rows."),
 ) -> dict:
     data = _read_master()
     products = data.get("products", [])
     rows = [
         p for p in products
-        if _matches_filters(p, launch_only, needs_price, supplier, purchased_only, sourcing_strategy)
+        if _matches_filters(
+            p,
+            launch_only,
+            needs_price,
+            supplier,
+            purchased_only,
+            sourcing_strategy,
+            include_archived,
+        )
     ]
     rows.sort(key=lambda p: ((p.get("supplier_id") or "zzz"), (p.get("product_type") or ""), (p.get("sku_code") or "")))
+    rows = [_enrich_product_row(p) for p in rows]
     if group_variants:
         by_group: dict[str, list[dict[str, Any]]] = {}
         for p in rows:
@@ -286,10 +508,27 @@ def patch_product(sku: str, patch: ProductPatch) -> dict:
                 break
         if target is None:
             raise HTTPException(status_code=404, detail=f"sku_code {sku} not found")
+        if _is_archived_product(target):
+            raise HTTPException(
+                status_code=409,
+                detail=f"sku_code {sku} is archived; restore it before editing",
+            )
 
         notes = updates.pop("notes", None)
         if notes is not None:
             target["retail_price_note"] = notes
+        if "description" in updates:
+            description = str(updates["description"] or "").strip()
+            if not description:
+                raise HTTPException(status_code=400, detail="description is required")
+            _raise_duplicate_description(data.get("products", []), description, exclude_sku=sku)
+            updates["description"] = description[:120]
+        if "stocking_location" in updates:
+            raw_location = updates.get("stocking_location")
+            normalised = normalise_stocking_location(raw_location)
+            if raw_location and not normalised:
+                raise HTTPException(status_code=400, detail="stocking_location is not recognised")
+            updates["stocking_location"] = normalised
         target.update(updates)
 
         if "retail_price" in updates:
@@ -307,6 +546,97 @@ def patch_product(sku: str, patch: ProductPatch) -> dict:
         _atomic_write_master(data)
 
     return target
+
+
+def archive_product(
+    sku: str,
+    req: ProductArchiveRequest | None = None,
+    *,
+    archived_by: str = "master_data_api",
+) -> dict:
+    """Soft-archive a product row.
+
+    We never hard-delete master rows: SKU and barcode history must remain
+    reserved so old labels, POS exports, audit logs, and supplier references
+    cannot be accidentally reused.
+    """
+    archive_req = req or ProductArchiveRequest()
+    with _lock:
+        data = _read_master()
+        target = None
+        for p in data.get("products", []):
+            if (p.get("sku_code") or "") == sku:
+                target = p
+                break
+        if target is None:
+            raise HTTPException(status_code=404, detail=f"sku_code {sku} not found")
+
+        if not _is_archived_product(target):
+            target["previous_sale_ready"] = bool(target.get("sale_ready", False))
+            target["previous_use_stock"] = bool(target.get("use_stock", True))
+        target["status"] = "archived"
+        target["sale_ready"] = False
+        target["block_sales"] = True
+        target["use_stock"] = False
+        target["needs_review"] = True
+        target["archived_at"] = _now()
+        target["archived_by"] = archived_by
+        reason = (archive_req.reason or "").strip()
+        if reason:
+            target["archived_reason"] = reason[:240]
+        target["last_modified_at"] = _now()
+        target["last_modified_via"] = "master_data_api/archive"
+
+        meta = data.setdefault("metadata", {})
+        meta["last_modified"] = _now()
+        meta["last_modified_by"] = "master_data_api/archive"
+        _atomic_write_master(data)
+
+    return _enrich_product_row(target)
+
+
+@app.post("/api/products/{sku}/archive")
+def archive_product_endpoint(sku: str, req: ProductArchiveRequest | None = None) -> dict:
+    return archive_product(sku, req)
+
+
+def restore_product(sku: str, *, restored_by: str = "master_data_api") -> dict:
+    with _lock:
+        data = _read_master()
+        target = None
+        for p in data.get("products", []):
+            if (p.get("sku_code") or "") == sku:
+                target = p
+                break
+        if target is None:
+            raise HTTPException(status_code=404, detail=f"sku_code {sku} not found")
+
+        _raise_identity_conflicts_for_restore(data.get("products", []), target)
+
+        target["status"] = "active"
+        target["block_sales"] = False
+        target["use_stock"] = bool(target.pop("previous_use_stock", True))
+        # Restored rows deliberately need a human review before returning to
+        # sale-ready, even if they were sale-ready before archival.
+        target["sale_ready"] = False
+        target["needs_review"] = True
+        target["restored_at"] = _now()
+        target["restored_by"] = restored_by
+        target.pop("previous_sale_ready", None)
+        target["last_modified_at"] = _now()
+        target["last_modified_via"] = "master_data_api/restore"
+
+        meta = data.setdefault("metadata", {})
+        meta["last_modified"] = _now()
+        meta["last_modified_by"] = "master_data_api/restore"
+        _atomic_write_master(data)
+
+    return _enrich_product_row(target)
+
+
+@app.post("/api/products/{sku}/restore")
+def restore_product_endpoint(sku: str) -> dict:
+    return restore_product(sku)
 
 
 @app.post("/api/export/nec_jewel")
@@ -422,6 +752,12 @@ def download_export(filename: str) -> FileResponse:
 # 3-char SKU type code. Anything not on this list falls through to
 # detect_product_type() (size-based bookend heuristic etc.).
 _OCR_TYPE_TO_ABBR: dict[str, tuple[str, str]] = {
+    "mineral specimen": ("MIN", "Mineral Specimen"),
+    "crystal cluster": ("CLU", "Crystal Cluster"),
+    "geode": ("GEO", "Geode"),
+    "sphere": ("SPH", "Sphere"),
+    "tower": ("TWR", "Tower"),
+    "tumbled stone": ("TMB", "Tumbled Stone"),
     "bookend": ("BKE", "Bookend"),
     "napkin holder": ("NAP", "Napkin Holder"),
     "decorative object": ("DEC", "Decorative Object"),
@@ -660,6 +996,11 @@ def commit_invoice(req: IngestCommitRequest) -> dict:
         products = data.setdefault("products", [])
         existing_codes = {str(p["internal_code"]).strip() for p in products if p.get("internal_code")}
         existing_skus = {str(p["sku_code"]).strip() for p in products if p.get("sku_code")}
+        existing_plus = {
+            str(p.get("nec_plu") or p.get("plu_code") or "").strip()
+            for p in products
+            if p.get("nec_plu") or p.get("plu_code")
+        }
 
         added: list[dict] = []
         skipped: list[dict] = []
@@ -672,6 +1013,9 @@ def commit_invoice(req: IngestCommitRequest) -> dict:
                 continue
             if code in existing_codes or sku in existing_skus:
                 skipped.append({"item": item, "reason": "already exists"})
+                continue
+            if str(plu).strip() in existing_plus:
+                skipped.append({"item": item, "reason": "PLU already exists"})
                 continue
             if aligned_nec_plu_for_sku(sku) != plu:
                 skipped.append({"item": item, "reason": f"PLU/SKU misaligned: {sku}/{plu}"})
@@ -687,6 +1031,10 @@ def commit_invoice(req: IngestCommitRequest) -> dict:
                 _ta, type_label = type_hit
             else:
                 _ta, _ts, type_label = detect_product_type(size, material_desc, note)
+            description = synth_description(type_label, mat_label, size, code)
+            if _find_duplicate_description(products, description):
+                skipped.append({"item": item, "reason": "description already exists"})
+                continue
 
             unit_price_cny = item.get("unit_price_cny")
             cost_sgd = round(unit_price_cny / FX_CNY_PER_SGD, 2) if unit_price_cny else None
@@ -695,7 +1043,7 @@ def commit_invoice(req: IngestCommitRequest) -> dict:
                 "id": f"{req.supplier_id.lower()}-{code.lower()}",
                 "internal_code": code,
                 "sku_code": sku,
-                "description": synth_description(type_label, mat_label, size, code),
+                "description": description,
                 "long_description": synth_long_description(type_label, mat_label, size, material_desc),
                 "material": mat_label,
                 "product_type": type_label,
@@ -741,6 +1089,7 @@ def commit_invoice(req: IngestCommitRequest) -> dict:
             products.append(entry)
             existing_codes.add(code)
             existing_skus.add(sku)
+            existing_plus.add(str(plu).strip())
             added.append(entry)
 
         if added:
@@ -816,6 +1165,150 @@ def list_sourcing_options() -> dict[str, Any]:
 @app.get("/api/sourcing-options")
 def sourcing_options_endpoint() -> dict[str, Any]:
     return list_sourcing_options()
+
+
+# ── Stocking-location taxonomy (server-owned) ────────────────────────────────
+#
+# Location is now the same five-location operating dimension used across the
+# staff apps. A row may be stocked at one location or a `+`-joined combination
+# such as `jewel+online`; legacy values are accepted and normalised on write.
+_STOCKING_LOCATIONS: list[dict[str, str]] = [
+    {
+        "value": "breeze",
+        "label": "Breeze",
+        "description": "Breeze by East / HQ inventory.",
+    },
+    {
+        "value": "jewel",
+        "label": "Jewel",
+        "description": "Jewel Changi retail floor.",
+    },
+    {
+        "value": "isetan",
+        "label": "Isetan",
+        "description": "Isetan retail location.",
+    },
+    {
+        "value": "takashimaya",
+        "label": "Takashimaya",
+        "description": "Takashimaya retail counter.",
+    },
+    {
+        "value": "online",
+        "label": "Online",
+        "description": "Online / web store inventory.",
+    },
+]
+_STOCKING_LOCATION_ALIASES: dict[str, str] = {
+    "breeze": "breeze",
+    "breezebyeast": "breeze",
+    "warehouse": "breeze",
+    "hqwarehouse": "breeze",
+    "jewel": "jewel",
+    "jewelchangi": "jewel",
+    "jewelchangiairport": "jewel",
+    "isetan": "isetan",
+    "isetanscotts": "isetan",
+    "takashimaya": "takashimaya",
+    "takashimayacounter": "takashimaya",
+    "taka": "takashimaya",
+    "online": "online",
+    "onlinestore": "online",
+    "website": "online",
+    "shopify": "online",
+    "jewel_changi": "jewel",
+    "takashimaya_counter": "takashimaya",
+}
+
+
+def _normalise_location_token(value: str) -> str:
+    return re.sub(r"[^a-z0-9_]+", "", value.strip().lower())
+
+
+def normalise_stocking_location(value: Optional[str]) -> Optional[str]:
+    if not value:
+        return None
+    parts = [p for p in re.split(r"[+,|/]+", value) if p.strip()]
+    seen: set[str] = set()
+    for part in parts:
+        token = _normalise_location_token(part)
+        canonical = _STOCKING_LOCATION_ALIASES.get(token)
+        if canonical and canonical not in seen:
+            seen.add(canonical)
+    if not seen:
+        return None
+    ordered = [
+        loc["value"]
+        for loc in _STOCKING_LOCATIONS
+        if loc["value"] in seen
+    ]
+    return "+".join(ordered)
+
+
+_GENERIC_MIXED_MATERIAL_INPUTS = {
+    "mixed material",
+    "mixed materials",
+    "mixed",
+    "unknown",
+    "n/a",
+    "na",
+}
+
+
+def _manual_material_abbr(label: str) -> str:
+    compact = re.sub(r"[^A-Z0-9]+", "", label.upper())
+    return (compact[:4] or "MIXD").ljust(4, "X")
+
+
+def resolve_manual_material(material_input: str, detect_material_fn) -> tuple[str, str]:
+    """Preserve deliberate new material labels while keeping known mappings.
+
+    The historical detector maps any unknown text to "Mixed Materials", which
+    is fine for noisy OCR but frustrating in the manual create modal. If a user
+    typed a concrete new material, keep it as the display label and derive a
+    stable four-character SKU material code from that label.
+    """
+    mat_abbr, mat_label = detect_material_fn(material_input)
+    cleaned = re.sub(r"\s+", " ", (material_input or "").strip())
+    if mat_label != "Mixed Materials" or not cleaned:
+        return mat_abbr, mat_label
+    if cleaned.lower() in _GENERIC_MIXED_MATERIAL_INPUTS:
+        return mat_abbr, mat_label
+    return _manual_material_abbr(cleaned), cleaned[:64]
+
+
+def _clean_material_label(value: Any) -> Optional[str]:
+    cleaned = re.sub(r"\s+", " ", str(value or "").strip())
+    return cleaned[:64] if cleaned else None
+
+
+def _normalise_additional_materials(
+    values: Optional[list[str]],
+    *,
+    primary_material: str,
+) -> list[str]:
+    primary_key = primary_material.strip().lower()
+    seen = {primary_key} if primary_key else set()
+    materials: list[str] = []
+    for value in values or []:
+        label = _clean_material_label(value)
+        if not label:
+            continue
+        key = label.lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        materials.append(label)
+    return materials
+
+
+def list_stocking_locations() -> dict[str, Any]:
+    return {"locations": _STOCKING_LOCATIONS}
+
+
+@app.get("/api/stocking-locations")
+def stocking_locations_endpoint() -> dict[str, Any]:
+    return list_stocking_locations()
 
 
 # ── Supplier catalog (read + extend on the fly) ──────────────────────────────
@@ -1048,6 +1541,13 @@ class AiDescribeProductRequest(BaseModel):
 class AiDescribeProductResponse(BaseModel):
     description: str
     long_description: str
+    # Schema: "[Material] [Type] [Size]" with an optional distinctive suffix.
+    # Distinct from `description` — `description` is the friendly POS label
+    # ("Smoky crystal bookend, 12cm — heavy base"); `suggested_name` is the
+    # canonical short name we standardise on for catalog/dedup work
+    # ("Crystal Bookend 12cm"). Optional so the deterministic-fallback path
+    # can omit it when the AI is unavailable.
+    suggested_name: Optional[str] = None
     is_fallback: bool
     model: Optional[str] = None
 
@@ -1106,12 +1606,19 @@ async def ai_describe_product(req: AiDescribeProductRequest) -> AiDescribeProduc
     type_label_input = req.product_type.strip()
     type_hit = _TYPE_LABEL_TO_ABBR.get(type_label_input.lower())
     type_label = type_hit[1] if type_hit else type_label_input
-    _, mat_label = detect_material(req.material)
+    _, mat_label = resolve_manual_material(req.material, detect_material)
     size = req.size or ""
+
+    # Deterministic fallback name composed from the structured fields. Trims
+    # to 60 chars defensively — the schema's hard cap is 80, and the AI is
+    # told to stay under 60 too, so the two paths behave the same downstream.
+    fallback_name_bits = [mat_label, type_label, size]
+    fallback_name = " ".join(b for b in fallback_name_bits if b).strip()[:60] or None
 
     fallback = AiDescribeProductResponse(
         description=synth_description(type_label, mat_label, size, req.supplier_item_code or "NEW"),
         long_description=synth_long_description(type_label, mat_label, size, req.material),
+        suggested_name=fallback_name,
         is_fallback=True,
         model=None,
     )
@@ -1160,7 +1667,12 @@ async def ai_describe_product(req: AiDescribeProductRequest) -> AiDescribeProduc
         "When the piece is finished by us, end with the suffix 'Hand-finished.' When the "
         "raw material is imported, you may say 'Imported from China'. No emoji. "
         "No exclamation marks.\n\n"
-        "Output JSON with two keys:\n"
+        "Output JSON with three keys:\n"
+        "  - suggested_name: max 60 chars. Canonical short name following the "
+        "schema '[Material] [Type] [Size]'. Add a single distinctive suffix "
+        "ONLY if it materially differentiates this from typical rows of the "
+        "same type+material (e.g. 'heavyweight', 'matte finish'). No marketing "
+        "adjectives. Title case.\n"
         "  - description: max 110 chars, suitable for an in-store label and the "
         "POS screen. Lead with the product type and main material.\n"
         "  - long_description: 2-3 short sentences. Mention materials and "
@@ -1174,7 +1686,8 @@ async def ai_describe_product(req: AiDescribeProductRequest) -> AiDescribeProduc
         f"  Origin: {sourcing_label or req.sourcing_strategy or 'unspecified'}\n"
         f"  {supplier_block}\n"
         f"  Catalog hint: {catalog_hint or 'none'}\n\n"
-        'Return ONLY a JSON object: {"description": "...", "long_description": "..."}'
+        'Return ONLY a JSON object: '
+        '{"suggested_name": "...", "description": "...", "long_description": "..."}'
     )
 
     ai_req = AIRequest(
@@ -1196,6 +1709,7 @@ async def ai_describe_product(req: AiDescribeProductRequest) -> AiDescribeProduc
         parsed = json.loads(resp.text)
         desc = str(parsed.get("description") or "").strip()
         long_desc = str(parsed.get("long_description") or "").strip()
+        suggested_name = str(parsed.get("suggested_name") or "").strip()
     except (json.JSONDecodeError, TypeError):
         return fallback
     if not desc or not long_desc:
@@ -1203,6 +1717,9 @@ async def ai_describe_product(req: AiDescribeProductRequest) -> AiDescribeProduc
     return AiDescribeProductResponse(
         description=desc[:120],
         long_description=long_desc,
+        # Fall back to the deterministic name if the model omitted the field
+        # or returned something empty — the user always gets *some* suggestion.
+        suggested_name=(suggested_name[:80] if suggested_name else fallback_name),
         is_fallback=False,
         model=resp.model,
     )
@@ -1215,6 +1732,334 @@ async def ai_describe_product_endpoint(
     return await ai_describe_product(req)
 
 
+# ── Dedup / similar-product check ────────────────────────────────────────────
+#
+# Two-stage on purpose. Stage 1 is a cheap lexical Jaccard score over (type,
+# material)-filtered rows that runs server-side in <50ms — catches the obvious
+# "you typed exactly the same thing twice" case. Stage 2 is opt-in: when the
+# caller passes use_ai=true we send the top-5 candidates to DeepSeek V3 and
+# ask it to classify each as duplicate / variant / unrelated. The AI pass is
+# gated so the modal can fire stage 1 on every keystroke (debounced) without
+# burning DeepSeek tokens, and only fall back to the model when staff
+# explicitly click "double-check with AI".
+
+_SIMILAR_STOPWORDS: set[str] = {
+    "a", "an", "the", "of", "with", "and", "or", "in", "on", "for", "to",
+    "by", "from", "at", "is", "as", "be",
+}
+
+
+def _tokenize_for_similarity(s: str) -> set[str]:
+    """Lowercase + strip punctuation + drop short/stop words. Keeps numerics
+    (e.g. "60cm") because size strings carry most of the dedup signal."""
+    return {
+        t
+        for t in re.split(r"[^a-z0-9]+", (s or "").lower())
+        if t and t not in _SIMILAR_STOPWORDS and len(t) > 1
+    }
+
+
+class CheckSimilarProductsRequest(BaseModel):
+    description: str = Field(min_length=1, max_length=200)
+    product_type: Optional[str] = None
+    material: Optional[str] = None
+    size: Optional[str] = None
+    supplier_id: Optional[str] = None
+    use_ai: bool = Field(
+        default=False,
+        description=(
+            "When true, send the top lexical hits to DeepSeek V3 for a "
+            "duplicate/variant/unrelated classification. Costs ~1k tokens "
+            "per call so off by default."
+        ),
+    )
+
+
+class SimilarProductMatch(BaseModel):
+    sku_code: str
+    description: str
+    product_type: Optional[str] = None
+    material: Optional[str] = None
+    size: Optional[str] = None
+    supplier_id: Optional[str] = None
+    score: float
+    verdict: Optional[str] = Field(
+        default=None,
+        description="When AI pass ran: 'duplicate', 'variant', or 'unrelated'.",
+    )
+    reason: str
+
+
+class CheckSimilarProductsResponse(BaseModel):
+    matches: list[SimilarProductMatch]
+    ai_used: bool
+    model: Optional[str] = None
+
+
+async def find_similar_products(
+    req: CheckSimilarProductsRequest,
+) -> CheckSimilarProductsResponse:
+    data = _read_master()
+
+    type_input = (req.product_type or "").strip()
+    type_hit = _TYPE_LABEL_TO_ABBR.get(type_input.lower())
+    type_label_norm = (type_hit[1] if type_hit else type_input).lower()
+    mat_norm = (req.material or "").strip().lower()
+
+    # Pre-filter to the same product_type + material when given. Substring
+    # match on material so "Crystal" matches "Smoky Crystal".
+    candidate_pool: list[dict[str, Any]] = []
+    for p in data.get("products", []):
+        p_type = str(p.get("product_type") or "").strip().lower()
+        p_mat = str(p.get("material") or "").strip().lower()
+        if type_label_norm and p_type and p_type != type_label_norm:
+            continue
+        if mat_norm and p_mat and (mat_norm not in p_mat and p_mat not in mat_norm):
+            continue
+        candidate_pool.append(p)
+
+    query_tokens = _tokenize_for_similarity(req.description) | _tokenize_for_similarity(req.size or "")
+    if not query_tokens:
+        return CheckSimilarProductsResponse(matches=[], ai_used=False)
+
+    scored: list[tuple[float, dict[str, Any]]] = []
+    for p in candidate_pool:
+        p_tokens = (
+            _tokenize_for_similarity(p.get("description") or "")
+            | _tokenize_for_similarity(p.get("size") or "")
+        )
+        if not p_tokens:
+            continue
+        union = query_tokens | p_tokens
+        intersection = query_tokens & p_tokens
+        if not union:
+            continue
+        score = len(intersection) / len(union)
+        # 0.3 cuts a lot of false positives without hiding obvious dupes;
+        # tuned on a hand-eyeballed sample of the master JSON.
+        if score >= 0.3:
+            scored.append((score, p))
+
+    scored.sort(key=lambda t: t[0], reverse=True)
+    top = scored[:5]
+
+    matches = [
+        SimilarProductMatch(
+            sku_code=str(p.get("sku_code") or ""),
+            description=str(p.get("description") or ""),
+            product_type=(str(p.get("product_type") or "") or None),
+            material=(str(p.get("material") or "") or None),
+            size=(str(p.get("size") or "") or None),
+            supplier_id=(str(p.get("supplier_id") or "") or None),
+            score=round(score, 3),
+            reason=f"Token overlap with new draft ({int(score * 100)}% similar).",
+        )
+        for score, p in top
+    ]
+
+    if not req.use_ai or not matches:
+        return CheckSimilarProductsResponse(matches=matches, ai_used=False)
+
+    # ── Optional AI refinement ──────────────────────────────────────────────
+    try:
+        from app.services.ai_gateway import AIRequest, invoke
+    except Exception:
+        return CheckSimilarProductsResponse(matches=matches, ai_used=False)
+
+    candidate_lines: list[str] = []
+    for i, m in enumerate(matches, start=1):
+        bits = [f'  {i}. SKU {m.sku_code}: "{m.description}"']
+        if m.material:
+            bits.append(f"material {m.material}")
+        if m.size:
+            bits.append(f"size {m.size}")
+        candidate_lines.append(" — ".join(bits))
+
+    draft_bits = [f'"{req.description}"']
+    if req.material:
+        draft_bits.append(f"material {req.material}")
+    if req.size:
+        draft_bits.append(f"size {req.size}")
+    draft_block = " — ".join(draft_bits)
+
+    prompt = (
+        "You help a retail inventory team avoid creating duplicate SKUs.\n\n"
+        f"New draft row being created:\n  {draft_block}\n\n"
+        "Existing rows that might overlap with the draft:\n"
+        + "\n".join(candidate_lines)
+        + "\n\nFor each existing row, classify it against the new draft and "
+        "write ONE short reason (max 14 words). Categories:\n"
+        '  - "duplicate" — same item; the user should NOT create a new SKU\n'
+        '  - "variant" — same family but a distinct size/colour/finish; creating as a variant is fine\n'
+        '  - "unrelated" — different item, safe to ignore\n\n'
+        'Return ONLY: {"verdicts": [{"sku": "...", "verdict": "duplicate|variant|unrelated", "reason": "..."}, ...]}'
+    )
+
+    ai_req = AIRequest(
+        prompt=prompt,
+        # Same V3 model as describe_product — see comment there for rationale.
+        model="deepseek-chat",
+        purpose="master_data.check_similar_products",
+        temperature=0.2,
+        max_output_tokens=400,
+        response_mime_type="application/json",
+    )
+    resp = await invoke(ai_req, fallback_text='{"verdicts": []}')
+    if resp.is_fallback:
+        return CheckSimilarProductsResponse(matches=matches, ai_used=False)
+
+    try:
+        parsed = json.loads(resp.text)
+        verdicts_by_sku: dict[str, dict[str, Any]] = {
+            str(v.get("sku") or ""): v for v in (parsed.get("verdicts") or [])
+        }
+    except (json.JSONDecodeError, TypeError):
+        verdicts_by_sku = {}
+
+    tag_for: dict[str, str] = {
+        "duplicate": "Likely DUPLICATE",
+        "variant": "Same family / variant",
+        "unrelated": "Unrelated",
+    }
+    refined: list[SimilarProductMatch] = []
+    for m in matches:
+        v = verdicts_by_sku.get(m.sku_code)
+        if not v:
+            refined.append(m)
+            continue
+        verdict_raw = str(v.get("verdict") or "").lower().strip()
+        verdict = verdict_raw if verdict_raw in tag_for else None
+        ai_reason = str(v.get("reason") or "").strip() or m.reason
+        tag = tag_for.get(verdict_raw, "")
+        refined.append(
+            m.model_copy(
+                update={
+                    "verdict": verdict,
+                    "reason": (f"{tag}: " if tag else "") + ai_reason,
+                }
+            )
+        )
+
+    return CheckSimilarProductsResponse(
+        matches=refined, ai_used=True, model=resp.model
+    )
+
+
+@app.post("/api/ai/check_similar_products")
+async def check_similar_products_endpoint(
+    req: CheckSimilarProductsRequest,
+) -> CheckSimilarProductsResponse:
+    return await find_similar_products(req)
+
+
+class PreviewCodesResponse(BaseModel):
+    """What SKU+PLU the server would allocate for a (type, material[, seq]) combo.
+
+    Lets the master-data create form show the exact SKU+PLU before the user
+    saves, which matters most when they're typing a ``sequence_override`` for
+    a pre-printed barcode label and need to verify the codes match.
+    """
+
+    sku_code: str = Field(description="What VE…0000NNN code would be assigned.")
+    nec_plu: str = Field(description="The 8-digit EAN-8 PLU paired with that SKU.")
+    sequence: int = Field(description="The 1-indexed seq used to derive both codes.")
+    sequence_source: str = Field(
+        description=(
+            "'override' if the caller-supplied seq was honoured, "
+            "'auto' if computed as max(EAN-8 PLU seqs) + 1, "
+            "'auto_collision_skip' if auto allocation skipped past collisions."
+        ),
+    )
+    collision: Optional[str] = Field(
+        default=None,
+        description=(
+            "When sequence_source == 'override' but the seq is already taken, "
+            "this names the conflicting field (sku_code | nec_plu) so the UI "
+            "can warn before submit."
+        ),
+    )
+
+
+def preview_codes(
+    *,
+    product_type: str,
+    material: str,
+    sequence_override: Optional[int] = None,
+) -> PreviewCodesResponse:
+    """Compute (without persisting) the SKU+PLU pair the create endpoint would
+    issue for these inputs. Pure function over the master JSON snapshot — no
+    side effects, safe to call on every keystroke.
+    """
+    from identifier_utils import (
+        allocate_identifier_pair,
+        generate_nec_plu,
+        max_valid_plu_sequence,
+    )
+    from add_hengwei_skus_to_master import detect_material
+
+    type_input = (product_type or "").strip()
+    type_hit = _TYPE_LABEL_TO_ABBR.get(type_input.lower())
+    if not type_hit:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"Unknown product_type '{type_input}'. "
+                f"Pick one of: {sorted({lbl for _a, lbl in _TYPE_LABEL_TO_ABBR.values()})}"
+            ),
+        )
+    type_abbr, _type_label = type_hit
+
+    material_input = (material or "").strip()
+    if not material_input:
+        raise HTTPException(status_code=400, detail="material is required")
+    mat_abbr, _mat_label = resolve_manual_material(material_input, detect_material)
+
+    data = _read_master()
+    products = data.get("products", [])
+    existing_skus = {str(p["sku_code"]).strip() for p in products if p.get("sku_code")}
+    existing_plus: set[str] = set()
+    for p in products:
+        for f in ("nec_plu", "plu_code"):
+            v = p.get(f)
+            if v:
+                existing_plus.add(str(v).strip())
+
+    def _sku_factory(seq: int, _ta=type_abbr, _ma=mat_abbr) -> str:
+        return f"VE{_ta}{_ma}{seq:07d}"
+
+    if sequence_override is not None:
+        seq = int(sequence_override)
+        candidate_sku = _sku_factory(seq)
+        candidate_plu = generate_nec_plu(seq)
+        collision: Optional[str] = None
+        if candidate_sku in existing_skus:
+            collision = "sku_code"
+        elif candidate_plu in existing_plus:
+            collision = "nec_plu"
+        return PreviewCodesResponse(
+            sku_code=candidate_sku,
+            nec_plu=candidate_plu,
+            sequence=seq,
+            sequence_source="override",
+            collision=collision,
+        )
+
+    next_seq = max(max_valid_plu_sequence(existing_plus), 0) + 1
+    requested = next_seq
+    # allocate_identifier_pair mutates the sets — use copies so we stay pure.
+    sku_code, plu_code, _ = allocate_identifier_pair(
+        _sku_factory, set(existing_skus), set(existing_plus), next_seq
+    )
+    actual_seq = int(sku_code[-7:])
+    source = "auto" if actual_seq == requested else "auto_collision_skip"
+    return PreviewCodesResponse(
+        sku_code=sku_code,
+        nec_plu=plu_code,
+        sequence=actual_seq,
+        sequence_source=source,
+    )
+
+
 class ManualProductCreateRequest(BaseModel):
     """Request body for the manual inventory-creation flow.
 
@@ -1225,8 +2070,30 @@ class ManualProductCreateRequest(BaseModel):
 
     description: str = Field(min_length=1, max_length=120)
     long_description: Optional[str] = None
+    category: Optional[str] = Field(
+        default=None,
+        max_length=64,
+        description=(
+            "Top-level product line — one of 'Minerals', 'Homeware' or "
+            "'Jewellery'. Persisted verbatim onto product.category. The staff "
+            "portal restricts to those three; bulk imports may pass legacy "
+            "labels (e.g. 'Home Decor') which we accept as-is."
+        ),
+    )
     product_type: str = Field(min_length=1, description="Display label, e.g. 'Bookend'")
     material: str = Field(min_length=1, description="Display label or supplier text, e.g. 'Crystal'")
+    material_category: Optional[str] = Field(
+        default=None,
+        description="Broad material family selected in the create modal, e.g. 'crystal_quartz'.",
+    )
+    material_subcategory: Optional[str] = Field(
+        default=None,
+        description="Specific material selected within the category, e.g. 'Smoky Quartz'.",
+    )
+    additional_materials: Optional[list[str]] = Field(
+        default=None,
+        description="Other meaningful materials present in the product.",
+    )
     size: Optional[str] = None
     supplier_id: Optional[str] = Field(
         default=None,
@@ -1261,6 +2128,14 @@ class ManualProductCreateRequest(BaseModel):
     )
     notes: Optional[str] = None
     image_urls: Optional[list[str]] = None
+    stocking_location: Optional[str] = Field(
+        default=None,
+        description=(
+            "Where the row is physically held. Must be one of the values "
+            "returned by list_stocking_locations(); when omitted falls back "
+            "to Jewel. Multiple locations may be joined with '+'."
+        ),
+    )
     variant_of_sku: Optional[str] = Field(
         default=None,
         description="When set, create this SKU as a variant of the existing parent SKU.",
@@ -1269,6 +2144,19 @@ class ManualProductCreateRequest(BaseModel):
         default=None,
         max_length=80,
         description="Human label for this variant, e.g. 'Size M' or 'Black'.",
+    )
+    sequence_override: Optional[int] = Field(
+        default=None,
+        ge=1,
+        le=999_999,
+        description=(
+            "Force a specific sequence number for SKU+PLU allocation, instead "
+            "of auto-allocating from max+1. Used when pre-printed barcode "
+            "labels need exact codes (e.g. the 13 Hengwei homeware items "
+            "labelled with seq 1–13 before the EAN-8 switch). The server will "
+            "still reject the request if the resulting SKU or PLU collides "
+            "with an existing one."
+        ),
     )
 
 
@@ -1280,7 +2168,10 @@ def create_product(req: ManualProductCreateRequest, *, created_by: str = "master
     using the shared 7-digit sequence (see identifier_utils) — callers can
     never override them, which is why the legacy sku_code/nec_plu inputs were
     removed."""
-    from identifier_utils import allocate_identifier_pair, max_sku_sequence
+    from identifier_utils import (
+        allocate_identifier_pair,
+        max_valid_plu_sequence,
+    )
     from add_hengwei_skus_to_master import (
         STOCKING_LOCATION,
         detect_material,
@@ -1333,7 +2224,14 @@ def create_product(req: ManualProductCreateRequest, *, created_by: str = "master
     type_abbr, type_label = type_hit
 
     material_input = req.material.strip()
-    mat_abbr, mat_label = detect_material(material_input)
+    mat_abbr, mat_label = resolve_manual_material(material_input, detect_material)
+    material_category = _clean_material_label(req.material_category)
+    material_subcategory = _clean_material_label(req.material_subcategory) or mat_label
+    additional_materials = _normalise_additional_materials(
+        req.additional_materials,
+        primary_material=mat_label,
+    )
+    material_detail_input = ", ".join([material_input, *additional_materials])
 
     with _lock:
         data = _read_master()
@@ -1371,8 +2269,12 @@ def create_product(req: ManualProductCreateRequest, *, created_by: str = "master
             inherited_type = _TYPE_LABEL_TO_ABBR.get(str(type_label).lower())
             if inherited_type:
                 type_abbr, type_label = inherited_type
-            mat_abbr, _ = detect_material(str(material_input))
+            mat_abbr, _ = resolve_manual_material(str(material_input), detect_material)
             mat_label = variant_parent.get("material") or mat_label
+            material_category = variant_parent.get("material_category") or material_category
+            material_subcategory = variant_parent.get("material_subcategory") or material_subcategory
+            additional_materials = list(variant_parent.get("additional_materials") or additional_materials)
+            material_detail_input = ", ".join([str(material_input), *additional_materials])
 
         supplier_item_code = (req.supplier_item_code or "").strip() or None
         if variant_parent and not supplier_item_code:
@@ -1385,7 +2287,20 @@ def create_product(req: ManualProductCreateRequest, *, created_by: str = "master
                 detail=f"internal_code {internal_code} already exists",
             )
 
-        next_seq = max(max_sku_sequence(existing_skus), 0) + 1
+        # EAN-8 era: seed from the max **EAN-8** PLU only, so legacy 13-digit
+        # codes are ignored and the first new product after the switch can
+        # claim seq=1. allocate_identifier_pair's collision check handles any
+        # SKU clash with legacy `VE…0000001`-style codes by skipping ahead.
+        if req.sequence_override is not None:
+            # Caller has pre-printed labels for this exact seq — honour it.
+            # allocate_identifier_pair will still skip ahead if the seq
+            # collides with an existing SKU/PLU; in that case the resulting
+            # codes won't match the printed label, so we surface that as 409.
+            requested_seq = int(req.sequence_override)
+            next_seq = requested_seq
+        else:
+            requested_seq = None
+            next_seq = max(max_valid_plu_sequence(existing_plus), 0) + 1
 
         def _sku_factory(seq: int, _ta=type_abbr, _ma=mat_abbr) -> str:
             return f"VE{_ta}{_ma}{seq:07d}"
@@ -1393,6 +2308,20 @@ def create_product(req: ManualProductCreateRequest, *, created_by: str = "master
         sku_code, plu_code, _next_seq = allocate_identifier_pair(
             _sku_factory, existing_skus, existing_plus, next_seq
         )
+
+        if requested_seq is not None and _next_seq - 1 != requested_seq:
+            # The collision-skip moved past the caller-requested seq. The
+            # printed label won't match; bail rather than silently issue a
+            # different code.
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    f"Sequence {requested_seq} is already taken by an existing "
+                    f"SKU or PLU. The next free seq is {_next_seq - 1}; either "
+                    f"reprint the label, free up the conflicting SKU first, or "
+                    f"omit sequence_override to auto-allocate."
+                ),
+            )
 
         size = req.size or ""
         if variant_parent:
@@ -1404,7 +2333,7 @@ def create_product(req: ManualProductCreateRequest, *, created_by: str = "master
             long_desc = (
                 req.long_description.strip()
                 if req.long_description and req.long_description.strip()
-                else synth_long_description(type_label, mat_label, size, material_input)
+                else synth_long_description(type_label, mat_label, size, material_detail_input)
             )
 
         # Use the user's explicit description when present; only fall through
@@ -1412,6 +2341,19 @@ def create_product(req: ManualProductCreateRequest, *, created_by: str = "master
         # required, but the API accepts either).
         if not description:
             description = synth_description(type_label, mat_label, size, internal_code or sku_code)
+        _raise_duplicate_description(products, description)
+        duplicate_sku = _find_duplicate_code(products, "sku_code", sku_code)
+        if duplicate_sku:
+            raise HTTPException(
+                status_code=409,
+                detail=f"sku_code {sku_code} already exists on {duplicate_sku.get('sku_code')}",
+            )
+        duplicate_plu = _find_duplicate_code(products, "nec_plu", plu_code)
+        if duplicate_plu:
+            raise HTTPException(
+                status_code=409,
+                detail=f"nec_plu {plu_code} already exists on {duplicate_plu.get('sku_code')}",
+            )
 
         cost_price = float(req.cost_price) if req.cost_price is not None else None
         cost_currency = (req.cost_currency or ("SGD" if cost_price is not None else None))
@@ -1431,8 +2373,14 @@ def create_product(req: ManualProductCreateRequest, *, created_by: str = "master
             "description": description[:120],
             "long_description": long_desc,
             "material": mat_label,
+            "material_category": material_category,
+            "material_subcategory": material_subcategory,
+            "additional_materials": additional_materials,
             "product_type": type_label,
-            "category": "Home Decor",
+            # Honour the caller's category (Minerals / Homeware / Jewellery)
+            # when given; fall back to the legacy "Home Decor" label so older
+            # tooling that doesn't pass it keeps working.
+            "category": (req.category or "").strip() or "Home Decor",
             "amazon_sku": f"VE-{mat_abbr}-{sku_code[2:5]}-{internal_code}" if internal_code else None,
             "google_product_id": f"online:en:SG:{sku_code}",
             "google_product_category": "Home & Garden > Decor",
@@ -1456,7 +2404,13 @@ def create_product(req: ManualProductCreateRequest, *, created_by: str = "master
             "sale_ready": False,
             "block_sales": False,
             "stocking_status": "in_stock",
-            "stocking_location": STOCKING_LOCATION,
+            # Validated against the server-owned list above so the row can't
+            # land at a location the rest of the system doesn't know about.
+            "stocking_location": (
+                normalise_stocking_location(req.stocking_location)
+                or normalise_stocking_location(STOCKING_LOCATION)
+                or "jewel"
+            ),
             "use_stock": True,
             "size": size,
             "added_at": _now(),
